@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b2733">
+<title>Amacari</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 class="logo">Amacari</h1>
+  <nav class="tabs">
+    <button class="tab active" data-view="review">レビュー</button>
+    <button class="tab" data-view="archive">アーカイブ</button>
+  </nav>
+</header>
+
+<main id="review-view" class="view">
+  <div class="toolbar">
+    <label>並び替え：
+      <select id="sort-select">
+        <option value="new" selected>新着順</option>
+        <option value="score">スコア順</option>
+        <option value="profit">利益順</option>
+        <option value="roi">ROI順</option>
+      </select>
+    </label>
+    <button id="undo-btn" class="ghost-btn" disabled>↺ ひとつ戻す</button>
+  </div>
+
+  <div id="card-stack" class="card-stack">
+    <p class="empty-message" id="empty-message">読み込み中…</p>
+  </div>
+
+  <p class="hint">右スワイプ＝仕入れ対象 ／ 左スワイプ＝却下</p>
+</main>
+
+<main id="archive-view" class="view hidden">
+  <ul id="archive-list" class="archive-list"></ul>
+  <p class="empty-message" id="archive-empty">読み込み中…</p>
+</main>
+
+<!-- 却下理由ピッカー -->
+<div id="reason-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>却下の理由は？</h2>
+    <div class="reason-grid">
+      <button class="reason-btn" data-reason="開封済み">開封済み</button>
+      <button class="reason-btn" data-reason="状態悪い">状態悪い</button>
+      <button class="reason-btn" data-reason="別物">別物</button>
+      <button class="reason-btn" data-reason="回転悪い">回転悪い</button>
+      <button class="reason-btn" data-reason="利益少ない">利益少ない</button>
+      <button class="reason-btn" data-reason="リスク高い">リスク高い</button>
+      <button class="reason-btn" data-reason="その他" id="reason-other-btn">その他</button>
+    </div>
+    <div id="reason-other-input" class="hidden">
+      <input type="text" id="reason-other-text" placeholder="理由を入力">
+      <button id="reason-other-submit">記録する</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
