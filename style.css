@@ -141,6 +141,23 @@ body {
   margin: 0 0 10px;
 }
 
+.copy-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  margin: 0 2px;
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  background: #fafafa;
+  color: var(--navy);
+  touch-action: manipulation;
+}
+
+.copy-btn:disabled {
+  color: #2e7d32;
+  border-color: #2e7d32;
+  background: #eaf5ea;
+}
+
 .card-highlight {
   display: flex;
   gap: 10px;
@@ -203,6 +220,17 @@ body {
 
 .flag-like { left: 16px; color: #2e7d32; border-color: #2e7d32; }
 .flag-nope { right: 16px; color: var(--red); border-color: var(--red); transform: rotate(12deg); }
+
+.flag-skip,
+.flag-back {
+  left: 50%;
+  transform: translateX(-50%);
+  color: #777;
+  border-color: #999;
+}
+
+.flag-skip { top: 16px; }
+.flag-back { top: auto; bottom: 16px; }
 
 .hint {
   text-align: center;

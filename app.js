@@ -20,6 +20,7 @@ const state = {
   sort: "new",
   lastRejected: null,   // 巻き戻し用：直前に却下したカード
   pendingReject: null,  // 理由選択待ちのカード
+  skipStack: [],        // 後回し（上スワイプ）したカードのスタック：下スワイプで呼び戻す
 };
 
 const els = {
@@ -48,6 +49,7 @@ async function loadCards() {
     const res = await fetch(gasUrl("cards", { sort: state.sort }));
     const data = await res.json();
     state.cards = data.cards || [];
+    state.skipStack = [];
     renderStack();
   } catch (e) {
     els.empty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
@@ -102,10 +104,17 @@ function buildCardEl(card) {
   el.innerHTML = `
     <div class="swipe-flag flag-like">仕入れ対象</div>
     <div class="swipe-flag flag-nope">却下</div>
+    <div class="swipe-flag flag-skip">あとで</div>
+    <div class="swipe-flag flag-back">戻る</div>
     ${thumb}
     <div class="card-body">
       <p class="card-name">${escapeHtml(card.name)}</p>
-      <p class="card-sub">型番：${escapeHtml(card.model)} ／ ASIN：${escapeHtml(card.asin)}</p>
+      <p class="card-sub">
+        型番：${escapeHtml(card.model)}
+        <button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー">コピー</button>
+        ／ ASIN：${escapeHtml(card.asin)}
+        <button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー">コピー</button>
+      </p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">利益率</span>
@@ -131,6 +140,24 @@ function buildCardEl(card) {
   return el;
 }
 
+// ---------- コピー操作 ----------
+
+els.stack.addEventListener("click", async e => {
+  const btn = e.target.closest(".copy-btn");
+  if (!btn) return;
+  e.stopPropagation();
+  const text = btn.dataset.copy || "";
+  try {
+    await navigator.clipboard.writeText(text);
+    const original = btn.textContent;
+    btn.textContent = "コピー済";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1200);
+  } catch (e) {
+    alert("コピーに失敗しました。");
+  }
+});
+
 // ---------- スワイプ操作 ----------
 
 function attachSwipe(el, card) {
@@ -138,6 +165,9 @@ function attachSwipe(el, card) {
 
   const likeFlag = el.querySelector(".flag-like");
   const nopeFlag = el.querySelector(".flag-nope");
+  const skipFlag = el.querySelector(".flag-skip");
+  const backFlag = el.querySelector(".flag-back");
+  const flags = [likeFlag, nopeFlag, skipFlag, backFlag];
 
   function onStart(x, y) {
     dragging = true;
@@ -149,15 +179,14 @@ function attachSwipe(el, card) {
     if (!dragging) return;
     dx = x - startX;
     dy = y - startY;
-    const rotate = dx / 12;
-    el.style.transform = `translate(${dx}px, ${dy}px) rotate(${rotate}deg)`;
-    const ratio = Math.min(Math.abs(dx) / 120, 1);
-    if (dx > 0) {
-      likeFlag.style.opacity = ratio;
-      nopeFlag.style.opacity = 0;
+    el.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx / 12}deg)`;
+    flags.forEach(f => f.style.opacity = 0);
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const ratio = Math.min(Math.abs(dx) / 120, 1);
+      (dx > 0 ? likeFlag : nopeFlag).style.opacity = ratio;
     } else {
-      nopeFlag.style.opacity = ratio;
-      likeFlag.style.opacity = 0;
+      const ratio = Math.min(Math.abs(dy) / 120, 1);
+      (dy < 0 ? skipFlag : backFlag).style.opacity = ratio;
     }
   }
 
@@ -166,18 +195,22 @@ function attachSwipe(el, card) {
     dragging = false;
     el.classList.remove("dragging");
     const threshold = 100;
-    if (dx > threshold) {
-      finishSwipe(el, card, "right");
-    } else if (dx < -threshold) {
-      finishSwipe(el, card, "left");
+    const absX = Math.abs(dx), absY = Math.abs(dy);
+    if (absX >= absY && absX > threshold) {
+      finishSwipe(el, card, dx > 0 ? "right" : "left");
+    } else if (absY > absX && absY > threshold) {
+      finishVerticalSwipe(el, card, dy < 0 ? "up" : "down");
     } else {
       el.style.transform = "";
-      likeFlag.style.opacity = 0;
-      nopeFlag.style.opacity = 0;
+      flags.forEach(f => f.style.opacity = 0);
     }
   }
 
-  el.addEventListener("pointerdown", e => { el.setPointerCapture(e.pointerId); onStart(e.clientX, e.clientY); });
+  el.addEventListener("pointerdown", e => {
+    if (e.target.closest(".copy-btn")) return; // コピー操作はスワイプとして扱わない
+    el.setPointerCapture(e.pointerId);
+    onStart(e.clientX, e.clientY);
+  });
   el.addEventListener("pointermove", e => onMove(e.clientX, e.clientY));
   el.addEventListener("pointerup", onEnd);
   el.addEventListener("pointercancel", onEnd);
@@ -185,7 +218,7 @@ function attachSwipe(el, card) {
 
 function finishSwipe(el, card, direction) {
   const flyX = direction === "right" ? window.innerWidth : -window.innerWidth;
-  el.style.transform = `translate(${flyX}px, ${el.style.transform.match(/translateY?\(([-\d.]+)/) ? "" : "0px"}) rotate(${direction === "right" ? 30 : -30}deg)`;
+  el.style.transform = `translateX(${flyX}px) rotate(${direction === "right" ? 30 : -30}deg)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
@@ -195,6 +228,30 @@ function finishSwipe(el, card, direction) {
       judge(card, "仕入れ対象", "");
     } else {
       openReasonModal(card);
+    }
+    renderStack();
+  }, 220);
+}
+
+// 上スワイプ＝後回し（末尾に送る）／下スワイプ＝直前に後回しにした1件を呼び戻す
+// シートへの書き込みは行わず、画面内の表示順だけを変える
+function finishVerticalSwipe(el, card, direction) {
+  const flyY = direction === "up" ? -window.innerHeight : window.innerHeight;
+  el.style.transform = `translateY(${flyY}px)`;
+  el.style.opacity = "0";
+
+  setTimeout(() => {
+    el.remove();
+    if (direction === "up") {
+      state.cards = state.cards.filter(c => c.row !== card.row);
+      state.cards.push(card);
+      state.skipStack.push(card);
+    } else {
+      const prev = state.skipStack.pop();
+      if (prev) {
+        state.cards = state.cards.filter(c => c.row !== prev.row);
+        state.cards.unshift(prev);
+      }
     }
     renderStack();
   }, 220);
