@@ -188,6 +188,22 @@ body {
 
 .card-grid div span { color: #888; margin-right: 4px; }
 
+.card-keepa {
+  margin-bottom: 12px;
+}
+
+.keepa-label {
+  font-size: 11px;
+  color: #999;
+  margin: 0 0 4px;
+}
+
+.keepa-graph {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
 .card-links {
   display: flex;
   gap: 8px;

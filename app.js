@@ -131,6 +131,10 @@ function buildCardEl(card) {
         <div><span>差額</span>${formatYen(card.diff)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
       </div>
+      <div class="card-keepa">
+        <p class="keepa-label">Keepa（90日）</p>
+        <img class="keepa-graph" src="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=9&range=90&amazon=1&new=1" alt="Keepaグラフ" loading="lazy">
+      </div>
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazonで見る</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
