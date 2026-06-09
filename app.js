@@ -132,7 +132,7 @@ function buildCardEl(card) {
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
-        <img class="keepa-graph" src="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=5&range=90&amazon=1&new=1&used=1&salesrank=1" alt="Keepaグラフ" loading="lazy">
+        <img class="keepa-graph" src="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=5&range=90&amazon=1&new=1&used=1&salesrank=1" alt="Keepaグラフ" loading="lazy" title="タップで再読み込み" onclick="this.src=this.src.split('?')[0]+'?'+this.src.split('?')[1]+'&t='+Date.now()">
       </div>
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
