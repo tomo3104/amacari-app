@@ -325,7 +325,7 @@ body {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  z-index: 50;
+  z-index: 200;
 }
 
 .modal.hidden { display: none; }
