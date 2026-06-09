@@ -344,25 +344,32 @@ function renderArchive(items) {
         <a href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
-          : `<button data-action="purchased">購入済みにする</button>`}
+          : `<button data-action="purchased">購入済みにする</button>
+             <button data-action="reject-archive">却下に戻す</button>`}
       </div>
     </li>
   `).join("");
 }
 
 els.archiveList.addEventListener("click", async e => {
-  const btn = e.target.closest("button[data-action='purchased']");
+  const btn = e.target.closest("button[data-action]");
   if (!btn) return;
   const li = btn.closest(".archive-item");
   const row = Number(li.dataset.row);
+  const action = btn.dataset.action;
+  const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = "更新中…";
   try {
-    await gasPost("purchased", { row });
+    if (action === "purchased") {
+      await gasPost("purchased", { row });
+    } else if (action === "reject-archive") {
+      await gasPost("judge", { row, judgment: "却下", reason: "キャンセル" });
+    }
     loadArchive();
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = "購入済みにする";
+    btn.textContent = original;
     alert("更新に失敗しました。");
   }
 });

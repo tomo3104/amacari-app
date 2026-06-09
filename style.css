@@ -304,6 +304,7 @@ body {
 .archive-actions a { background: var(--red); color: white; }
 .archive-actions button { background: #eee; color: var(--navy); }
 .archive-actions button.done { background: var(--navy); color: white; }
+.archive-actions button[data-action="reject-archive"] { background: #fde9e8; color: var(--red); }
 
 /* 却下理由モーダル */
 .modal {
