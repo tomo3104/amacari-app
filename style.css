@@ -217,9 +217,8 @@ body {
 }
 
 .card-links {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 6px;
+  display: flex;
+  gap: 8px;
 }
 
 .link-btn {
@@ -233,8 +232,6 @@ body {
 
 .link-amazon  { background: var(--orange); color: var(--navy); }
 .link-mercari { background: var(--red); color: white; }
-.link-yahoo   { background: #ff0033; color: white; }
-.link-rakuma  { background: #5c2d8c; color: white; }
 
 .swipe-flag {
   position: absolute;
