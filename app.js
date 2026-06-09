@@ -110,10 +110,8 @@ function buildCardEl(card) {
     <div class="card-body">
       <p class="card-name">${escapeHtml(card.name)}</p>
       <p class="card-sub">
-        型番：${escapeHtml(card.model)}
-        <button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー">コピー</button>
-        ／ ASIN：${escapeHtml(card.asin)}
-        <button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー">コピー</button>
+        型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        ／ ASIN：${escapeHtml(card.asin)}<button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
       </p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
@@ -154,9 +152,9 @@ els.stack.addEventListener("click", async e => {
   try {
     await navigator.clipboard.writeText(text);
     const original = btn.textContent;
-    btn.textContent = "コピー済";
+    btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2e7d32" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
     btn.disabled = true;
-    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1200);
+    setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1200);
   } catch (e) {
     alert("コピーに失敗しました。");
   }
