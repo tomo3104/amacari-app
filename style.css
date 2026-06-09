@@ -119,10 +119,11 @@ body {
 .card-thumb {
   width: 100%;
   height: 200px;
-  background: #eee;
-  object-fit: cover;
+  background: #f8f8f8;
+  object-fit: contain;
   display: block;
   flex-shrink: 0;
+  padding: 8px;
 }
 
 .card-body {
@@ -217,8 +218,9 @@ body {
 }
 
 .card-links {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
 }
 
 .link-btn {
@@ -230,8 +232,9 @@ body {
   text-decoration: none;
 }
 
-.link-amazon  { background: var(--orange); color: var(--navy); }
-.link-mercari { background: var(--red); color: white; }
+.link-amazon      { background: var(--orange); color: var(--navy); }
+.link-mercari     { background: var(--red); color: white; }
+.link-monotracer  { background: #1976d2; color: white; }
 
 .swipe-flag {
   position: absolute;

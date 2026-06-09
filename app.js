@@ -136,6 +136,7 @@ function buildCardEl(card) {
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
+        <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
       </div>
     </div>
   `;
