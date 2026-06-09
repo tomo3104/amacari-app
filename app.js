@@ -136,8 +136,7 @@ function buildCardEl(card) {
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
-        <a class="link-btn link-yahoo" href="https://paypayfleamarket.yahoo.co.jp/search?q=${encodeURIComponent(card.model + ' 新品')}" target="_blank" rel="noopener">ヤフフリ</a>
-        <a class="link-btn link-rakuma" href="https://fril.jp/search?query=${encodeURIComponent(card.model + ' 新品')}" target="_blank" rel="noopener">ラクマ</a>
+        <a class="link-btn link-rakuma" href="https://fril.jp/search?q=${encodeURIComponent(card.model + ' 新品')}" target="_blank" rel="noopener">ラクマ</a>
       </div>
     </div>
   `;
