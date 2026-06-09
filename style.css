@@ -217,7 +217,7 @@ body {
 
 .card-links {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
 }
 
@@ -233,6 +233,7 @@ body {
 .link-amazon      { background: var(--orange); color: var(--navy); }
 .link-mercari     { background: var(--red); color: white; }
 .link-monotracer  { background: #1976d2; color: white; }
+.link-keepa       { background: #333; color: white; }
 
 .swipe-flag {
   position: absolute;

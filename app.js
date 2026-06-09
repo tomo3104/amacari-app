@@ -132,12 +132,13 @@ function buildCardEl(card) {
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
-        <img class="keepa-graph" src="${(() => { const u = 'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=co.jp&salesrank=1&amazon=1&new=1&used=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=2e7d32&cFont=1b2733&cBackground=ffffff'; console.log('[Keepa URL]', u); return u; })()}" alt="Keepaグラフ" loading="lazy" title="タップで再読み込み" onclick="this.src=this.src.split('&t=')[0]+'&t='+Date.now()">
+        <img class="keepa-graph" src="${(() => { const u = 'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=co.jp&amazon=1&new=1&used=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cFont=1b2733&cBackground=ffffff'; console.log('[Keepa URL]', u); return u; })()}" alt="Keepaグラフ" loading="lazy" title="タップで再読み込み" onclick="this.src=this.src.split('&t=')[0]+'&t='+Date.now()">
       </div>
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
+        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
       </div>
     </div>
   `;
