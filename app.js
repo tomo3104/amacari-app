@@ -21,6 +21,7 @@ const state = {
   lastRejected: null,   // 巻き戻し用：直前に却下したカード
   pendingReject: null,  // 理由選択待ちのカード
   skipStack: [],        // 後回し（上スワイプ）したカードのスタック：下スワイプで呼び戻す
+  swipeBlocked: false,  // 理由選択中はスワイプ不可
 };
 
 const els = {
@@ -200,6 +201,7 @@ function attachSwipe(el, card) {
     const threshold = 100;
     const absX = Math.abs(dx), absY = Math.abs(dy);
     if (absX >= absY && absX > threshold) {
+      if (dx < 0) state.swipeBlocked = true; // 左スワイプ確定→理由選択まで次をブロック
       finishSwipe(el, card, dx > 0 ? "right" : "left");
     } else if (absY > absX && absY > threshold) {
       finishVerticalSwipe(el, card, dy < 0 ? "up" : "down");
@@ -210,7 +212,8 @@ function attachSwipe(el, card) {
   }
 
   el.addEventListener("pointerdown", e => {
-    if (e.target.closest(".copy-btn")) return; // コピー操作はスワイプとして扱わない
+    if (e.target.closest(".copy-btn")) return;
+    if (state.swipeBlocked) return; // 理由選択中はスワイプ不可
     el.setPointerCapture(e.pointerId);
     onStart(e.clientX, e.clientY);
   });
@@ -300,6 +303,7 @@ function openReasonModal(card) {
 
 function closeReasonModal() {
   state.pendingReject = null;
+  state.swipeBlocked = false;
   els.modal.classList.add("hidden");
 }
 
