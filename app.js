@@ -184,7 +184,7 @@ function attachSwipe(el, card) {
     if (!dragging) return;
     dx = x - startX;
     dy = y - startY;
-    el.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx / 12}deg)`;
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
     flags.forEach(f => f.style.opacity = 0);
     if (Math.abs(dx) >= Math.abs(dy)) {
       const ratio = Math.min(Math.abs(dx) / 120, 1);
@@ -225,7 +225,7 @@ function attachSwipe(el, card) {
 
 function finishSwipe(el, card, direction) {
   const flyX = direction === "right" ? window.innerWidth : -window.innerWidth;
-  el.style.transform = `translateX(${flyX}px) rotate(${direction === "right" ? 30 : -30}deg)`;
+  el.style.transform = `translateX(${flyX}px)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
