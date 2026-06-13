@@ -22,6 +22,7 @@ const state = {
   pendingReject: null,  // 理由選択待ちのカード
   skipStack: [],        // 後回し（上スワイプ）したカードのスタック：下スワイプで呼び戻す
   swipeBlocked: false,  // 理由選択中はスワイプ不可
+  totalCount: 0,        // 読み込み時点の精査待ち件数（進捗表示の分母）
 };
 
 const els = {
@@ -29,6 +30,7 @@ const els = {
   empty: document.getElementById("empty-message"),
   sortSelect: document.getElementById("sort-select"),
   undoBtn: document.getElementById("undo-btn"),
+  progressLabel: document.getElementById("progress-label"),
   tabs: document.querySelectorAll(".tab"),
   reviewView: document.getElementById("review-view"),
   archiveView: document.getElementById("archive-view"),
@@ -51,6 +53,7 @@ async function loadCards() {
     const data = await res.json();
     state.cards = data.cards || [];
     state.skipStack = [];
+    state.totalCount = state.cards.length;
     renderStack();
   } catch (e) {
     els.empty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
@@ -74,6 +77,9 @@ async function loadArchive() {
 
 function renderStack() {
   els.stack.querySelectorAll(".card").forEach(c => c.remove());
+
+  const done = Math.max(state.totalCount - state.cards.length, 0);
+  els.progressLabel.textContent = `${done} / ${state.totalCount}`;
 
   if (state.cards.length === 0) {
     els.empty.textContent = "判定待ちの商品はありません。お疲れさまでした。";

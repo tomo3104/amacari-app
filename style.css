@@ -85,6 +85,13 @@ body {
 
 .ghost-btn:disabled { opacity: 0.4; }
 
+.progress-label {
+  font-size: 13px;
+  color: #777;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .card-stack {
   position: relative;
   flex: 1;
