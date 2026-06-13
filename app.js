@@ -135,6 +135,7 @@ function buildCardEl(card) {
         <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
         <div><span>差額</span>${formatYen(card.diff)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
+        <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
@@ -428,6 +429,11 @@ function formatYen(v) {
 function formatPercent(v) {
   const n = Number(v);
   return Number.isFinite(n) && v !== "" ? `${n}%` : "−";
+}
+
+function formatRank(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && v !== "" && v !== null ? `${n.toLocaleString()}位` : "−";
 }
 
 // ---------- 起動 ----------

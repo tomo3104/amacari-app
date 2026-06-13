@@ -205,6 +205,8 @@ body {
 
 .card-grid div span { color: #888; margin-right: 4px; }
 
+.card-grid-wide { grid-column: 1 / -1; }
+
 .card-keepa {
   margin-bottom: 12px;
 }
