@@ -161,10 +161,17 @@ els.stack.addEventListener("click", e => {
   const btn = e.target.closest(".keepa-reload-btn");
   if (!btn) return;
   e.stopPropagation();
-  const wrap = btn.closest(".keepa-graph-wrap");
   const img = btn.previousElementSibling;
-  wrap.classList.add("keepa-loading");
-  img.onload = () => wrap.classList.remove("keepa-loading");
+  btn.disabled = true;
+  btn.textContent = "…";
+  img.style.opacity = "0.3";
+  const restore = () => {
+    img.style.opacity = "1";
+    btn.textContent = "🔄";
+    btn.disabled = false;
+  };
+  img.onload = restore;
+  img.onerror = restore;
   img.src = img.src.split("&t=")[0] + "&t=" + Date.now();
 });
 
