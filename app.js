@@ -138,9 +138,9 @@ function buildCardEl(card) {
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
       <div class="card-keepa">
-        <p class="keepa-label">Keepa（90日）</p>
+        <p class="keepa-label">Keepa（30日）</p>
         <div class="keepa-graph-wrap">
-          <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy">
+          <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=30&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy">
           <button class="keepa-reload-btn" aria-label="グラフ再読込" title="グラフ再読込">🔄</button>
         </div>
       </div>
