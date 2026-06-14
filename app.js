@@ -139,7 +139,10 @@ function buildCardEl(card) {
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
-        <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy" title="タップで再読み込み" onclick="this.src=this.src.split('&t=')[0]+'&t='+Date.now()">
+        <div class="keepa-graph-wrap">
+          <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy">
+          <button class="keepa-reload-btn" aria-label="グラフ再読込" title="グラフ再読込">🔄</button>
+        </div>
       </div>
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
@@ -151,6 +154,16 @@ function buildCardEl(card) {
   `;
   return el;
 }
+
+// ---------- Keepaグラフ再読込 ----------
+
+els.stack.addEventListener("click", e => {
+  const btn = e.target.closest(".keepa-reload-btn");
+  if (!btn) return;
+  e.stopPropagation();
+  const img = btn.previousElementSibling;
+  img.src = img.src.split("&t=")[0] + "&t=" + Date.now();
+});
 
 // ---------- コピー操作 ----------
 
@@ -220,7 +233,7 @@ function attachSwipe(el, card) {
   }
 
   el.addEventListener("pointerdown", e => {
-    if (e.target.closest(".copy-btn")) return;
+    if (e.target.closest(".copy-btn, .keepa-reload-btn")) return;
     if (state.swipeBlocked) return; // 理由選択中はスワイプ不可
     el.setPointerCapture(e.pointerId);
     onStart(e.clientX, e.clientY);

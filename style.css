@@ -217,11 +217,31 @@ body {
   margin: 0 0 4px;
 }
 
+.keepa-graph-wrap {
+  position: relative;
+}
+
 .keepa-graph {
   width: 100%;
   border-radius: 8px;
   display: block;
   object-fit: contain;
+}
+
+.keepa-reload-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .card-links {
