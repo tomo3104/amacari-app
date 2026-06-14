@@ -97,7 +97,6 @@ function renderStack() {
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
     if (depthFromTop === 0) attachSwipe(el, card);
     els.stack.appendChild(el);
-    loadKeepaGraph(el.querySelector(".keepa-graph"));
   });
 }
 
@@ -141,7 +140,7 @@ function buildCardEl(card) {
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
         <div class="keepa-graph-wrap">
-          <img class="keepa-graph" data-asin="${escapeAttr(card.asin)}" alt="Keepaグラフ">
+          <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy">
           <button class="keepa-reload-btn" aria-label="グラフ再読込" title="グラフ再読込">🔄</button>
         </div>
       </div>
@@ -156,20 +155,7 @@ function buildCardEl(card) {
   return el;
 }
 
-// ---------- Keepaグラフ取得（GAS経由） ----------
-
-// 端末から直接Keepaへリクエストすると売れ筋ランキング系列が
-// 含まれない画像が返ってくることがあるため、GAS（サーバー）経由で取得する
-async function loadKeepaGraph(img) {
-  const asin = img.dataset.asin;
-  try {
-    const res = await fetch(gasUrl("keepaGraph", { asin, range: "90" }));
-    const data = await res.json();
-    if (data.image) img.src = data.image;
-  } catch (e) {
-    // 失敗時は何もしない（画像なしのまま）
-  }
-}
+// ---------- Keepaグラフ再読込 ----------
 
 els.stack.addEventListener("click", e => {
   const btn = e.target.closest(".keepa-reload-btn");
@@ -179,11 +165,14 @@ els.stack.addEventListener("click", e => {
   btn.disabled = true;
   btn.textContent = "…";
   img.style.opacity = "0.3";
-  loadKeepaGraph(img).finally(() => {
+  const restore = () => {
     img.style.opacity = "1";
     btn.textContent = "🔄";
     btn.disabled = false;
-  });
+  };
+  img.onload = restore;
+  img.onerror = restore;
+  img.src = img.src.split("&t=")[0] + "&t=" + Date.now();
 });
 
 // ---------- コピー操作 ----------
