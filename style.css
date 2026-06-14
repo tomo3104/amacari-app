@@ -223,9 +223,11 @@ body {
 
 .keepa-graph {
   width: 100%;
+  min-height: 140px;
   border-radius: 8px;
   display: block;
   object-fit: contain;
+  background: #f2f2f2;
   transition: opacity 0.15s;
 }
 
