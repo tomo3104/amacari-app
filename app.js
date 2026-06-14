@@ -161,7 +161,10 @@ els.stack.addEventListener("click", e => {
   const btn = e.target.closest(".keepa-reload-btn");
   if (!btn) return;
   e.stopPropagation();
+  const wrap = btn.closest(".keepa-graph-wrap");
   const img = btn.previousElementSibling;
+  wrap.classList.add("keepa-loading");
+  img.onload = () => wrap.classList.remove("keepa-loading");
   img.src = img.src.split("&t=")[0] + "&t=" + Date.now();
 });
 
