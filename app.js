@@ -243,7 +243,7 @@ function attachSwipe(el, card) {
   }
 
   el.addEventListener("pointerdown", e => {
-    if (e.target.closest(".copy-btn, .keepa-reload-btn")) return;
+    if (e.target.closest(".copy-btn, .keepa-reload-btn, .link-btn")) return;
     if (state.swipeBlocked) return; // 理由選択中はスワイプ不可
     el.setPointerCapture(e.pointerId);
     onStart(e.clientX, e.clientY);
