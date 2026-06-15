@@ -148,7 +148,7 @@ function buildCardEl(card) {
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-btn link-keepa" href="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=5&amazon=1&new=1&used=1&salesrank=1&range=180&width=1500&height=600&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff" target="_blank" rel="noopener">Keepa</a>
       </div>
     </div>
   `;
