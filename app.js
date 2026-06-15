@@ -100,6 +100,18 @@ function renderStack() {
   });
 }
 
+function pastJudgmentClass(judgment) {
+  if (judgment === "却下") return "reject";
+  if (judgment === "購入済み") return "purchased";
+  return "target"; // 仕入れ対象
+}
+
+function formatPastJudgment(card) {
+  if (!card.past_judgment) return "";
+  const reasonText = card.past_reason ? `（${escapeHtml(card.past_reason)}）` : "";
+  return `<div class="past-judgment-badge past-judgment-${pastJudgmentClass(card.past_judgment)}">⚠ 過去に「${escapeHtml(card.past_judgment)}」と判定済み${reasonText}</div>`;
+}
+
 function buildCardEl(card) {
   const el = document.createElement("div");
   el.className = "card";
@@ -115,6 +127,7 @@ function buildCardEl(card) {
     <div class="swipe-flag flag-back">戻る</div>
     ${thumb}
     <div class="card-body">
+      ${formatPastJudgment(card)}
       <p class="card-name">${escapeHtml(card.name)}</p>
       <p class="card-sub">
         型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>

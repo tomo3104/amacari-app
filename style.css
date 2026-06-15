@@ -145,6 +145,25 @@ body {
   margin: 0 0 4px;
 }
 
+.past-judgment-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 8px;
+  margin: 0 0 8px;
+}
+
+.past-judgment-reject {
+  background: #fde9e8;
+  color: var(--red);
+}
+
+.past-judgment-target,
+.past-judgment-purchased {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
 .card-sub {
   font-size: 13px;
   color: #777;
