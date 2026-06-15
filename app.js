@@ -388,7 +388,9 @@ function renderArchive(items) {
         <p class="meta">利益率 ${formatPercent(item.margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
       </div>
       <div class="archive-actions">
-        <a href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
+        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
+        <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">モノトレ</a>
+        <a class="link-keepa" href="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(item.asin)}&domain=5&amazon=1&new=1&used=1&salesrank=1&range=180&width=1500&height=600&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff" target="_blank" rel="noopener">Keepa</a>
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>

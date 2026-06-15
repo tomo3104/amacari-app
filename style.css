@@ -363,6 +363,8 @@ body {
 }
 
 .archive-actions a { background: var(--red); color: white; }
+.archive-actions a.link-monotracer { background: #1976d2; color: white; }
+.archive-actions a.link-keepa { background: var(--orange); color: var(--navy); }
 .archive-actions button { background: #eee; color: var(--navy); }
 .archive-actions button.done { background: var(--navy); color: white; }
 .archive-actions button[data-action="reject-archive"] { background: #fde9e8; color: var(--red); }
