@@ -228,6 +228,7 @@ els.stack.addEventListener("click", async e => {
 
 function attachSwipe(el, card) {
   let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false;
+  let axis = null; // "x" or "y" - 最初の動きで方向を決め、以後はその軸だけにスライドを制限する
 
   const likeFlag = el.querySelector(".flag-like");
   const nopeFlag = el.querySelector(".flag-nope");
@@ -235,9 +236,12 @@ function attachSwipe(el, card) {
   const backFlag = el.querySelector(".flag-back");
   const flags = [likeFlag, nopeFlag, skipFlag, backFlag];
 
+  const AXIS_LOCK_THRESHOLD = 8;
+
   function onStart(x, y) {
     dragging = true;
     startX = x; startY = y;
+    axis = null;
     el.classList.add("dragging");
   }
 
@@ -245,12 +249,20 @@ function attachSwipe(el, card) {
     if (!dragging) return;
     dx = x - startX;
     dy = y - startY;
-    el.style.transform = `translate(${dx}px, ${dy}px)`;
+
+    if (!axis && (Math.abs(dx) > AXIS_LOCK_THRESHOLD || Math.abs(dy) > AXIS_LOCK_THRESHOLD)) {
+      axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    }
+
+    const moveX = axis === "y" ? 0 : dx;
+    const moveY = axis === "x" ? 0 : dy;
+    el.style.transform = `translate(${moveX}px, ${moveY}px)`;
+
     flags.forEach(f => f.style.opacity = 0);
-    if (Math.abs(dx) >= Math.abs(dy)) {
+    if (axis === "x") {
       const ratio = Math.min(Math.abs(dx) / 120, 1);
       (dx > 0 ? likeFlag : nopeFlag).style.opacity = ratio;
-    } else {
+    } else if (axis === "y") {
       const ratio = Math.min(Math.abs(dy) / 120, 1);
       (dy < 0 ? skipFlag : backFlag).style.opacity = ratio;
     }
