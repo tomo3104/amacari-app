@@ -36,6 +36,10 @@ const els = {
   archiveView: document.getElementById("archive-view"),
   archiveList: document.getElementById("archive-list"),
   archiveEmpty: document.getElementById("archive-empty"),
+  statsView: document.getElementById("stats-view"),
+  statsMonthlyList: document.getElementById("stats-monthly-list"),
+  statsDailyList: document.getElementById("stats-daily-list"),
+  statsEmpty: document.getElementById("stats-empty"),
   modal: document.getElementById("reason-modal"),
   reasonGrid: document.querySelector(".reason-grid"),
   otherInput: document.getElementById("reason-other-input"),
@@ -70,6 +74,20 @@ async function loadArchive() {
     renderArchive(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+async function loadStats() {
+  els.statsEmpty.textContent = "読み込み中…";
+  els.statsEmpty.style.display = "block";
+  els.statsMonthlyList.innerHTML = "";
+  els.statsDailyList.innerHTML = "";
+  try {
+    const res = await fetch(gasUrl("purchasedStats"));
+    const data = await res.json();
+    renderStats(data.items || []);
+  } catch (e) {
+    els.statsEmpty.textContent = "読み込みに失敗しました。";
   }
 }
 
@@ -400,6 +418,65 @@ function renderArchive(items) {
   `).join("");
 }
 
+// ---------- 実績集計 ----------
+
+function aggregateBy(items, keyFn) {
+  const map = new Map();
+  items.forEach(item => {
+    const key = keyFn(item.date);
+    if (!key) return;
+    if (!map.has(key)) map.set(key, { key, count: 0, sales: 0, cost: 0, profit: 0 });
+    const a = map.get(key);
+    a.count += 1;
+    a.sales += num(item.amazon_price);
+    a.cost += num(item.mercari_price);
+    a.profit += num(item.diff);
+  });
+  return Array.from(map.values()).sort((a, b) => a.key < b.key ? 1 : -1);
+}
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function renderStatRow(agg, label) {
+  const margin = agg.sales ? agg.profit / agg.sales * 100 : 0;
+  const roi = agg.cost ? agg.profit / agg.cost * 100 : 0;
+  return `
+    <li class="stats-row">
+      <div class="stats-row-head">
+        <span class="stats-date">${escapeHtml(label)}</span>
+        <span class="stats-count">${agg.count}件</span>
+      </div>
+      <div class="stats-row-grid">
+        <div><span>見込売上</span>¥${agg.sales.toLocaleString()}</div>
+        <div><span>見込仕入額</span>¥${agg.cost.toLocaleString()}</div>
+        <div><span>見込利益</span>¥${agg.profit.toLocaleString()}</div>
+        <div><span>利益率</span>${margin.toFixed(1)}%</div>
+        <div><span>ROI</span>${roi.toFixed(1)}%</div>
+      </div>
+    </li>
+  `;
+}
+
+function renderStats(items) {
+  if (items.length === 0) {
+    els.statsEmpty.textContent = "購入済みの商品はまだありません。";
+    els.statsEmpty.style.display = "block";
+    return;
+  }
+  els.statsEmpty.style.display = "none";
+
+  const monthly = aggregateBy(items, date => date.slice(0, 7));
+  const daily = aggregateBy(items, date => date.slice(0, 10));
+
+  els.statsMonthlyList.innerHTML = monthly.map(agg =>
+    renderStatRow(agg, agg.key.replace("-", "年") + "月")
+  ).join("");
+  els.statsDailyList.innerHTML = daily.map(agg => renderStatRow(agg, agg.key)).join("");
+}
+
 els.archiveList.addEventListener("click", async e => {
   const btn = e.target.closest("button[data-action]");
   if (!btn) return;
@@ -425,20 +502,21 @@ els.archiveList.addEventListener("click", async e => {
 
 // ---------- タブ切り替え ----------
 
+const VIEWS = {
+  review: { el: els.reviewView, load: loadCards },
+  archive: { el: els.archiveView, load: loadArchive },
+  stats: { el: els.statsView, load: loadStats },
+};
+
 els.tabs.forEach(tab => {
   tab.addEventListener("click", () => {
     els.tabs.forEach(t => t.classList.remove("active"));
     tab.classList.add("active");
     const view = tab.dataset.view;
-    if (view === "review") {
-      els.reviewView.classList.remove("hidden");
-      els.archiveView.classList.add("hidden");
-      loadCards();
-    } else {
-      els.reviewView.classList.add("hidden");
-      els.archiveView.classList.remove("hidden");
-      loadArchive();
-    }
+    Object.entries(VIEWS).forEach(([key, v]) => {
+      v.el.classList.toggle("hidden", key !== view);
+    });
+    VIEWS[view].load();
   });
 });
 

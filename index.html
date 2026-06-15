@@ -7,7 +7,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <header class="topbar">
@@ -15,6 +15,7 @@
   <nav class="tabs">
     <button class="tab active" data-view="review">レビュー</button>
     <button class="tab" data-view="archive">アーカイブ</button>
+    <button class="tab" data-view="stats">実績</button>
   </nav>
 </header>
 
@@ -44,6 +45,18 @@
   <p class="empty-message" id="archive-empty">読み込み中…</p>
 </main>
 
+<main id="stats-view" class="view hidden">
+  <section class="stats-section">
+    <h2 class="stats-heading">月別累計</h2>
+    <ul id="stats-monthly-list" class="stats-list"></ul>
+  </section>
+  <section class="stats-section">
+    <h2 class="stats-heading">日別</h2>
+    <ul id="stats-daily-list" class="stats-list"></ul>
+  </section>
+  <p class="empty-message" id="stats-empty">読み込み中…</p>
+</main>
+
 <!-- 却下理由ピッカー -->
 <div id="reason-modal" class="modal hidden">
   <div class="modal-card">
@@ -64,6 +77,6 @@
   </div>
 </div>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
