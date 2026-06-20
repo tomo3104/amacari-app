@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      1.7
-// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加
+// @version      1.8
+// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加（aタグ方式で確実に新タブ）
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -120,15 +120,15 @@
 
                 btn.dataset.monoTracerAdded = 'true';
 
-                const monoBtn = document.createElement('button');
+                const monoBtn = document.createElement('a');
                 monoBtn.innerText = 'モノトレ';
+                monoBtn.href = 'https://mono-tracer.com/#/product/' + asin;
+                monoBtn.target = '_blank';
+                monoBtn.rel = 'noopener noreferrer';
                 monoBtn.style.cssText = btn.style.cssText || '';
                 monoBtn.style.marginLeft = '4px';
-                monoBtn.addEventListener('click', function (e) {
-                    e.stopImmediatePropagation();
-                    e.preventDefault();
-                    window.open('https://mono-tracer.com/#/product/' + asin, '_blank', 'noopener,noreferrer');
-                });
+                monoBtn.style.display = 'inline-block';
+                monoBtn.style.textDecoration = 'none';
 
                 btn.insertAdjacentElement('afterend', monoBtn);
             } catch (err) {
