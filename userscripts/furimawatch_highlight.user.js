@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く
+// @version      1.7
+// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // ==/UserScript==
@@ -98,9 +98,47 @@
         });
     }
 
+    // ========== モノトレーサーボタン追加 ==========
+    function addMonoTracerButtons() {
+        document.querySelectorAll('button').forEach(btn => {
+            const text = btn.innerText.trim();
+            if (text !== '商品ページ') return;
+            if (btn.dataset.monoTracerAdded) return;
+
+            try {
+                const scope = angular.element(btn).scope();
+                const query = scope.timelineRow.query;
+                const source = (query && (query.name || query.memo)) || '';
+                const asinMatch = source.match(/\bB0[A-Z0-9]{8}\b/) || source.match(/\b[A-Z0-9]{10}\b/);
+                if (!asinMatch) {
+                    btn.dataset.monoTracerAdded = 'true'; // ASINなしは以後スキップ
+                    return;
+                }
+                const asin = asinMatch[0];
+
+                btn.dataset.monoTracerAdded = 'true';
+
+                const monoBtn = document.createElement('button');
+                monoBtn.innerText = 'モノトレ';
+                monoBtn.style.cssText = btn.style.cssText || '';
+                monoBtn.style.marginLeft = '4px';
+                monoBtn.addEventListener('click', function (e) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                    window.open('https://mono-tracer.com/#/product/' + asin, '_blank', 'noopener,noreferrer');
+                });
+
+                btn.insertAdjacentElement('afterend', monoBtn);
+            } catch (err) {
+                console.error('モノトレボタン追加エラー:', err);
+            }
+        });
+    }
+
     function run() {
         highlight();
         fixButtons();
+        addMonoTracerButtons();
     }
 
     window.addEventListener('load', () => {
