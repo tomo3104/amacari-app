@@ -5,6 +5,8 @@
 // @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加
 // @match        https://www.furimawatch.net/*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
+// @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
 // ==/UserScript==
 
 (function () {
