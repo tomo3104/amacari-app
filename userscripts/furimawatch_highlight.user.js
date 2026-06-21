@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      1.9
-// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加（iOS新タブ不発対策）
+// @version      2.0
+// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆利益率15%以上をローカルサーバーに通知
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -11,6 +11,54 @@
 
 (function () {
     'use strict';
+
+    const MIN_PROFIT_RATE = 0.15;
+    const SERVER_URL = 'http://localhost:8768/furima-hit';
+    const LS_KEY = 'furimaNotifiedCache';
+
+    function getNotifiedCache() {
+        try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; }
+    }
+    function setNotifiedCache(cache) {
+        try { localStorage.setItem(LS_KEY, JSON.stringify(cache)); } catch (e) { /* noop */ }
+    }
+
+    // ========== 利益率15%以上をローカルサーバーへ通知 ==========
+    function sendHit(row, profitRate, frimPrice, limitPrice) {
+        try {
+            const scope = angular.element(row).scope();
+            const tr = scope && scope.timelineRow;
+            if (!tr || !tr.item) return;
+
+            const itemid = tr.watchid || tr.item.iid;
+            if (!itemid) return;
+
+            const cache = getNotifiedCache();
+            if (cache[itemid] === frimPrice) return; // このブラウザでは価格変化なし→送信スキップ（サーバー側でも最終判定する）
+
+            const payload = {
+                itemid:     itemid,
+                name:       tr.item.name,
+                price:      frimPrice,
+                limitPrice: limitPrice,
+                profitRate: Math.round(profitRate * 1000) / 10,
+                itemUrl:    tr.item.itemUrl,
+                imageUrl:   (tr.item.imageUrls && tr.item.imageUrls[0]) || '',
+                service:    tr.item.service || '',
+            };
+
+            fetch(SERVER_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }).then(() => {
+                cache[itemid] = frimPrice;
+                setNotifiedCache(cache);
+            }).catch(() => { /* ローカルサーバー未起動時は無視 */ });
+        } catch (err) {
+            console.error('フリマ通知送信エラー:', err);
+        }
+    }
 
     function getProfitStyle(rate) {
         if (rate >= 0.51) return { bg: 'linear-gradient(90deg, #e3f2fd, #bbdefb)', border: '#1565c0', badge: '#1565c0' }; // 青：51%以上
@@ -45,6 +93,10 @@
             if (limitPrice <= 0) return;
 
             const profitRate = (limitPrice - frimPrice) / limitPrice;
+
+            if (profitRate >= MIN_PROFIT_RATE) {
+                sendHit(row, profitRate, frimPrice, limitPrice);
+            }
 
             const existingBadge = row.querySelector('.profit-badge');
             if (existingBadge) existingBadge.remove();
