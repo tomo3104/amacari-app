@@ -20,9 +20,16 @@ const state = {
   sort: "new",
   lastRejected: null,   // 巻き戻し用：直前に却下したカード
   pendingReject: null,  // 理由選択待ちのカード
+  pendingRejectSource: "amacari", // 理由選択待ちカードの種類："amacari" or "furima"
   skipStack: [],        // 後回し（上スワイプ）したカードのスタック：下スワイプで呼び戻す
   swipeBlocked: false,  // 理由選択中はスワイプ不可
   totalCount: 0,        // 読み込み時点の精査待ち件数（進捗表示の分母）
+
+  // フリマウォッチ監視タブ用
+  furimaCards: [],
+  furimaLastRejected: null,
+  furimaSkipStack: [],
+  furimaTotalCount: 0,
 };
 
 const els = {
@@ -40,6 +47,11 @@ const els = {
   statsMonthlyList: document.getElementById("stats-monthly-list"),
   statsDailyList: document.getElementById("stats-daily-list"),
   statsEmpty: document.getElementById("stats-empty"),
+  furimaView: document.getElementById("furima-view"),
+  furimaStack: document.getElementById("furima-card-stack"),
+  furimaEmpty: document.getElementById("furima-empty-message"),
+  furimaProgressLabel: document.getElementById("furima-progress-label"),
+  furimaUndoBtn: document.getElementById("furima-undo-btn"),
   modal: document.getElementById("reason-modal"),
   reasonGrid: document.querySelector(".reason-grid"),
   otherInput: document.getElementById("reason-other-input"),
@@ -88,6 +100,21 @@ async function loadStats() {
     renderStats(data.items || []);
   } catch (e) {
     els.statsEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+async function loadFurimaCards() {
+  els.furimaEmpty.textContent = "読み込み中…";
+  els.furimaEmpty.style.display = "block";
+  try {
+    const res = await fetch(gasUrl("furimaCards"));
+    const data = await res.json();
+    state.furimaCards = data.cards || [];
+    state.furimaSkipStack = [];
+    state.furimaTotalCount = state.furimaCards.length;
+    renderFurimaStack();
+  } catch (e) {
+    els.furimaEmpty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
   }
 }
 
@@ -186,6 +213,77 @@ function buildCardEl(card) {
   return el;
 }
 
+// ---------- フリマウォッチ監視タブ：カードのレンダリング ----------
+
+function renderFurimaStack() {
+  els.furimaStack.querySelectorAll(".card").forEach(c => c.remove());
+
+  const done = Math.max(state.furimaTotalCount - state.furimaCards.length, 0);
+  els.furimaProgressLabel.textContent = `${done} / ${state.furimaTotalCount}`;
+
+  if (state.furimaCards.length === 0) {
+    els.furimaEmpty.textContent = "判定待ちの商品はありません。お疲れさまでした。";
+    els.furimaEmpty.style.display = "block";
+    return;
+  }
+  els.furimaEmpty.style.display = "none";
+
+  const visible = state.furimaCards.slice(0, 3).reverse();
+  visible.forEach((card, i) => {
+    const el = buildFurimaCardEl(card);
+    const depthFromTop = visible.length - 1 - i;
+    el.style.zIndex = String(100 - depthFromTop);
+    el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
+    if (depthFromTop === 0) attachSwipe(el, card, "furima");
+    els.furimaStack.appendChild(el);
+  });
+}
+
+function buildFurimaCardEl(card) {
+  const el = document.createElement("div");
+  el.className = "card";
+
+  const thumb = card.image_url
+    ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
+    : `<div class="card-thumb"></div>`;
+
+  const links = [
+    `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}" target="_blank" rel="noopener">商品ページ</a>`,
+  ];
+  if (card.asin) {
+    links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>`);
+    links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>`);
+    links.push(`<a class="link-btn link-keepa" href="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=5&amazon=1&new=1&used=1&salesrank=1&range=180&width=1500&height=600&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff" target="_blank" rel="noopener">Keepa</a>`);
+  }
+
+  el.innerHTML = `
+    <div class="swipe-flag flag-like">仕入れ対象</div>
+    <div class="swipe-flag flag-nope">却下</div>
+    <div class="swipe-flag flag-skip">あとで</div>
+    <div class="swipe-flag flag-back">戻る</div>
+    ${thumb}
+    <div class="card-body">
+      <p class="card-name">${escapeHtml(card.name)}</p>
+      <p class="card-sub">サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
+      <div class="card-highlight">
+        <div class="highlight-box highlight-margin">
+          <span class="label">利益率</span>
+          <span class="value">${formatPercent(card.margin)}</span>
+        </div>
+      </div>
+      <div class="card-grid">
+        <div><span>価格</span>${formatYen(card.price)}</div>
+        <div><span>上限価格</span>${formatYen(card.limit_price)}</div>
+        <div><span>差額</span>${formatYen(card.diff)}</div>
+      </div>
+      <div class="card-links">
+        ${links.join("\n")}
+      </div>
+    </div>
+  `;
+  return el;
+}
+
 // ---------- Keepaグラフ再読込 ----------
 
 els.stack.addEventListener("click", e => {
@@ -226,7 +324,8 @@ els.stack.addEventListener("click", async e => {
 
 // ---------- スワイプ操作 ----------
 
-function attachSwipe(el, card) {
+function attachSwipe(el, card, source) {
+  source = source || "amacari";
   let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false;
   let axis = null; // "x" or "y" - 最初の動きで方向を決め、以後はその軸だけにスライドを制限する
 
@@ -276,9 +375,9 @@ function attachSwipe(el, card) {
     const absX = Math.abs(dx), absY = Math.abs(dy);
     if (absX >= absY && absX > threshold) {
       if (dx < 0) state.swipeBlocked = true; // 左スワイプ確定→理由選択まで次をブロック
-      finishSwipe(el, card, dx > 0 ? "right" : "left");
+      finishSwipe(el, card, dx > 0 ? "right" : "left", source);
     } else if (absY > absX && absY > threshold) {
-      finishVerticalSwipe(el, card, dy < 0 ? "up" : "down");
+      finishVerticalSwipe(el, card, dy < 0 ? "up" : "down", source);
     } else {
       el.style.transform = "";
       flags.forEach(f => f.style.opacity = 0);
@@ -296,80 +395,107 @@ function attachSwipe(el, card) {
   el.addEventListener("pointercancel", onEnd);
 }
 
-function finishSwipe(el, card, direction) {
+function finishSwipe(el, card, direction, source) {
+  source = source || "amacari";
+  const isFurima = source === "furima";
   const flyX = direction === "right" ? window.innerWidth : -window.innerWidth;
   el.style.transform = `translateX(${flyX}px)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
     el.remove();
-    state.cards = state.cards.filter(c => c.row !== card.row);
-    if (direction === "right") {
-      judge(card, "仕入れ対象", "");
+    if (isFurima) {
+      state.furimaCards = state.furimaCards.filter(c => c.row !== card.row);
     } else {
-      openReasonModal(card);
+      state.cards = state.cards.filter(c => c.row !== card.row);
     }
-    renderStack();
+    if (direction === "right") {
+      judge(card, "仕入れ対象", "", source);
+    } else {
+      openReasonModal(card, source);
+    }
+    isFurima ? renderFurimaStack() : renderStack();
   }, 220);
 }
 
 // 上スワイプ＝後回し（末尾に送る）／下スワイプ＝直前に後回しにした1件を呼び戻す
 // シートへの書き込みは行わず、画面内の表示順だけを変える
-function finishVerticalSwipe(el, card, direction) {
+function finishVerticalSwipe(el, card, direction, source) {
+  source = source || "amacari";
+  const isFurima = source === "furima";
   const flyY = direction === "up" ? -window.innerHeight : window.innerHeight;
   el.style.transform = `translateY(${flyY}px)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
     el.remove();
+    const cardsKey = isFurima ? "furimaCards" : "cards";
+    const skipKey = isFurima ? "furimaSkipStack" : "skipStack";
     if (direction === "up") {
-      state.cards = state.cards.filter(c => c.row !== card.row);
-      state.cards.push(card);
-      state.skipStack.push(card);
+      state[cardsKey] = state[cardsKey].filter(c => c.row !== card.row);
+      state[cardsKey].push(card);
+      state[skipKey].push(card);
     } else {
-      const prev = state.skipStack.pop();
+      const prev = state[skipKey].pop();
       if (prev) {
-        state.cards = state.cards.filter(c => c.row !== prev.row);
-        state.cards.unshift(prev);
+        state[cardsKey] = state[cardsKey].filter(c => c.row !== prev.row);
+        state[cardsKey].unshift(prev);
       }
     }
-    renderStack();
+    isFurima ? renderFurimaStack() : renderStack();
   }, 220);
 }
 
 // ---------- 判定の送信 ----------
 
-async function judge(card, judgment, reason) {
+async function judge(card, judgment, reason, source) {
+  source = source || "amacari";
+  const isFurima = source === "furima";
   try {
-    await gasPost("judge", { row: card.row, judgment, reason });
+    await gasPost(isFurima ? "furimaJudge" : "judge", { row: card.row, judgment, reason });
     if (judgment === "却下") {
-      state.lastRejected = card;
-      els.undoBtn.disabled = false;
+      if (isFurima) {
+        state.furimaLastRejected = card;
+        els.furimaUndoBtn.disabled = false;
+      } else {
+        state.lastRejected = card;
+        els.undoBtn.disabled = false;
+      }
     }
   } catch (e) {
     alert("判定の保存に失敗しました。通信状況を確認してください。");
   }
 }
 
-async function undoLastReject() {
-  const card = state.lastRejected;
+async function undoLastReject(source) {
+  source = source || "amacari";
+  const isFurima = source === "furima";
+  const card = isFurima ? state.furimaLastRejected : state.lastRejected;
   if (!card) return;
-  els.undoBtn.disabled = true;
+  const btn = isFurima ? els.furimaUndoBtn : els.undoBtn;
+  btn.disabled = true;
   try {
-    await gasPost("undo", { row: card.row });
-    state.lastRejected = null;
-    state.cards.unshift(card);
-    renderStack();
+    await gasPost(isFurima ? "furimaUndo" : "undo", { row: card.row });
+    if (isFurima) {
+      state.furimaLastRejected = null;
+      state.furimaCards.unshift(card);
+      renderFurimaStack();
+    } else {
+      state.lastRejected = null;
+      state.cards.unshift(card);
+      renderStack();
+    }
   } catch (e) {
     alert("巻き戻しに失敗しました。");
-    els.undoBtn.disabled = false;
+    btn.disabled = false;
   }
 }
 
 // ---------- 却下理由モーダル ----------
 
-function openReasonModal(card) {
+function openReasonModal(card, source) {
   state.pendingReject = card;
+  state.pendingRejectSource = source || "amacari";
   els.otherInput.classList.add("hidden");
   els.otherText.value = "";
   els.modal.classList.remove("hidden");
@@ -390,15 +516,17 @@ els.reasonGrid.addEventListener("click", e => {
     return;
   }
   const card = state.pendingReject;
+  const source = state.pendingRejectSource;
   closeReasonModal();
-  if (card) judge(card, "却下", btn.dataset.reason);
+  if (card) judge(card, "却下", btn.dataset.reason, source);
 });
 
 els.otherSubmit.addEventListener("click", () => {
   const card = state.pendingReject;
+  const source = state.pendingRejectSource;
   const text = els.otherText.value.trim() || "その他";
   closeReasonModal();
-  if (card) judge(card, "却下", text);
+  if (card) judge(card, "却下", text, source);
 });
 
 // ---------- アーカイブ ----------
@@ -518,6 +646,7 @@ const VIEWS = {
   review: { el: els.reviewView, load: loadCards },
   archive: { el: els.archiveView, load: loadArchive },
   stats: { el: els.statsView, load: loadStats },
+  furima: { el: els.furimaView, load: loadFurimaCards },
 };
 
 els.tabs.forEach(tab => {
@@ -537,7 +666,8 @@ els.sortSelect.addEventListener("change", () => {
   loadCards();
 });
 
-els.undoBtn.addEventListener("click", undoLastReject);
+els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
+els.furimaUndoBtn.addEventListener("click", () => undoLastReject("furima"));
 
 // ---------- ユーティリティ ----------
 
