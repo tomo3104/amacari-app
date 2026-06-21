@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆利益率15%以上をASIN付きでローカルサーバーに通知
+// @version      2.2
+// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆利益率15%以上をASIN付きでローカルサーバーに通知＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -199,6 +199,10 @@
         addMonoTracerButtons();
     }
 
+    // フリマウォッチは手動更新（メニューの更新ボタン／ブラウザの再読込）でしか
+    // タイムラインが更新されないため、無人運用時は定期的にページ自体をリロードする
+    const AUTO_RELOAD_INTERVAL_MS = 60 * 60 * 1000; // 1時間
+
     window.addEventListener('load', () => {
         setTimeout(run, 1500);
 
@@ -212,6 +216,8 @@
             setTimeout(run, 500);
         });
         observer.observe(document.body, { childList: true, subtree: true });
+
+        setTimeout(() => location.reload(), AUTO_RELOAD_INTERVAL_MS);
     });
 
     window.addEventListener('hashchange', () => {
