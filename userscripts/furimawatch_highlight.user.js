@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆利益率15%以上をローカルサーバーに通知
+// @version      2.1
+// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆利益率15%以上をASIN付きでローカルサーバーに通知
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -36,6 +36,9 @@
             const cache = getNotifiedCache();
             if (cache[itemid] === frimPrice) return; // このブラウザでは価格変化なし→送信スキップ（サーバー側でも最終判定する）
 
+            const querySource = (tr.query && (tr.query.name || tr.query.memo)) || '';
+            const asinMatch = querySource.match(/\bB0[A-Z0-9]{8}\b/) || querySource.match(/\b[A-Z0-9]{10}\b/);
+
             const payload = {
                 itemid:     itemid,
                 name:       tr.item.name,
@@ -45,6 +48,7 @@
                 itemUrl:    tr.item.itemUrl,
                 imageUrl:   (tr.item.imageUrls && tr.item.imageUrls[0]) || '',
                 service:    tr.item.service || '',
+                asin:       asinMatch ? asinMatch[0] : '',
             };
 
             fetch(SERVER_URL, {
