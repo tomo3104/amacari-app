@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をラジオボタンUI化）
+// @version      1.4
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -273,23 +273,38 @@
         function makeOption(value, label, checked) {
             const wrap = document.createElement('label');
             wrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:14px; color:#333; cursor:pointer;';
-            const radio = document.createElement('input');
-            radio.type = 'radio';
-            radio.name = 'group-picker';
-            radio.value = value;
-            radio.checked = !!checked;
-            wrap.appendChild(radio);
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'group-picker-check';
+            checkbox.value = value;
+            checkbox.checked = !!checked;
+            wrap.appendChild(checkbox);
             const span = document.createElement('span');
             span.textContent = label;
             wrap.appendChild(span);
             return wrap;
         }
 
-        list.appendChild(makeOption('ALL', `ALL（全件・${mfrs.length}件）`, true));
-        groups.forEach(g => {
-            list.appendChild(makeOption(g, `${g}（${groupCounts[g]}件）`, false));
+        const allCheckEl = makeOption('ALL', `ALL（全件・${mfrs.length}件）`, true);
+        list.appendChild(allCheckEl);
+        const groupEls = groups.map(g => {
+            const el = makeOption(g, `${g}（${groupCounts[g]}件）`, false);
+            list.appendChild(el);
+            return el;
         });
         box.appendChild(list);
+
+        // ALLを選んだら個別グループは自動解除、個別グループを選んだらALLは自動解除
+        const allCheckbox = allCheckEl.querySelector('input');
+        const groupCheckboxes = groupEls.map(el => el.querySelector('input'));
+        allCheckbox.addEventListener('change', () => {
+            if (allCheckbox.checked) groupCheckboxes.forEach(c => { c.checked = false; });
+        });
+        groupCheckboxes.forEach(c => {
+            c.addEventListener('change', () => {
+                if (c.checked) allCheckbox.checked = false;
+            });
+        });
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = 'display:flex; gap:8px;';
@@ -315,24 +330,27 @@
 
         cancelBtn.onclick = () => overlay.remove();
         okBtn.onclick = () => {
-            const selected = (list.querySelector('input[name="group-picker"]:checked') || {}).value || 'ALL';
+            const checked = Array.from(list.querySelectorAll('.group-picker-check:checked')).map(c => c.value);
+            const selected = checked.length > 0 ? checked : ['ALL'];
             overlay.remove();
-            runBatchWithGroup(mfrs, selected);
+            runBatchWithGroups(mfrs, selected);
         };
     }
 
-    function runBatchWithGroup(mfrs, selected) {
-        const filtered = selected === 'ALL' ? mfrs : mfrs.filter(m => (m.group || '').toUpperCase() === selected.toUpperCase());
+    function runBatchWithGroups(mfrs, selected) {
+        const targets = selected.map(s => s.toUpperCase());
+        const filtered = targets.includes('ALL') ? mfrs : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
+        const label = targets.includes('ALL') ? 'ALL' : selected.join(',');
 
         if (filtered.length === 0) {
-            updateStatus(`グループ「${selected}」は見つかりません`);
+            updateStatus(`グループ「${label}」は見つかりません`);
             return;
         }
 
         localStorage.setItem('batchMode',  'true');
         localStorage.setItem('batchList',  JSON.stringify(filtered.map(m => ({name: m.name, url: m.url}))));
         localStorage.setItem('batchIndex', '0');
-        updateStatus(`クローラーリサーチ開始 ${filtered.length}件（グループ:${selected}）`);
+        updateStatus(`クローラーリサーチ開始 ${filtered.length}件（グループ:${label}）`);
         setTimeout(goNextBatch, 1000);
     }
 
