@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      4.2
-// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトを売り切れ条件＋チェックボックスUI化）
+// @version      4.3
+// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -197,7 +197,7 @@
 
     // ========== クローラーコレクト ==========
     // 型番収集は「売り切れ（販売済み）」商品から行う方針のため、crawl_url（F列・status=sold_out）を使用する
-    const MFR_URL      = 'http://localhost:8766/get-manufacturers';
+    const MFR_URL      = 'http://localhost:8765/get-manufacturers';
     const BATCH_CONDITIONS = 'status=sold_out&item_condition_id=1&shipping_payer_id=2';
 
     function showCrawlerGroupPicker(mfrs) {
