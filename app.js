@@ -79,8 +79,8 @@ async function loadCards() {
 }
 
 async function loadArchive() {
-  if (els.archiveModeSelect.value === "auto-rejected") {
-    return loadAutoRejected();
+  if (els.archiveModeSelect.value === "rejected") {
+    return loadRejected();
   }
   els.autoRejectedList.classList.add("hidden");
   els.archiveList.classList.remove("hidden");
@@ -96,16 +96,16 @@ async function loadArchive() {
   }
 }
 
-async function loadAutoRejected() {
+async function loadRejected() {
   els.archiveList.classList.add("hidden");
   els.autoRejectedList.classList.remove("hidden");
   els.archiveEmpty.textContent = "読み込み中…";
   els.archiveEmpty.style.display = "block";
   els.autoRejectedList.innerHTML = "";
   try {
-    const res = await fetch(gasUrl("autoRejected"));
+    const res = await fetch(gasUrl("rejected"));
     const data = await res.json();
-    renderAutoRejected(data.items || []);
+    renderRejected(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
   }
@@ -580,9 +580,9 @@ function renderArchive(items) {
   `).join("");
 }
 
-function renderAutoRejected(items) {
+function renderRejected(items) {
   if (items.length === 0) {
-    els.archiveEmpty.textContent = "自動却下された商品はありません。";
+    els.archiveEmpty.textContent = "却下された商品はありません。";
     els.archiveEmpty.style.display = "block";
     return;
   }
@@ -592,12 +592,12 @@ function renderAutoRejected(items) {
       ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
       <div class="archive-info">
         <p class="name">${escapeHtml(item.name)}</p>
-        <p class="meta">利益率 ${formatPercent(item.margin)} ／ ROI ${formatPercent(item.roi)} ／ 自動却下理由：${escapeHtml(item.reason)}</p>
+        <p class="meta">利益率 ${formatPercent(item.margin)} ／ ROI ${formatPercent(item.roi)} ／ 却下理由：${escapeHtml(item.reason)}${item.is_auto ? "（自動）" : ""}</p>
       </div>
       <div class="archive-actions">
         <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
-        <button data-action="restore" data-reason="${escapeAttr(item.reason)}">やっぱり仕入れ対象</button>
-        <button data-action="confirm" data-reason="${escapeAttr(item.reason)}">却下のままでOK</button>
+        <button data-action="restore">やっぱり仕入れ対象</button>
+        ${item.is_auto ? `<button data-action="confirm" data-reason="${escapeAttr(item.reason)}">却下のままでOK</button>` : ""}
       </div>
     </li>
   `).join("");
@@ -697,11 +697,11 @@ els.autoRejectedList.addEventListener("click", async e => {
   btn.textContent = "更新中…";
   try {
     if (action === "restore") {
-      await gasPost("restoreAutoRejected", { row });
+      await gasPost("restoreRejected", { row });
     } else if (action === "confirm") {
       await gasPost("confirmAutoRejected", { row, reason });
     }
-    loadAutoRejected();
+    loadRejected();
   } catch (e) {
     btn.disabled = false;
     btn.textContent = original;
