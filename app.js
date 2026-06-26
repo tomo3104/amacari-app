@@ -43,6 +43,8 @@ const els = {
   archiveView: document.getElementById("archive-view"),
   archiveList: document.getElementById("archive-list"),
   archiveEmpty: document.getElementById("archive-empty"),
+  archiveModeSelect: document.getElementById("archive-mode-select"),
+  autoRejectedList: document.getElementById("auto-rejected-list"),
   statsView: document.getElementById("stats-view"),
   statsMonthlyList: document.getElementById("stats-monthly-list"),
   statsDailyList: document.getElementById("stats-daily-list"),
@@ -77,6 +79,11 @@ async function loadCards() {
 }
 
 async function loadArchive() {
+  if (els.archiveModeSelect.value === "auto-rejected") {
+    return loadAutoRejected();
+  }
+  els.autoRejectedList.classList.add("hidden");
+  els.archiveList.classList.remove("hidden");
   els.archiveEmpty.textContent = "読み込み中…";
   els.archiveEmpty.style.display = "block";
   els.archiveList.innerHTML = "";
@@ -84,6 +91,21 @@ async function loadArchive() {
     const res = await fetch(gasUrl("archive"));
     const data = await res.json();
     renderArchive(data.items || []);
+  } catch (e) {
+    els.archiveEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+async function loadAutoRejected() {
+  els.archiveList.classList.add("hidden");
+  els.autoRejectedList.classList.remove("hidden");
+  els.archiveEmpty.textContent = "読み込み中…";
+  els.archiveEmpty.style.display = "block";
+  els.autoRejectedList.innerHTML = "";
+  try {
+    const res = await fetch(gasUrl("autoRejected"));
+    const data = await res.json();
+    renderAutoRejected(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
   }
@@ -558,6 +580,29 @@ function renderArchive(items) {
   `).join("");
 }
 
+function renderAutoRejected(items) {
+  if (items.length === 0) {
+    els.archiveEmpty.textContent = "自動却下された商品はありません。";
+    els.archiveEmpty.style.display = "block";
+    return;
+  }
+  els.archiveEmpty.style.display = "none";
+  els.autoRejectedList.innerHTML = items.map(item => `
+    <li class="archive-item" data-row="${item.row}">
+      ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
+      <div class="archive-info">
+        <p class="name">${escapeHtml(item.name)}</p>
+        <p class="meta">利益率 ${formatPercent(item.margin)} ／ ROI ${formatPercent(item.roi)} ／ 自動却下理由：${escapeHtml(item.reason)}</p>
+      </div>
+      <div class="archive-actions">
+        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
+        <button data-action="restore" data-reason="${escapeAttr(item.reason)}">やっぱり仕入れ対象</button>
+        <button data-action="confirm" data-reason="${escapeAttr(item.reason)}">却下のままでOK</button>
+      </div>
+    </li>
+  `).join("");
+}
+
 // ---------- 実績集計 ----------
 
 function aggregateBy(items, keyFn) {
@@ -639,6 +684,32 @@ els.archiveList.addEventListener("click", async e => {
     alert("更新に失敗しました。");
   }
 });
+
+els.autoRejectedList.addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn) return;
+  const li = btn.closest(".archive-item");
+  const row = Number(li.dataset.row);
+  const action = btn.dataset.action;
+  const reason = btn.dataset.reason || "";
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "更新中…";
+  try {
+    if (action === "restore") {
+      await gasPost("restoreAutoRejected", { row });
+    } else if (action === "confirm") {
+      await gasPost("confirmAutoRejected", { row, reason });
+    }
+    loadAutoRejected();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = original;
+    alert("更新に失敗しました。");
+  }
+});
+
+els.archiveModeSelect.addEventListener("change", loadArchive);
 
 // ---------- タブ切り替え ----------
 

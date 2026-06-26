@@ -57,7 +57,16 @@
 </main>
 
 <main id="archive-view" class="view hidden">
+  <div class="toolbar">
+    <label>表示：
+      <select id="archive-mode-select">
+        <option value="normal" selected>仕入れ対象・購入済み</option>
+        <option value="auto-rejected">自動却下の確認</option>
+      </select>
+    </label>
+  </div>
   <ul id="archive-list" class="archive-list"></ul>
+  <ul id="auto-rejected-list" class="archive-list hidden"></ul>
   <p class="empty-message" id="archive-empty">読み込み中…</p>
 </main>
 
@@ -94,6 +103,6 @@
   </div>
 </div>
 
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
