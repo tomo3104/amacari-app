@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      2.2
-// @description  利益率に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆利益率15%以上をASIN付きでローカルサーバーに通知＆1時間ごとに自動リロード
+// @version      2.3
+// @description  実利益率（Amazon価格基準）に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆実利益率15%以上をASIN付きでローカルサーバーに通知＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -12,9 +12,33 @@
 (function () {
     'use strict';
 
-    const MIN_PROFIT_RATE = 0.15;
+    const MIN_PROFIT_RATE = 0.15; // 実利益率（Amazon価格基準）の閾値（2026-06-28変更：旧は上限価格基準だった）
     const SERVER_URL = 'http://localhost:8768/furima-hit';
     const LS_KEY = 'furimaNotifiedCache';
+
+    // 登録時のmemo（例："Amazon:10000円 ランク:12345 FBA:2000円 pmax:6500円"）からAmazon価格を取得
+    function getAmazonPriceFromRow(row) {
+        try {
+            const scope = angular.element(row).scope();
+            const tr = scope && scope.timelineRow;
+            const source = (tr && tr.query && (tr.query.memo || tr.query.name)) || '';
+            const m = source.match(/Amazon:(\d+)円/);
+            return m ? parseInt(m[1], 10) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // pmax = Amazon価格×0.85 - FBA手数料 で計算されているため、
+    // pmax地点での実利益は常にAmazon価格×0.15（FBA手数料は計算上相殺される）
+    // → 実利益率 = (差額 + Amazon価格×0.15) ÷ Amazon価格
+    // memoからAmazon価格が取れない場合（登録形式が古い等）は旧式（差額÷上限価格）にフォールバック
+    function calcRealMargin(diff, limitPrice, amazonPrice) {
+        if (amazonPrice) {
+            return (diff + amazonPrice * 0.15) / amazonPrice;
+        }
+        return diff / limitPrice;
+    }
 
     function getNotifiedCache() {
         try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; }
@@ -96,7 +120,9 @@
 
             if (limitPrice <= 0) return;
 
-            const profitRate = (limitPrice - frimPrice) / limitPrice;
+            const diff = limitPrice - frimPrice;
+            const amazonPrice = getAmazonPriceFromRow(row);
+            const profitRate = calcRealMargin(diff, limitPrice, amazonPrice);
 
             if (profitRate >= MIN_PROFIT_RATE) {
                 sendHit(row, profitRate, frimPrice, limitPrice);

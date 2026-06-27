@@ -289,7 +289,7 @@ function buildFurimaCardEl(card) {
       <p class="card-sub">サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
-          <span class="label">利益率</span>
+          <span class="label">実利益率</span>
           <span class="value">${formatPercent(card.margin)}</span>
         </div>
       </div>
