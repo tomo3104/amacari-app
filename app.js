@@ -202,8 +202,8 @@ function buildCardEl(card) {
       </p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
-          <span class="label">利益率</span>
-          <span class="value">${formatPercent(card.margin)}</span>
+          <span class="label">実利益率</span>
+          <span class="value">${formatPercent(card.real_margin)}</span>
         </div>
         <div class="highlight-box highlight-roi">
           <span class="label">ROI</span>
@@ -213,7 +213,7 @@ function buildCardEl(card) {
       <div class="card-grid">
         <div><span>Amazon価格</span>${formatYen(card.amazon_price)}</div>
         <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
-        <div><span>差額</span>${formatYen(card.diff)}</div>
+        <div><span>実利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
@@ -565,7 +565,7 @@ function renderArchive(items) {
       ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
       <div class="archive-info">
         <p class="name">${escapeHtml(item.name)}</p>
-        <p class="meta">利益率 ${formatPercent(item.margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
+        <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
       </div>
       <div class="archive-actions">
         <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
@@ -592,7 +592,7 @@ function renderRejected(items) {
       ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
       <div class="archive-info">
         <p class="name">${escapeHtml(item.name)}</p>
-        <p class="meta">利益率 ${formatPercent(item.margin)} ／ ROI ${formatPercent(item.roi)} ／ 却下理由：${escapeHtml(item.reason)}${item.is_auto ? "（自動）" : ""}</p>
+        <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ 却下理由：${escapeHtml(item.reason)}${item.is_auto ? "（自動）" : ""}</p>
       </div>
       <div class="archive-actions">
         <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
@@ -615,7 +615,7 @@ function aggregateBy(items, keyFn) {
     a.count += 1;
     a.sales += num(item.amazon_price);
     a.cost += num(item.mercari_price);
-    a.profit += num(item.diff);
+    a.profit += num(item.real_profit);
   });
   return Array.from(map.values()).sort((a, b) => a.key < b.key ? 1 : -1);
 }
@@ -637,8 +637,8 @@ function renderStatRow(agg, label) {
       <div class="stats-row-grid">
         <div><span>見込売上</span>¥${agg.sales.toLocaleString()}</div>
         <div><span>見込仕入額</span>¥${agg.cost.toLocaleString()}</div>
-        <div><span>見込利益</span>¥${agg.profit.toLocaleString()}</div>
-        <div><span>利益率</span>${margin.toFixed(1)}%</div>
+        <div><span>見込実利益</span>¥${agg.profit.toLocaleString()}</div>
+        <div><span>実利益率</span>${margin.toFixed(1)}%</div>
         <div><span>ROI</span>${roi.toFixed(1)}%</div>
       </div>
     </li>
