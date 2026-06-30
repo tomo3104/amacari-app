@@ -740,6 +740,12 @@ els.sortSelect.addEventListener("change", () => {
 els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
 els.furimaUndoBtn.addEventListener("click", () => undoLastReject("furima"));
 
+document.getElementById("reason-cancel-btn").addEventListener("click", () => {
+  const isFurima = state.pendingRejectSource === "furima";
+  closeReasonModal();
+  isFurima ? renderFurimaStack() : renderStack();
+});
+
 // ---------- ユーティリティ ----------
 
 function escapeHtml(s) {

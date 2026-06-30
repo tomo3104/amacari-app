@@ -94,8 +94,13 @@
       <button class="reason-btn" data-reason="回転悪い">回転悪い</button>
       <button class="reason-btn" data-reason="利益少ない">利益少ない</button>
       <button class="reason-btn" data-reason="リスク高い">リスク高い</button>
+      <button class="reason-btn" data-reason="売切れ">売切れ</button>
+      <button class="reason-btn" data-reason="高値仕入れ">高値仕入れ</button>
+      <button class="reason-btn" data-reason="セット数違い">セット数違い</button>
       <button class="reason-btn" data-reason="その他" id="reason-other-btn">その他</button>
+      <button class="reason-btn reason-btn--blacklist" data-reason="ブラックリスト" id="reason-blacklist-btn">🚫 ブラックリスト（永久除外）</button>
     </div>
+    <button id="reason-cancel-btn" class="reason-cancel-btn">← 戻る（却下しない）</button>
     <div id="reason-other-input" class="hidden">
       <input type="text" id="reason-other-text" placeholder="理由を入力">
       <button id="reason-other-submit">記録する</button>
