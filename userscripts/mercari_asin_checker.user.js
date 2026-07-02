@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -418,6 +418,31 @@
                 };
             }, 2000);
         });
+    }
+
+    // ========== 自動起動（タスクスケジューラ用） ==========
+    // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
+    if (localStorage.getItem('batchMode') !== 'true') {
+        const autoGroup = new URLSearchParams(location.search).get('auto_research');
+        if (autoGroup) {
+            window.addEventListener('load', () => {
+                setTimeout(() => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: MFR_URL,
+                        onload: function(res) {
+                            try {
+                                const mfrs = JSON.parse(res.responseText).manufacturers || [];
+                                if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
+                                const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
+                                runBatchWithGroups(mfrs, groups);
+                            } catch(e) { updateStatus('自動起動失敗: ' + e); }
+                        },
+                        onerror: () => updateStatus('サーバー未起動（auto_research）'),
+                    });
+                }, 3000);
+            });
+        }
     }
 
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
