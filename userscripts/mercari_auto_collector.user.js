@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      4.4
+// @version      4.5
 // @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -135,11 +135,14 @@
     }
 
     function triggerStep1() {
+        const isAuto = localStorage.getItem('autoPipeline') === 'true';
+        const url = isAuto ? 'http://localhost:8765/run-step1?auto=1' : 'http://localhost:8765/run-step1';
+        if (isAuto) localStorage.removeItem('autoPipeline');
         GM_xmlhttpRequest({
             method: 'POST',
-            url: 'http://localhost:8765/run-step1',
+            url: url,
             onload: function() {
-                updateStatus('完了！Step1を自動実行しました。');
+                updateStatus(isAuto ? '完了！Step1→Step2を自動実行中...' : '完了！Step1を自動実行しました。');
             },
             onerror: function() {
                 updateStatus('完了！（Step1を手動で実行してください）');
@@ -374,6 +377,7 @@
     if (localStorage.getItem('crawlerMode') !== 'true') {
         const autoGroup = new URLSearchParams(location.search).get('auto_crawl');
         if (autoGroup) {
+            localStorage.setItem('autoPipeline', 'true');
             window.addEventListener('load', () => {
                 setTimeout(() => {
                     GM_xmlhttpRequest({
