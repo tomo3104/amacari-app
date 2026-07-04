@@ -54,6 +54,10 @@ const els = {
   furimaEmpty: document.getElementById("furima-empty-message"),
   furimaProgressLabel: document.getElementById("furima-progress-label"),
   furimaUndoBtn: document.getElementById("furima-undo-btn"),
+  logView: document.getElementById("log-view"),
+  pipelineLogList: document.getElementById("pipeline-log-list"),
+  researchLogList: document.getElementById("research-log-list"),
+  logEmpty: document.getElementById("log-empty"),
   modal: document.getElementById("reason-modal"),
   reasonGrid: document.querySelector(".reason-grid"),
   otherInput: document.getElementById("reason-other-input"),
@@ -123,6 +127,56 @@ async function loadStats() {
   } catch (e) {
     els.statsEmpty.textContent = "読み込みに失敗しました。";
   }
+}
+
+async function loadLog() {
+  els.logEmpty.textContent = "読み込み中…";
+  els.logEmpty.style.display = "block";
+  els.pipelineLogList.innerHTML = "";
+  els.researchLogList.innerHTML = "";
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(gasUrl("pipelineLog")).then(r => r.json()),
+      fetch(gasUrl("researchLog")).then(r => r.json()),
+    ]);
+    els.logEmpty.style.display = "none";
+    renderPipelineLog(r1.rows || []);
+    renderResearchLog(r2.rows || []);
+  } catch (e) {
+    els.logEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+function renderPipelineLog(rows) {
+  if (rows.length === 0) {
+    els.pipelineLogList.innerHTML = "<p style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</p>";
+    return;
+  }
+  els.pipelineLogList.innerHTML = `
+    <table class="log-table">
+      <thead><tr>
+        <th>日時</th><th>収集</th><th>新規型番</th><th>調査</th><th>プレミアム</th><th>リスト追加</th><th>時間</th>
+      </tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${escapeHtml(r.datetime)}</td>
+        <td>${r.crawled}</td>
+        <td>${r.newModels}</td>
+        <td>${r.processed}</td>
+        <td>${r.premium}</td>
+        <td>${r.listAdded}</td>
+        <td>${r.durationMin}分</td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+}
+
+function renderResearchLog(rows) {
+  if (rows.length === 0) {
+    els.researchLogList.innerHTML = "<li style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</li>";
+    return;
+  }
+  els.researchLogList.innerHTML = rows.map(r =>
+    `<li class="stats-row"><div class="stats-row-head"><span class="stats-date">${escapeHtml(r.date)}</span><span class="stats-count">${r.hits}件ヒット</span></div></li>`
+  ).join("");
 }
 
 async function loadFurimaCards() {
@@ -718,6 +772,7 @@ const VIEWS = {
   archive: { el: els.archiveView, load: loadArchive },
   stats: { el: els.statsView, load: loadStats },
   furima: { el: els.furimaView, load: loadFurimaCards },
+  log: { el: els.logView, load: loadLog },
 };
 
 els.tabs.forEach(tab => {

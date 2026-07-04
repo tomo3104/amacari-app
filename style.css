@@ -499,3 +499,29 @@ body {
   background: var(--navy);
   color: white;
 }
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.log-table th {
+  background: var(--navy);
+  color: white;
+  padding: 8px 6px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.log-table td {
+  padding: 8px 6px;
+  text-align: center;
+  border-bottom: 1px solid #eee;
+}
+
+.log-table tr:last-child td { border-bottom: none; }
+.log-table tr:nth-child(even) td { background: #f9f9f9; }
