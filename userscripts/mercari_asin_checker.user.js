@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -384,6 +384,10 @@
             localStorage.removeItem('batchIndex');
             updateStatus(`クローラーリサーチ完了！ 全${list.length}件`);
             setRunningUI(false);
+            if (localStorage.getItem('autoResearch') === 'true') {
+                localStorage.removeItem('autoResearch');
+                setTimeout(() => window.close(), 5000);
+            }
             return;
         }
         const item = list[index];
@@ -425,6 +429,7 @@
     if (localStorage.getItem('batchMode') !== 'true') {
         const autoGroup = new URLSearchParams(location.search).get('auto_research');
         if (autoGroup) {
+            localStorage.setItem('autoResearch', 'true');
             window.addEventListener('load', () => {
                 setTimeout(() => {
                     GM_xmlhttpRequest({

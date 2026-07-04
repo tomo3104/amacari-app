@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      4.5
+// @version      4.6
 // @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -341,6 +341,10 @@
             localStorage.removeItem('crawlerIndex');
             updateStatus(`クローラーコレクト完了！ 全${list.length}件`);
             setRunningUI(false);
+            if (localStorage.getItem('autoPipeline') === 'true') {
+                localStorage.removeItem('autoPipeline');
+                setTimeout(() => window.close(), 5000);
+            }
             return;
         }
         const item = list[index];
