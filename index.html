@@ -9,7 +9,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 <header class="topbar">
@@ -19,6 +19,7 @@
     <button class="tab" data-view="archive">アーカイブ</button>
     <button class="tab" data-view="stats">実績</button>
     <button class="tab" data-view="furima">フリマ</button>
+    <button class="tab" data-view="log">ログ</button>
   </nav>
 </header>
 
@@ -82,12 +83,25 @@
   <p class="empty-message" id="stats-empty">読み込み中…</p>
 </main>
 
+<main id="log-view" class="view hidden">
+  <section class="stats-section">
+    <h2 class="stats-heading">クロール実績</h2>
+    <div id="pipeline-log-list"></div>
+  </section>
+  <section class="stats-section">
+    <h2 class="stats-heading">リサーチ実績（日別ヒット数）</h2>
+    <ul id="research-log-list" class="stats-list"></ul>
+  </section>
+  <p class="empty-message" id="log-empty">読み込み中…</p>
+</main>
+
 <!-- 却下理由ピッカー -->
 <div id="reason-modal" class="modal hidden">
   <div class="modal-card">
     <h2>却下の理由は？</h2>
     <div class="reason-grid">
       <button class="reason-btn" data-reason="開封済み">開封済み</button>
+      <button class="reason-btn" data-reason="梱包状態不明">梱包状態不明</button>
       <button class="reason-btn" data-reason="状態悪い">状態悪い</button>
       <button class="reason-btn" data-reason="別物">別物</button>
       <button class="reason-btn" data-reason="バリエーション違い">バリエーション違い</button>
