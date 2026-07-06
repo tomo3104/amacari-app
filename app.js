@@ -71,9 +71,9 @@ async function loadCards() {
   els.empty.textContent = "読み込み中…";
   els.empty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("cards", { sort: state.sort }));
+    const res = await fetch(gasUrl("researchCards"));
     const data = await res.json();
-    state.cards = data.cards || [];
+    state.cards = (data.cards || []).map(c => Object.assign(c, { source: "research" }));
     state.skipStack = [];
     state.totalCount = state.cards.length;
     renderStack();
@@ -216,7 +216,7 @@ function renderStack() {
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
-    if (depthFromTop === 0) attachSwipe(el, card);
+    if (depthFromTop === 0) attachSwipe(el, card, card.source || "amacari");
     els.stack.appendChild(el);
   });
 }
@@ -527,8 +527,9 @@ function finishVerticalSwipe(el, card, direction, source) {
 async function judge(card, judgment, reason, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
+  const actionName = source === "furima" ? "furimaJudge" : source === "research" ? "researchJudge" : "judge";
   try {
-    await gasPost(isFurima ? "furimaJudge" : "judge", { row: card.row, judgment, reason });
+    await gasPost(actionName, { row: card.row, judgment, reason });
     if (judgment === "却下") {
       if (isFurima) {
         state.furimaLastRejected = card;
@@ -550,8 +551,9 @@ async function undoLastReject(source) {
   if (!card) return;
   const btn = isFurima ? els.furimaUndoBtn : els.undoBtn;
   btn.disabled = true;
+  const undoAction = source === "furima" ? "furimaUndo" : source === "research" ? "researchUndo" : "undo";
   try {
-    await gasPost(isFurima ? "furimaUndo" : "undo", { row: card.row });
+    await gasPost(undoAction, { row: card.row });
     if (isFurima) {
       state.furimaLastRejected = null;
       state.furimaCards.unshift(card);

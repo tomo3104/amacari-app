@@ -15,6 +15,7 @@
 
     const SERVER_URL   = 'http://localhost:8766/check-mercari';
     const MFR_URL      = 'http://localhost:8766/get-manufacturers';
+    const GAS_URL      = 'https://script.google.com/macros/s/AKfycbz6W83NlKgz8ieDfRrXL2AfaPWo4xFqv_8vr5NT1-NQglc1tuOC50uT-CWEHrG95c64/exec?action=saveResearch';
     // メルカリ検索条件（クローラーリサーチ用）
     const BATCH_CONDITIONS = 'status=on_sale&item_condition_id=1&shipping_payer_id=2';
     const ITEM_SEL    = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
@@ -180,6 +181,19 @@
         setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
     }
 
+    // ========== GASへ保存 ==========
+    function saveResearchToGas(matches) {
+        GM_xmlhttpRequest({
+            method:  'POST',
+            url:     GAS_URL,
+            headers: { 'Content-Type': 'text/plain' },
+            data:    JSON.stringify({ matches: matches }),
+            timeout: 30000,
+            onload:  function(res) { console.log('[Amacari] research saved:', res.status); },
+            onerror: function()    { console.warn('[Amacari] GAS save failed'); },
+        });
+    }
+
     // ========== サーバー送信 ==========
     function sendToServer(itemList, onDone) {
         GM_xmlhttpRequest({
@@ -191,7 +205,15 @@
             onload: function(res) {
                 try {
                     const result = JSON.parse(res.responseText);
-                    showResults(result.matches || []);
+                    const matches = result.matches || [];
+                    showResults(matches);
+                    if (matches.length > 0) {
+                        const enriched = matches.map(function(m) {
+                            const orig = itemList.find(function(it) { return it.name === m.name; }) || {};
+                            return Object.assign({}, m, { image_url: orig.image || '' });
+                        });
+                        saveResearchToGas(enriched);
+                    }
                 } catch(e) {
                     updateStatus('サーバー応答エラー');
                 }
