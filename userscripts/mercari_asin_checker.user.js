@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
+// @connect      script.google.com
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // ==/UserScript==
