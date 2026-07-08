@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      2.0
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -420,6 +420,16 @@
         location.href = url;
     }
 
+    // ========== 自動起動（タスクスケジューラ用） ==========
+    // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
+    // auto_researchパラメータがある場合は前回クラッシュ時の残留batchModeをリセット（batchModeチェックより先に実行）
+    const _autoGroup = new URLSearchParams(location.search).get('auto_research');
+    if (_autoGroup) {
+        localStorage.removeItem('batchMode');
+        localStorage.removeItem('batchList');
+        localStorage.removeItem('batchIndex');
+    }
+
     // バッチモード中のページロード時に自動リサーチ開始
     if (localStorage.getItem('batchMode') === 'true') {
         window.addEventListener('load', () => {
@@ -447,15 +457,6 @@
         });
     }
 
-    // ========== 自動起動（タスクスケジューラ用） ==========
-    // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
-    // auto_researchパラメータがある場合は前回クラッシュ時の残留batchModeをリセット
-    const _autoGroup = new URLSearchParams(location.search).get('auto_research');
-    if (_autoGroup) {
-        localStorage.removeItem('batchMode');
-        localStorage.removeItem('batchList');
-        localStorage.removeItem('batchIndex');
-    }
     if (localStorage.getItem('batchMode') !== 'true') {
         const autoGroup = _autoGroup;
         if (autoGroup) {
