@@ -71,9 +71,9 @@ async function loadCards() {
   els.empty.textContent = "読み込み中…";
   els.empty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("researchCards"));
+    const res = await fetch(gasUrl("cards"));
     const data = await res.json();
-    state.cards = (data.cards || []).map(c => Object.assign(c, { source: "research" }));
+    state.cards = (data.cards || []).map(c => Object.assign(c, { source: "amacari" }));
     state.skipStack = [];
     state.totalCount = state.cards.length;
     renderStack();
