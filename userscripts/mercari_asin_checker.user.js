@@ -449,8 +449,15 @@
 
     // ========== 自動起動（タスクスケジューラ用） ==========
     // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
+    // auto_researchパラメータがある場合は前回クラッシュ時の残留batchModeをリセット
+    const _autoGroup = new URLSearchParams(location.search).get('auto_research');
+    if (_autoGroup) {
+        localStorage.removeItem('batchMode');
+        localStorage.removeItem('batchList');
+        localStorage.removeItem('batchIndex');
+    }
     if (localStorage.getItem('batchMode') !== 'true') {
-        const autoGroup = new URLSearchParams(location.search).get('auto_research');
+        const autoGroup = _autoGroup;
         if (autoGroup) {
             localStorage.setItem('autoResearch', 'true');
             window.addEventListener('load', () => {
