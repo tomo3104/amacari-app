@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  実利益率（Amazon価格基準）に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆実利益率15%以上をASIN付きでローカルサーバーに通知＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
@@ -12,9 +12,34 @@
 (function () {
     'use strict';
 
-    const MIN_PROFIT_RATE = 0.15; // 実利益率（Amazon価格基準）の閾値（2026-06-28変更：旧は上限価格基準だった）
+    const MIN_PROFIT_RATE = 0.15;
     const SERVER_URL = 'http://localhost:8768/furima-hit';
     const LS_KEY = 'furimaNotifiedCache';
+    const LS_ACCOUNT_KEY = 'frimaAccount';
+
+    function getAccount() {
+        return localStorage.getItem(LS_ACCOUNT_KEY) || null;
+    }
+
+    function promptAccount() {
+        let account = '';
+        while (!['A', 'B'].includes(account)) {
+            const input = prompt('フリマウォッチアカウントを設定してください (A or B):');
+            if (input === null) { account = 'unknown'; break; }
+            account = input.trim().toUpperCase();
+        }
+        localStorage.setItem(LS_ACCOUNT_KEY, account);
+        return account;
+    }
+
+    function addAccountButton() {
+        const btn = document.createElement('button');
+        const update = () => { btn.textContent = 'アカウント: ' + (getAccount() || '未設定'); };
+        update();
+        btn.style.cssText = 'position:fixed;bottom:50px;right:10px;z-index:9999;padding:6px 12px;background:#1976d2;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;';
+        btn.onclick = () => { localStorage.removeItem(LS_ACCOUNT_KEY); promptAccount(); update(); };
+        document.body.appendChild(btn);
+    }
 
     // 登録時のmemo（例："Amazon:10000円 ランク:12345 FBA:2000円 pmax:6500円"）からAmazon価格を取得
     function getAmazonPriceFromRow(row) {
@@ -73,6 +98,7 @@
                 imageUrl:   (tr.item.imageUrls && tr.item.imageUrls[0]) || '',
                 service:    tr.item.service || '',
                 asin:       asinMatch ? asinMatch[0] : '',
+                account:    getAccount() || 'unknown',
             };
 
             fetch(SERVER_URL, {
@@ -230,6 +256,8 @@
     const AUTO_RELOAD_INTERVAL_MS = 60 * 60 * 1000; // 1時間
 
     window.addEventListener('load', () => {
+        if (!getAccount()) promptAccount();
+        addAccountButton();
         setTimeout(run, 1500);
 
         document.addEventListener('click', (e) => {
