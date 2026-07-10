@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  実利益率（Amazon価格基準）に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆実利益率15%以上をASIN付きでローカルサーバーに通知＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
@@ -23,8 +23,8 @@
 
     function promptAccount() {
         let account = '';
-        while (!['A', 'B'].includes(account)) {
-            const input = prompt('フリマウォッチアカウントを設定してください (A or B):');
+        while (!['A', 'B', 'C'].includes(account)) {
+            const input = prompt('フリマウォッチアカウントを設定してください (A, B or C):');
             if (input === null) { account = 'unknown'; break; }
             account = input.trim().toUpperCase();
         }
