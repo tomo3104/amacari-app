@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ 速売れ商品リサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  売り切れ商品のバッジ（N分/時間で売れた商品）を読み取り S/A/B ランクで記録する
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -12,20 +12,17 @@
 (function () {
     'use strict';
 
-    const SERVER = 'http://localhost:8769/speed-hit';
+    const SERVER   = 'http://localhost:8769/speed-hit';
+    const NEXT_SEL = '[data-testid="pagination-next-button"] a';
 
-    // localStorage keys (sf_ prefix で他スクリプトと衝突しない)
-    const SF_MODE     = 'sf_mode';      // 'collecting' | 'processing'
-    const SF_URL_IDX  = 'sf_urlIdx';    // 0|1|2
-    const SF_ITEMS    = 'sf_items';     // JSON array of item URLs
+    // localStorage keys (sf_ prefix)
+    const SF_MODE     = 'sf_mode';      // 'search' | 'processing'
+    const SF_URL_IDX  = 'sf_urlIdx';
+    const SF_ITEMS    = 'sf_items';     // item URLs for current page
     const SF_ITEM_IDX = 'sf_itemIdx';
     const SF_CATEGORY = 'sf_category';
-    const SF_SCROLL_N = 'sf_scrollN';   // 新規なしスクロール回数
-    const SF_KNOWN    = 'sf_known';     // JSON array (Set の代わり)
+    const SF_NEXT_URL = 'sf_nextUrl';   // next page URL (empty = last page)
 
-    const MAX_NO_NEW = 4;  // N回スクロールしても新規なし → 収集完了
-
-    // S≤10分 / A=11-30分 / B=31-60分 / >60分は除外
     const SEARCH_URLS = [
         {
             name: '生活家電・空調',
@@ -44,7 +41,7 @@
     const BADGE_PATTERNS = [
         { re: /(\d+)分で売れた商品/, mul: 1 },
         { re: /(\d+)時間で売れた商品/, mul: 60 },
-        // 「N日以内で売れた商品」は除外のため登録しない
+        // 日以内は除外
     ];
 
     // ── パーサ ────────────────────────────────────────────────────────────────
@@ -78,7 +75,7 @@
     };
 
     function clearState() {
-        [SF_MODE, SF_URL_IDX, SF_ITEMS, SF_ITEM_IDX, SF_CATEGORY, SF_SCROLL_N, SF_KNOWN].forEach(ls.del);
+        [SF_MODE, SF_URL_IDX, SF_ITEMS, SF_ITEM_IDX, SF_CATEGORY, SF_NEXT_URL].forEach(ls.del);
     }
 
     // ── UI ───────────────────────────────────────────────────────────────────
@@ -123,90 +120,77 @@
             } else {
                 btn.textContent = '■ 速売れ停止';
                 btn.style.background = '#616161';
-                startCollect(0);
+                startSearch(0);
             }
         };
         document.body.appendChild(btn);
     }
 
-    // ── フェーズ1: 収集 ───────────────────────────────────────────────────────
+    // ── 検索ページ処理 ────────────────────────────────────────────────────────
 
-    function startCollect(urlIdx) {
-        ls.set(SF_MODE,     'collecting');
+    function startSearch(urlIdx) {
+        ls.set(SF_MODE,     'search');
         ls.set(SF_URL_IDX,  urlIdx);
-        ls.set(SF_ITEMS,    '[]');
-        ls.set(SF_ITEM_IDX, '0');
         ls.set(SF_CATEGORY, SEARCH_URLS[urlIdx].name);
-        ls.set(SF_SCROLL_N, '0');
-        ls.set(SF_KNOWN,    '[]');
+        ls.del(SF_NEXT_URL);
         window.location.href = SEARCH_URLS[urlIdx].url;
     }
 
-    async function runCollect() {
+    async function runSearch() {
         const urlIdx   = parseInt(ls.get(SF_URL_IDX) || '0', 10);
-        const category = SEARCH_URLS[urlIdx].name;
+        const category = ls.get(SF_CATEGORY) || SEARCH_URLS[urlIdx].name;
 
         await sleep(2000);
-        if (ls.get(SF_MODE) !== 'collecting') return;
+        if (ls.get(SF_MODE) !== 'search') return;
 
-        const known = new Set(ls.json(SF_KNOWN, '[]'));
-        const items = ls.json(SF_ITEMS, '[]');
+        // 上から下へじわじわスクロールしながら商品URLを収集
+        window.scrollTo(0, 0);
+        await sleep(500);
+
+        const items = [];
+        const seen  = new Set();
 
         function collectVisible() {
-            let n = 0;
             document.querySelectorAll('a[data-testid="thumbnail-link"]').forEach(a => {
                 const href = a.getAttribute('href') || '';
                 if (!href.includes('/item/')) return;
                 const full = href.startsWith('http') ? href : 'https://jp.mercari.com' + href;
-                if (!known.has(full)) { known.add(full); items.push(full); n++; }
+                if (!seen.has(full)) { seen.add(full); items.push(full); }
             });
-            return n;
         }
 
-        // じわじわスクロールしながら収集（クローラーリサーチと同方式）
-        window.scrollTo(0, 0);
-        await sleep(600);
-
-        const deadline = Date.now() + 90000;  // 最大90秒
-        let noNewCount = 0;
-
+        const deadline = Date.now() + 60000;
         while (Date.now() < deadline) {
-            if (ls.get(SF_MODE) !== 'collecting') return;
-
-            const n = collectVisible();
-            if (n > 0) noNewCount = 0;
-
+            if (ls.get(SF_MODE) !== 'search') return;
+            collectVisible();
             showStatus(`${category}: ${items.length}件収集中…`, '#1565c0');
-
             const atBottom = Math.ceil(window.scrollY + window.innerHeight) >= document.body.scrollHeight - 100;
-            if (atBottom) {
-                noNewCount++;
-                if (noNewCount >= 3) break;  // 底で3回ゼロなら完了
-                await sleep(2000);
-            } else {
-                window.scrollBy(0, 600);
-                await sleep(500);
-            }
+            if (atBottom) break;
+            window.scrollBy(0, 600);
+            await sleep(500);
         }
+        await sleep(800);
+        collectVisible();  // 最下部到達後の最終収集
 
-        // 底に着いてから最終収集
-        collectVisible();
+        // 次ページボタン
+        const nextBtn = document.querySelector(NEXT_SEL);
+        ls.set(SF_NEXT_URL, nextBtn ? nextBtn.href : '');
 
-        ls.set(SF_ITEMS, JSON.stringify(items));
-        ls.set(SF_KNOWN, JSON.stringify([...known]));
-        ls.set(SF_MODE, 'processing');
+        ls.set(SF_ITEMS,    JSON.stringify(items));
         ls.set(SF_ITEM_IDX, '0');
+        ls.set(SF_MODE,     'processing');
+
         showStatus(`${category}: ${items.length}件 → 処理開始`, '#2e7d32');
-        await sleep(1200);
+        await sleep(1000);
 
         if (items.length > 0) {
             window.location.href = items[0];
         } else {
-            goNextCategory(urlIdx);
+            advancePage(urlIdx);
         }
     }
 
-    // ── フェーズ2: 処理 ───────────────────────────────────────────────────────
+    // ── 商品ページ処理 ────────────────────────────────────────────────────────
 
     async function runProcess() {
         const items    = ls.json(SF_ITEMS, '[]');
@@ -215,7 +199,7 @@
         const urlIdx   = parseInt(ls.get(SF_URL_IDX) || '0', 10);
 
         if (idx >= items.length) {
-            goNextCategory(urlIdx);
+            advancePage(urlIdx);
             return;
         }
 
@@ -238,12 +222,12 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     itemId, category,
-                    name:         title,
-                    modelNumber:  parseModelNumber(title),
+                    name:        title,
+                    modelNumber: parseModelNumber(title),
                     price,
-                    durationMin:  dur.min,
-                    durationRaw:  dur.raw,
-                    url:          window.location.href,
+                    durationMin: dur.min,
+                    durationRaw: dur.raw,
+                    url:         window.location.href,
                 }),
             }).catch(() => {});
         }
@@ -257,17 +241,29 @@
         if (nextIdx < items.length) {
             window.location.href = items[nextIdx];
         } else {
-            goNextCategory(urlIdx);
+            advancePage(urlIdx);
         }
     }
 
-    // ── カテゴリ遷移 ─────────────────────────────────────────────────────────
+    // ── ページ・カテゴリ遷移 ──────────────────────────────────────────────────
+
+    function advancePage(urlIdx) {
+        const nextUrl = ls.get(SF_NEXT_URL) || '';
+        if (nextUrl) {
+            ls.set(SF_MODE,     'search');
+            ls.set(SF_ITEMS,    '[]');
+            ls.set(SF_ITEM_IDX, '0');
+            window.location.href = nextUrl;
+        } else {
+            goNextCategory(urlIdx);
+        }
+    }
 
     function goNextCategory(urlIdx) {
         const next = urlIdx + 1;
         if (next < SEARCH_URLS.length) {
             showStatus(`次へ: ${SEARCH_URLS[next].name}`, '#1565c0');
-            setTimeout(() => startCollect(next), 1500);
+            setTimeout(() => startSearch(next), 1500);
         } else {
             clearState();
             showStatus('速売れリサーチ完了！', '#1b5e20');
@@ -290,12 +286,11 @@
 
             if (!mode) return;
 
-            if (mode === 'collecting' && href.includes('/search')) {
-                runCollect();
+            if (mode === 'search' && href.includes('/search')) {
+                runSearch();
             } else if (mode === 'processing' && href.includes('/item/')) {
                 runProcess();
             } else {
-                // 想定外のページ（リダイレクト等）— 3秒後にリロード
                 showStatus('ページ待機中…', '#795548');
                 setTimeout(() => window.location.reload(), 3000);
             }
