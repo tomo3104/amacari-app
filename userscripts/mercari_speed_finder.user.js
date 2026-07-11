@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ 速売れ商品リサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  売り切れ商品のバッジ（N分/時間で売れた商品）を読み取り S/A/B ランクで記録する
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -151,47 +151,59 @@
 
         const known = new Set(ls.json(SF_KNOWN, '[]'));
         const items = ls.json(SF_ITEMS, '[]');
-        let newCount = 0;
 
-        document.querySelectorAll('a[data-testid="thumbnail-link"]').forEach(a => {
-            const href = a.getAttribute('href') || '';
-            if (!href.includes('/item/')) return;
-            const full = href.startsWith('http') ? href : 'https://jp.mercari.com' + href;
-            if (!known.has(full)) {
-                known.add(full);
-                items.push(full);
-                newCount++;
+        function collectVisible() {
+            let n = 0;
+            document.querySelectorAll('a[data-testid="thumbnail-link"]').forEach(a => {
+                const href = a.getAttribute('href') || '';
+                if (!href.includes('/item/')) return;
+                const full = href.startsWith('http') ? href : 'https://jp.mercari.com' + href;
+                if (!known.has(full)) { known.add(full); items.push(full); n++; }
+            });
+            return n;
+        }
+
+        // じわじわスクロールしながら収集（クローラーリサーチと同方式）
+        window.scrollTo(0, 0);
+        await sleep(600);
+
+        const deadline = Date.now() + 90000;  // 最大90秒
+        let noNewCount = 0;
+
+        while (Date.now() < deadline) {
+            if (ls.get(SF_MODE) !== 'collecting') return;
+
+            const n = collectVisible();
+            if (n > 0) noNewCount = 0;
+
+            showStatus(`${category}: ${items.length}件収集中…`, '#1565c0');
+
+            const atBottom = Math.ceil(window.scrollY + window.innerHeight) >= document.body.scrollHeight - 100;
+            if (atBottom) {
+                noNewCount++;
+                if (noNewCount >= 3) break;  // 底で3回ゼロなら完了
+                await sleep(2000);
+            } else {
+                window.scrollBy(0, 600);
+                await sleep(500);
             }
-        });
+        }
+
+        // 底に着いてから最終収集
+        collectVisible();
 
         ls.set(SF_ITEMS, JSON.stringify(items));
         ls.set(SF_KNOWN, JSON.stringify([...known]));
+        ls.set(SF_MODE, 'processing');
+        ls.set(SF_ITEM_IDX, '0');
+        showStatus(`${category}: ${items.length}件 → 処理開始`, '#2e7d32');
+        await sleep(1200);
 
-        const scrollN = parseInt(ls.get(SF_SCROLL_N) || '0', 10);
-        showStatus(`${category}: ${items.length}件収集中…`, '#1565c0');
-
-        if (newCount === 0) {
-            const next = scrollN + 1;
-            if (next >= MAX_NO_NEW) {
-                ls.set(SF_MODE, 'processing');
-                ls.set(SF_ITEM_IDX, '0');
-                showStatus(`${category}: ${items.length}件 → 処理開始`, '#2e7d32');
-                await sleep(1200);
-                if (items.length > 0) {
-                    window.location.href = items[0];
-                } else {
-                    goNextCategory(urlIdx);
-                }
-                return;
-            }
-            ls.set(SF_SCROLL_N, next);
+        if (items.length > 0) {
+            window.location.href = items[0];
         } else {
-            ls.set(SF_SCROLL_N, '0');
+            goNextCategory(urlIdx);
         }
-
-        window.scrollTo(0, document.body.scrollHeight);
-        await sleep(2800);
-        if (ls.get(SF_MODE) === 'collecting') runCollect();
     }
 
     // ── フェーズ2: 処理 ───────────────────────────────────────────────────────
