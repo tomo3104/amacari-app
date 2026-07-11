@@ -211,25 +211,26 @@
         const dur = parseDuration(document.body.innerText);
 
         if (dur && dur.min <= 60) {
-            const nameEl  = document.querySelector('[data-testid="name"]');
-            const priceEl = document.querySelector('[data-testid="price"]');
-            const title   = nameEl  ? nameEl.innerText.trim()       : document.title;
-            const price   = priceEl ? parsePrice(priceEl.innerText) : null;
-            const itemId  = window.location.pathname.split('/').pop();
+            const nameEl      = document.querySelector('[data-testid="name"]');
+            const priceEl     = document.querySelector('[data-testid="price"]');
+            const title       = nameEl  ? nameEl.innerText.trim()       : document.title;
+            const modelNumber = parseModelNumber(title);
 
-            await fetch(SERVER, {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    itemId, category,
-                    name:        title,
-                    modelNumber: parseModelNumber(title),
-                    price,
-                    durationMin: dur.min,
-                    durationRaw: dur.raw,
-                    url:         window.location.href,
-                }),
-            }).catch(() => {});
+            if (modelNumber) {
+                const price  = priceEl ? parsePrice(priceEl.innerText) : null;
+                const itemId = window.location.pathname.split('/').pop();
+                await fetch(SERVER, {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        itemId, category,
+                        name: title, modelNumber, price,
+                        durationMin: dur.min,
+                        durationRaw: dur.raw,
+                        url: window.location.href,
+                    }),
+                }).catch(() => {});
+            }
         }
 
         const nextIdx = idx + 1;
