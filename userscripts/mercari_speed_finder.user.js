@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ 速売れ商品リサーチ
 // @namespace    http://tampermonkey.net/
-// @version      2.13
+// @version      2.14
 // @description  XHRインターセプト＋ラウンドロビンで全カテゴリ均等処理
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -14,7 +14,7 @@
     'use strict';
 
     const SERVER     = 'http://localhost:8769/speed-hit';
-    const MAX_MIN    = 60;
+    const MAX_MIN    = 120;
     const STALE_DAYS = 7;
 
     const SF_MODE   = 'sf2_mode';
@@ -89,7 +89,7 @@
             const log = JSON.parse(ls.get(SF_LOG) || '[]');
             const t = new Date().toTimeString().slice(0, 8);
             log.push(`${t} ${msg}`);
-            if (log.length > 20) log.shift();
+            if (log.length > 60) log.shift();
             ls.set(SF_LOG, JSON.stringify(log));
         } catch (e) {}
     }
