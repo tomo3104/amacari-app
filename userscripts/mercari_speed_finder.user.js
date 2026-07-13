@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ 速売れ商品リサーチ
 // @namespace    http://tampermonkey.net/
-// @version      2.12
+// @version      2.13
 // @description  XHRインターセプト＋ラウンドロビンで全カテゴリ均等処理
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -114,19 +114,19 @@
     // ── アイテム処理 ──────────────────────────────────────────────────────────
 
     async function processItems(items, category) {
-        if (items.length > 0) { ls.set('sf2_item0', JSON.stringify(items[0])); sfLog('keys:' + Object.keys(items[0]).join(',')); }
+        if (items.length > 0) ls.set('sf2_item0', JSON.stringify(items[0]));
         const now = Math.floor(Date.now() / 1000);
         let found = 0;
-        let nNotTrading = 0, nTimeOver = 0, nNoModel = 0;
+        let nTimeOver = 0, nNoModel = 0, nTrading = 0, nSoldOut = 0;
         for (const item of items) {
-            // trading 商品のみ対象（sold_out は updated が受取完了時刻なので使えない）
             const st = (item.status || '').toLowerCase();
-            if (!st.includes('trading')) { nNotTrading++; continue; }
+            if (st.includes('trading'))  nTrading++;
+            else if (st.includes('sold')) nSoldOut++;
 
             const cr = parseInt(item.created, 10);
             if (isNaN(cr)) { nTimeOver++; continue; }
 
-            // now - created = 出品からの経過時間 → これが MAX_MIN 以内なら確実に速売れ
+            // now - created = 出品からの経過時間。trading/sold_out 問わず60分以内なら速売れ
             const min = Math.round((now - cr) / 60);
             if (min < 0 || min > MAX_MIN) { nTimeOver++; continue; }
 
@@ -151,8 +151,8 @@
                 found++;
             } catch (e) {}
         }
-        sfLog(`  非trading:${nNotTrading} 時間超:${nTimeOver} 型番NG:${nNoModel}`);
-        return { found, nTimeOver: nTimeOver, nStale: 0, nNoModel };
+        sfLog(`  trading:${nTrading} sold:${nSoldOut} 時間超:${nTimeOver} 型番NG:${nNoModel}`);
+        return { found, nTimeOver, nStale: 0, nNoModel };
     }
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
