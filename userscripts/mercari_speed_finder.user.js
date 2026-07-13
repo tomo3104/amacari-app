@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ 速売れ商品リサーチ
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      2.10
 // @description  XHRインターセプト＋ラウンドロビンで全カテゴリ均等処理
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -114,7 +114,7 @@
     // ── アイテム処理 ──────────────────────────────────────────────────────────
 
     async function processItems(items, category) {
-        if (items.length > 0) console.log('[SF] item fields:', JSON.stringify(items[0], null, 2));
+        if (items.length > 0) console.log('[SF] item fields:', items[0]);
         const now = Math.floor(Date.now() / 1000);
         let found = 0;
         let nNotTrading = 0, nTimeOver = 0, nNoModel = 0;
