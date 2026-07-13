@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ 速売れ商品リサーチ
 // @namespace    http://tampermonkey.net/
-// @version      2.14
-// @description  XHRインターセプト＋ラウンドロビンで全カテゴリ均等処理
+// @version      3.0
+// @description  page1高速ループ：3カテゴリを1分サイクルで巡回
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -13,13 +13,12 @@
 (function () {
     'use strict';
 
-    const SERVER     = 'http://localhost:8769/speed-hit';
-    const MAX_MIN    = 120;
-    const STALE_DAYS = 7;
+    const SERVER  = 'http://localhost:8769/speed-hit';
+    const MAX_MIN = 60;
+    const WAIT_MS = 50000;
 
     const SF_MODE   = 'sf2_mode';
     const SF_CURSOR = 'sf2_cursor';
-    const SF_TOKENS = 'sf2_tokens';
     const SF_FOUND  = 'sf2_found';
 
     const SEARCH_URLS = [
@@ -37,7 +36,7 @@
         },
     ];
 
-    // ── XHR インターセプト ─────────────────────────────────────────────────────
+    // ── XHR インターセプト ────────────────────────────────────────────────────
 
     let _resolve  = null;
     let _buffered = null;
@@ -95,12 +94,7 @@
     }
 
     function clearState() {
-        [SF_MODE, SF_CURSOR, SF_TOKENS, SF_FOUND].forEach(ls.del);
-    }
-
-    function getTokens() {
-        try { return JSON.parse(ls.get(SF_TOKENS)) || SEARCH_URLS.map(() => ''); }
-        catch (e) { return SEARCH_URLS.map(() => ''); }
+        [SF_MODE, SF_CURSOR, SF_FOUND].forEach(ls.del);
     }
 
     // ── モデル番号抽出 ────────────────────────────────────────────────────────
@@ -114,7 +108,6 @@
     // ── アイテム処理 ──────────────────────────────────────────────────────────
 
     async function processItems(items, category) {
-        if (items.length > 0) ls.set('sf2_item0', JSON.stringify(items[0]));
         const now = Math.floor(Date.now() / 1000);
         let found = 0;
         let nTimeOver = 0, nNoModel = 0, nTrading = 0, nSoldOut = 0;
@@ -126,7 +119,6 @@
             const cr = parseInt(item.created, 10);
             if (isNaN(cr)) { nTimeOver++; continue; }
 
-            // now - created = 出品からの経過時間。trading/sold_out 問わず60分以内なら速売れ
             const min = Math.round((now - cr) / 60);
             if (min < 0 || min > MAX_MIN) { nTimeOver++; continue; }
 
@@ -152,40 +144,33 @@
             } catch (e) {}
         }
         sfLog(`  trading:${nTrading} sold:${nSoldOut} 時間超:${nTimeOver} 型番NG:${nNoModel}`);
-        return { found, nTimeOver, nStale: 0, nNoModel };
+        return { found, nTimeOver, nNoModel };
     }
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ── ラウンドロビン進行 ─────────────────────────────────────────────────────
+    // ── サイクル進行（page1のみ） ─────────────────────────────────────────────
 
-    function advanceRoundRobin(processedIdx, nextToken) {
+    function advanceCycle(processedIdx) {
         if (ls.get(SF_MODE) !== 'search') return;
 
-        const tokens = getTokens();
-        tokens[processedIdx] = (nextToken && nextToken !== '') ? nextToken : null;
-        ls.set(SF_TOKENS, JSON.stringify(tokens));
-        sfLog(`cat${processedIdx} done=${tokens[processedIdx]===null} next=${nextToken||'none'}`);
+        const n       = SEARCH_URLS.length;
+        const nextIdx = (processedIdx + 1) % n;
 
-        const n = SEARCH_URLS.length;
-        for (let i = 1; i <= n; i++) {
-            const idx = (processedIdx + i) % n;
-            if (tokens[idx] !== null) {
-                ls.set(SF_CURSOR, idx);
-                const token = tokens[idx];
-                const url = SEARCH_URLS[idx].url + (token ? '&page_token=' + encodeURIComponent(token) : '');
-                sfLog(`→ cat${idx} token=${token||'p1'}`);
-                window.location.href = url;
-                return;
-            }
+        if (nextIdx === 0) {
+            const total = ls.get(SF_FOUND) || '0';
+            sfLog(`cycle完了 累計${total}件 ${WAIT_MS / 1000}秒待機`);
+            showStatus(`1周完了 累計${total}件 | ${WAIT_MS / 1000}秒後に再スキャン`, '#1565c0');
+            setTimeout(() => {
+                if (ls.get(SF_MODE) !== 'search') return;
+                ls.set(SF_CURSOR, '0');
+                window.location.href = SEARCH_URLS[0].url;
+            }, WAIT_MS);
+        } else {
+            ls.set(SF_CURSOR, nextIdx);
+            sfLog(`→ cat${nextIdx}`);
+            window.location.href = SEARCH_URLS[nextIdx].url;
         }
-
-        // 全カテゴリ完了
-        const total = ls.get(SF_FOUND) || '0';
-        sfLog(`COMPLETE total=${total}`);
-        clearState();
-        showStatus(`完了！ 合計 ${total} 件検出`, '#1b5e20');
-        updateBtn(false);
     }
 
     // ── 検索ページ処理 ────────────────────────────────────────────────────────
@@ -210,29 +195,28 @@
             sfLog(`cat${cursor} TIMEOUT`);
             showStatus(`タイムアウト → 次へ`, '#f57c00');
             await sleep(1500);
-            advanceRoundRobin(cursor, null);
+            advanceCycle(cursor);
             return;
         }
 
-        const items     = data.items || [];
-        const nextToken = data.meta && data.meta.nextPageToken;
-        sfLog(`cat${cursor} items=${items.length} next=${nextToken||'none'}`);
+        const items = data.items || [];
+        sfLog(`cat${cursor} items=${items.length}`);
         showStatus(`${cat.name}: ${items.length}件処理中…`, '#1565c0');
 
-        let found = 0, nTimeOver = 0, nStale = 0, nNoModel = 0;
+        let found = 0, nTimeOver = 0, nNoModel = 0;
         try {
             const r = await processItems(items, cat.name);
-            found = r.found; nTimeOver = r.nTimeOver; nStale = r.nStale; nNoModel = r.nNoModel;
-        } catch(e) { sfLog(`processItems error: ${e.message}`); }
+            found = r.found; nTimeOver = r.nTimeOver; nNoModel = r.nNoModel;
+        } catch (e) { sfLog(`processItems error: ${e.message}`); }
         if (ls.get(SF_MODE) !== 'search') return;
 
-        sfLog(`cat${cursor} 時間超:${nTimeOver} 古:${nStale} 型番NG:${nNoModel} ヒット:${found}`);
+        sfLog(`cat${cursor} 時間超:${nTimeOver} 型番NG:${nNoModel} ヒット:${found}`);
         const total = parseInt(ls.get(SF_FOUND) || '0', 10) + found;
         ls.set(SF_FOUND, total);
-        showStatus(`${cat.name}: 時間超:${nTimeOver} 型番NG:${nNoModel} ヒット:${found}（累計${total}）`, found > 0 ? '#1b5e20' : '#2e7d32');
+        showStatus(`${cat.name}: ヒット:${found}（累計${total}）`, found > 0 ? '#1b5e20' : '#2e7d32');
 
         await sleep(1500);
-        advanceRoundRobin(cursor, nextToken);
+        advanceCycle(cursor);
     }
 
     // ── UI ───────────────────────────────────────────────────────────────────
@@ -290,7 +274,6 @@
                     clearState();
                     ls.set(SF_MODE,   'search');
                     ls.set(SF_CURSOR, '0');
-                    ls.set(SF_TOKENS, JSON.stringify(SEARCH_URLS.map(() => '')));
                     ls.set(SF_FOUND,  '0');
                     updateBtn(true);
                     window.location.href = SEARCH_URLS[0].url;
@@ -301,10 +284,7 @@
                 runOnSearchPage();
             } else if (active) {
                 const cursor = parseInt(ls.get(SF_CURSOR) || '0', 10);
-                const tokens = getTokens();
-                const token  = tokens[cursor] || '';
-                const url    = SEARCH_URLS[cursor].url + (token ? '&page_token=' + encodeURIComponent(token) : '');
-                window.location.href = url;
+                window.location.href = SEARCH_URLS[cursor].url;
             }
         }, 900);
     });
