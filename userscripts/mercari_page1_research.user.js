@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ page1リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  page1高速ループ：販売中商品をlist.jsonと照合してhitsシートに通知
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -102,7 +102,7 @@
     async function processItems(items) {
         const formatted = items
             .map(item => ({
-                name:  item.name  || '',
+                name:  '[R] ' + (item.name || ''),
                 price: String(parseInt(item.price, 10) || 0),
                 url:   `https://jp.mercari.com/item/${item.id}`,
                 image: (item.thumbnails && item.thumbnails[0]) || '',
