@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ page1リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  page1高速ループ：販売中商品をlist.jsonと照合してhitsシートに通知
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -16,10 +16,12 @@
     const SERVER  = 'http://localhost:8766/check-mercari';
     const WAIT_MS = 60000;  // 1サイクル後の待機時間（ミリ秒）
 
-    const P1_MODE   = 'p1r_mode';
-    const P1_CURSOR = 'p1r_cursor';
-    const P1_FOUND  = 'p1r_found';
-    const P1_LOG    = 'p1r_log';
+    const P1_MODE      = 'p1r_mode';
+    const P1_CURSOR    = 'p1r_cursor';
+    const P1_FOUND     = 'p1r_found';
+    const P1_LOG       = 'p1r_log';
+    const P1_HEARTBEAT = 'p1r_hb';   // ウォッチドッグ用タイムスタンプ
+    const WD_TIMEOUT   = 300000;     // 5分間更新なければ自動リスタート
 
     // 販売中（on_sale）・page1のみ・3カテゴリ
     const SEARCH_URLS = [
@@ -88,6 +90,7 @@
             log.push(`${t} ${msg}`);
             if (log.length > 60) log.shift();
             ls.set(P1_LOG, JSON.stringify(log));
+            ls.set(P1_HEARTBEAT, String(Date.now()));  // 生存確認更新
         } catch (e) {}
     }
 
@@ -244,6 +247,15 @@
 
             const active = ls.get(P1_MODE) === 'search';
             updateBtn(active);
+
+            // ウォッチドッグ：5分以上動いていなければ自動リスタート
+            if (active) {
+                const lastHb = parseInt(ls.get(P1_HEARTBEAT) || '0', 10);
+                if (lastHb > 0 && Date.now() - lastHb > WD_TIMEOUT) {
+                    ls.set(P1_CURSOR, '0');
+                    p1Log('watchdog: 停止検知 → cat0からリスタート');
+                }
+            }
 
             btn.onclick = () => {
                 if (ls.get(P1_MODE) === 'search') {
