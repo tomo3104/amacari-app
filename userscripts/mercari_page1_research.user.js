@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  リアルタイムリサーチ：page1高速ループで販売中商品をlist.jsonと照合してhitsシートに通知
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -200,6 +200,31 @@
         advanceCycle(cursor);
     }
 
+    // ── ウォッチドッグ（ページ内 setInterval + visibilitychange） ──────────────
+
+    function startWatchdog() {
+        setInterval(() => {
+            if (ls.get(P1_MODE) !== 'search') return;
+            const lastHb = parseInt(ls.get(P1_HEARTBEAT) || '0', 10);
+            if (lastHb > 0 && Date.now() - lastHb > WD_TIMEOUT) {
+                p1Log('watchdog(interval): 停止検知 → cat0リスタート');
+                ls.set(P1_CURSOR, '0');
+                window.location.href = SEARCH_URLS[0].url;
+            }
+        }, 30000);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        if (ls.get(P1_MODE) !== 'search') return;
+        const lastHb = parseInt(ls.get(P1_HEARTBEAT) || '0', 10);
+        if (lastHb > 0 && Date.now() - lastHb > 120000) {  // 2分以上止まっていたら
+            p1Log('watchdog(visibility): タブ復帰検知 → cat0リスタート');
+            ls.set(P1_CURSOR, '0');
+            window.location.href = SEARCH_URLS[0].url;
+        }
+    });
+
     // ── UI ───────────────────────────────────────────────────────────────────
 
     let $status = null;
@@ -220,6 +245,7 @@
     // ── エントリポイント ──────────────────────────────────────────────────────
 
     window.addEventListener('DOMContentLoaded', () => {
+        startWatchdog();
         setTimeout(() => {
             if (document.getElementById('p1r-btn')) return;
 
