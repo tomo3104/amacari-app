@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         メルカリ page1リアルタイムリサーチ
+// @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  page1高速ループ：販売中商品をlist.jsonと照合してhitsシートに通知
+// @version      1.3
+// @description  リアルタイムリサーチ：page1高速ループで販売中商品をlist.jsonと照合してhitsシートに通知
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -213,7 +213,7 @@
     function updateBtn(active) {
         const b = document.getElementById('p1r-btn');
         if (!b) return;
-        b.textContent      = active ? '■ P1リサーチ停止' : '▶ P1リサーチ開始';
+        b.textContent      = active ? '■ リアルタイムリサーチ停止' : '▶ リアルタイムリサーチ開始';
         b.style.background = active ? '#616161'          : '#0d47a1';
     }
 
