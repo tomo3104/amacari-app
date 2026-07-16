@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  リアルタイムリサーチ：page1高速ループ・ナビなし安定版
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -62,6 +62,7 @@
 
     function clearCaptures() {
         ls.del(P1_CAPTURES);
+        ls.del('mercari_api_shared_tpl');
         Object.keys(_captures).forEach(k => delete _captures[k]);
     }
 
@@ -103,6 +104,9 @@
                         if (!_captures[cursor] && capBody !== null) {
                             _captures[cursor] = { url: capUrl, method: capMethod, headers: capHeaders, body: capBody };
                             saveCaptures();
+                            if (!ls.get('mercari_api_shared_tpl')) {
+                                ls.set('mercari_api_shared_tpl', JSON.stringify({ url: capUrl, method: capMethod, headers: capHeaders, body: capBody }));
+                            }
                         }
                         if (_resolve) { _resolve(data); _resolve = null; }
                         else if (!_buffered) { _buffered = data; }

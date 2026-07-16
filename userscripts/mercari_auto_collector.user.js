@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      4.6
+// @version      5.0
 // @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -73,6 +73,119 @@
         stopBtn.style.display  = on ? 'block' : 'none';
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // ========== fetch化: 共有テンプレートから直接API呼び出し（v5.0） ==========
+    const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
+
+    function _getSharedTpl() {
+        try {
+            const s = localStorage.getItem(_SHARED_TPL_KEY);
+            return s ? JSON.parse(s) : null;
+        } catch(e) { return null; }
+    }
+
+    async function fetchCollectorItems(mfrUrl) {
+        const tpl = _getSharedTpl();
+        if (!tpl) throw new Error('NO_TEMPLATE');
+
+        const sp = new URLSearchParams(new URL(mfrUrl).search);
+        const keyword = sp.get('keyword') || '';
+        const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
+        const apiStatus = statusMap[sp.get('status') || 'sold_out'] || 'STATUS_SOLD_OUT';
+
+        const allItems = {};
+        let pageToken = '';
+
+        for (let page = 0; page < 20; page++) {
+            const bodyObj = JSON.parse(tpl.body);
+            const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
+            sc.keyword = keyword;
+            sc.status = [apiStatus];
+            delete sc.categoryId;
+            delete sc.priceMin;
+            delete sc.priceMax;
+            if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
+            if (sp.get('shipping_payer_id')) sc.shippingPayerId = sp.get('shipping_payer_id').split(',').map(Number);
+            bodyObj.pageToken = pageToken;
+            bodyObj.pageSize = 120;
+
+            const data = await new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: tpl.method,
+                    url: tpl.url,
+                    headers: { ...tpl.headers, 'Content-Type': 'application/json' },
+                    data: JSON.stringify(bodyObj),
+                    responseType: 'json',
+                    timeout: 15000,
+                    onload: function(res) {
+                        try { resolve(typeof res.response === 'object' ? res.response : JSON.parse(res.responseText)); }
+                        catch(e) { reject(new Error('parseError')); }
+                    },
+                    onerror: function() { reject(new Error('requestError')); },
+                    ontimeout: function() { reject(new Error('timeout')); },
+                });
+            });
+
+            (data.items || []).forEach(item => {
+                const id = item.id || item.itemId;
+                if (id && item.name && item.price != null) allItems[id] = { name: item.name, price: String(item.price) };
+            });
+
+            const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
+            if (!nextToken || (data.items || []).length === 0) break;
+            pageToken = nextToken;
+            await sleep(300);
+        }
+        return allItems;
+    }
+
+    async function runCrawlerFetch(mfrs, selected) {
+        const targets = selected.map(s => s.toUpperCase());
+        const filtered = targets.includes('ALL') ? mfrs : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
+        if (filtered.length === 0) { updateStatus('対象なし'); return; }
+
+        running = true;
+        setRunningUI(true);
+        let errors = 0;
+
+        for (let i = 0; i < filtered.length; i++) {
+            if (!running) break;
+            const mfr = filtered[i];
+            const url = mfr.crawl_url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(mfr.name)}&${BATCH_CONDITIONS}`;
+            updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} fetch中...`);
+
+            try {
+                items = await fetchCollectorItems(url);
+                errors = 0;
+                const total = Object.keys(items).length;
+                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${total}件 → 送信中`);
+                GM_setClipboard(formatOutput());
+                await new Promise(resolve => {
+                    GM_xmlhttpRequest({ method: 'POST', url: 'http://localhost:8765/run-step1', onload: resolve, onerror: resolve });
+                });
+                await sleep(1500);
+            } catch(e) {
+                errors++;
+                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} エラー(${errors}): ${e.message}`);
+                if (errors >= 3 || e.message === 'NO_TEMPLATE') {
+                    if (e.message === 'NO_TEMPLATE') {
+                        updateStatus('テンプレートなし → リアルタイムリサーチ起動後に再試行してください');
+                    } else {
+                        localStorage.removeItem(_SHARED_TPL_KEY);
+                        updateStatus('テンプレート期限切れ → ページ再読み込み後に再試行してください');
+                    }
+                    running = false;
+                    setRunningUI(false);
+                    return;
+                }
+                await sleep(2000);
+            }
+        }
+
+        running = false;
+        setRunningUI(false);
+        updateStatus(`クローラーコレクト完了 全${filtered.length}件`);
+    }
 
     // ========== 商品収集 ==========
     function collectItems() {
@@ -291,7 +404,12 @@
             const checked = Array.from(list.querySelectorAll('.crawler-group-picker-check:checked')).map(c => c.value);
             const selected = checked.length > 0 ? checked : ['ALL'];
             overlay.remove();
-            runCrawlerWithGroups(mfrs, selected);
+            if (_getSharedTpl()) {
+                runCrawlerFetch(mfrs, selected);
+            } else {
+                updateStatus('テンプレート未取得 → リアルタイムリサーチ起動後に再試行。従来モードで開始');
+                runCrawlerWithGroups(mfrs, selected);
+            }
         };
     }
 

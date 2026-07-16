@@ -6,7 +6,6 @@
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
-// @connect      script.google.com
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // ==/UserScript==
@@ -16,7 +15,6 @@
 
     const SERVER_URL   = 'http://localhost:8766/check-mercari';
     const MFR_URL      = 'http://localhost:8766/get-manufacturers';
-    const GAS_URL      = 'https://script.google.com/macros/s/AKfycbz6W83NlKgz8ieDfRrXL2AfaPWo4xFqv_8vr5NT1-NQglc1tuOC50uT-CWEHrG95c64/exec?action=saveResearch';
     // メルカリ検索条件（クローラーリサーチ用）
     const BATCH_CONDITIONS = 'status=on_sale&item_condition_id=1&shipping_payer_id=2';
     const ITEM_SEL    = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
@@ -79,6 +77,123 @@
         stopBtn.style.display  = on ? 'block' : 'none';
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // ========== fetch化: 共有テンプレートから直接API呼び出し（v2.0） ==========
+    const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
+
+    function _getSharedTpl() {
+        try {
+            const s = localStorage.getItem(_SHARED_TPL_KEY);
+            return s ? JSON.parse(s) : null;
+        } catch(e) { return null; }
+    }
+
+    async function fetchCheckerItems(mfrUrl) {
+        const tpl = _getSharedTpl();
+        if (!tpl) throw new Error('NO_TEMPLATE');
+
+        const sp = new URLSearchParams(new URL(mfrUrl).search);
+        const keyword = sp.get('keyword') || '';
+        const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
+        const apiStatus = statusMap[sp.get('status') || 'on_sale'] || 'STATUS_ON_SALE';
+
+        const allItems = {};
+        let pageToken = '';
+
+        for (let page = 0; page < 20; page++) {
+            const bodyObj = JSON.parse(tpl.body);
+            const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
+            sc.keyword = keyword;
+            sc.status = [apiStatus];
+            delete sc.categoryId;
+            delete sc.priceMin;
+            delete sc.priceMax;
+            if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
+            if (sp.get('shipping_payer_id')) sc.shippingPayerId = sp.get('shipping_payer_id').split(',').map(Number);
+            bodyObj.pageToken = pageToken;
+            bodyObj.pageSize = 120;
+
+            const data = await new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: tpl.method,
+                    url: tpl.url,
+                    headers: { ...tpl.headers, 'Content-Type': 'application/json' },
+                    data: JSON.stringify(bodyObj),
+                    responseType: 'json',
+                    timeout: 15000,
+                    onload: function(res) {
+                        try { resolve(typeof res.response === 'object' ? res.response : JSON.parse(res.responseText)); }
+                        catch(e) { reject(new Error('parseError')); }
+                    },
+                    onerror: function() { reject(new Error('requestError')); },
+                    ontimeout: function() { reject(new Error('timeout')); },
+                });
+            });
+
+            (data.items || []).forEach(item => {
+                const id = item.id || item.itemId;
+                if (!id || !item.name || item.price == null) return;
+                allItems[id] = {
+                    name: item.name,
+                    price: String(item.price),
+                    url: `https://jp.mercari.com/item/${id}`,
+                    image: (item.thumbnails && item.thumbnails[0]) || '',
+                };
+            });
+
+            const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
+            if (!nextToken || (data.items || []).length === 0) break;
+            pageToken = nextToken;
+            await sleep(300);
+        }
+        return allItems;
+    }
+
+    async function runBatchFetch(mfrs, selected) {
+        const targets = selected.map(s => s.toUpperCase());
+        const filtered = targets.includes('ALL') ? mfrs : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
+        if (filtered.length === 0) { updateStatus('対象なし'); return; }
+
+        running = true;
+        setRunningUI(true);
+        let errors = 0;
+
+        for (let i = 0; i < filtered.length; i++) {
+            if (!running) break;
+            const mfr = filtered[i];
+            const name = mfr.name || mfr;
+            const url = mfr.url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(name)}&${BATCH_CONDITIONS}`;
+            updateStatus(`[${i+1}/${filtered.length}] ${name} fetch中...`);
+
+            try {
+                items = await fetchCheckerItems(url);
+                errors = 0;
+                const itemList = Object.values(items);
+                updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
+                await new Promise(resolve => sendToServer(itemList, resolve));
+                await sleep(500);
+            } catch(e) {
+                errors++;
+                updateStatus(`[${i+1}/${filtered.length}] ${name} エラー(${errors}): ${e.message}`);
+                if (errors >= 3 || e.message === 'NO_TEMPLATE') {
+                    if (e.message === 'NO_TEMPLATE') {
+                        updateStatus('テンプレートなし → リアルタイムリサーチ起動後に再試行してください');
+                    } else {
+                        localStorage.removeItem(_SHARED_TPL_KEY);
+                        updateStatus('テンプレート期限切れ → ページ再読み込み後に再試行してください');
+                    }
+                    running = false;
+                    setRunningUI(false);
+                    return;
+                }
+                await sleep(2000);
+            }
+        }
+
+        running = false;
+        setRunningUI(false);
+        updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
+    }
 
     // ========== 収集 ==========
     function collectItems() {
@@ -182,19 +297,6 @@
         setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
     }
 
-    // ========== GASへ保存 ==========
-    function saveResearchToGas(matches) {
-        GM_xmlhttpRequest({
-            method:  'POST',
-            url:     GAS_URL,
-            headers: { 'Content-Type': 'text/plain' },
-            data:    JSON.stringify({ matches: matches }),
-            timeout: 30000,
-            onload:  function(res) { console.log('[Amacari] research saved:', res.status); },
-            onerror: function()    { console.warn('[Amacari] GAS save failed'); },
-        });
-    }
-
     // ========== サーバー送信 ==========
     function sendToServer(itemList, onDone) {
         GM_xmlhttpRequest({
@@ -206,15 +308,7 @@
             onload: function(res) {
                 try {
                     const result = JSON.parse(res.responseText);
-                    const matches = result.matches || [];
-                    showResults(matches);
-                    if (matches.length > 0) {
-                        const enriched = matches.map(function(m) {
-                            const orig = itemList.find(function(it) { return it.name === m.name; }) || {};
-                            return Object.assign({}, m, { image_url: orig.image || '' });
-                        });
-                        saveResearchToGas(enriched);
-                    }
+                    showResults(result.matches || []);
                 } catch(e) {
                     updateStatus('サーバー応答エラー');
                 }
@@ -356,7 +450,12 @@
             const checked = Array.from(list.querySelectorAll('.group-picker-check:checked')).map(c => c.value);
             const selected = checked.length > 0 ? checked : ['ALL'];
             overlay.remove();
-            runBatchWithGroups(mfrs, selected);
+            if (_getSharedTpl()) {
+                runBatchFetch(mfrs, selected);
+            } else {
+                updateStatus('テンプレート未取得 → リアルタイムリサーチ起動後に再試行。従来モードで開始');
+                runBatchWithGroups(mfrs, selected);
+            }
         };
     }
 
@@ -420,16 +519,6 @@
         location.href = url;
     }
 
-    // ========== 自動起動（タスクスケジューラ用） ==========
-    // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
-    // auto_researchパラメータがある場合は前回クラッシュ時の残留batchModeをリセット（batchModeチェックより先に実行）
-    const _autoGroup = new URLSearchParams(location.search).get('auto_research');
-    if (_autoGroup) {
-        localStorage.removeItem('batchMode');
-        localStorage.removeItem('batchList');
-        localStorage.removeItem('batchIndex');
-    }
-
     // バッチモード中のページロード時に自動リサーチ開始
     if (localStorage.getItem('batchMode') === 'true') {
         window.addEventListener('load', () => {
@@ -457,8 +546,10 @@
         });
     }
 
+    // ========== 自動起動（タスクスケジューラ用） ==========
+    // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
     if (localStorage.getItem('batchMode') !== 'true') {
-        const autoGroup = _autoGroup;
+        const autoGroup = new URLSearchParams(location.search).get('auto_research');
         if (autoGroup) {
             localStorage.setItem('autoResearch', 'true');
             window.addEventListener('load', () => {
