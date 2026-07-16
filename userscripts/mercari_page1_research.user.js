@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  リアルタイムリサーチ：page1高速ループで販売中商品をlist.jsonと照合してhitsシートに通知
+// @version      1.5
+// @description  リアルタイムリサーチ：page1高速ループ・ナビなし安定版
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -13,17 +13,19 @@
 (function () {
     'use strict';
 
-    const SERVER  = 'http://localhost:8766/check-mercari';
-    const WAIT_MS = 60000;  // 1サイクル後の待機時間（ミリ秒）
+    const SERVER      = 'http://localhost:8766/check-mercari';
+    const WAIT_MS     = 60000;  // サイクル間の待機
+    const FETCH_DELAY = 3000;   // カテゴリ間のfetch間隔
 
     const P1_MODE      = 'p1r_mode';
     const P1_CURSOR    = 'p1r_cursor';
     const P1_FOUND     = 'p1r_found';
     const P1_LOG       = 'p1r_log';
-    const P1_HEARTBEAT = 'p1r_hb';   // ウォッチドッグ用タイムスタンプ
-    const WD_TIMEOUT   = 300000;     // 5分間更新なければ自動リスタート
+    const P1_HEARTBEAT = 'p1r_hb';
+    const P1_PHASE     = 'p1r_phase';    // 'capture' | 'loop'
+    const P1_CAPTURES  = 'p1r_captures'; // localStorage に保存するキャプチャデータ
+    const WD_TIMEOUT   = 300000;         // ウォッチドッグ5分
 
-    // 販売中（on_sale）・page1のみ・3カテゴリ
     const SEARCH_URLS = [
         {
             name: '生活家電・空調',
@@ -39,25 +41,69 @@
         },
     ];
 
-    // ── XHR インターセプト ────────────────────────────────────────────────────
+    // ── キャプチャデータ（ページ遷移を超えてlocalStorageで保持） ──────────────
+
+    const _captures = {};
+
+    function saveCaptures() {
+        try { ls.set(P1_CAPTURES, JSON.stringify(_captures)); } catch (e) {}
+    }
+
+    function restoreCaptures() {
+        try {
+            const stored = JSON.parse(ls.get(P1_CAPTURES) || '{}');
+            Object.entries(stored).forEach(([i, cap]) => { _captures[parseInt(i)] = cap; });
+        } catch (e) {}
+    }
+
+    function allCaptured() {
+        return SEARCH_URLS.every((_, i) => _captures[i]);
+    }
+
+    function clearCaptures() {
+        ls.del(P1_CAPTURES);
+        Object.keys(_captures).forEach(k => delete _captures[k]);
+    }
+
+    // ── XHR インターセプト（リクエスト内容も記録） ───────────────────────────
 
     let _resolve  = null;
     let _buffered = null;
 
-    const _origOpen = XMLHttpRequest.prototype.open;
-    const _origSend = XMLHttpRequest.prototype.send;
+    const _origOpen             = XMLHttpRequest.prototype.open;
+    const _origSend             = XMLHttpRequest.prototype.send;
+    const _origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
 
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-        this._p1rUrl = url.includes('entities:search') ? url : null;
+        this._p1rUrl    = url.includes('entities:search') ? url : null;
+        this._p1rMethod = method;
         return _origOpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+        if (this._p1rUrl) {
+            if (!this._p1rHeaders) this._p1rHeaders = {};
+            this._p1rHeaders[name] = value;
+        }
+        return _origSetRequestHeader.apply(this, [name, value]);
     };
 
     XMLHttpRequest.prototype.send = function (...args) {
         if (this._p1rUrl) {
+            const capUrl     = this._p1rUrl;
+            const capMethod  = this._p1rMethod || 'POST';
+            const capHeaders = { ...(this._p1rHeaders || {}) };
+            const capBody    = (typeof args[0] === 'string') ? args[0] : null;
+
             this.addEventListener('load', () => {
                 try {
                     const data = JSON.parse(this.responseText);
                     if (data && Array.isArray(data.items)) {
+                        const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
+                        if (!_captures[cursor] && capBody !== null) {
+                            _captures[cursor] = { url: capUrl, method: capMethod, headers: capHeaders, body: capBody };
+                            saveCaptures();
+                        }
                         if (_resolve) { _resolve(data); _resolve = null; }
                         else if (!_buffered) { _buffered = data; }
                     }
@@ -90,12 +136,13 @@
             log.push(`${t} ${msg}`);
             if (log.length > 60) log.shift();
             ls.set(P1_LOG, JSON.stringify(log));
-            ls.set(P1_HEARTBEAT, String(Date.now()));  // 生存確認更新
+            ls.set(P1_HEARTBEAT, String(Date.now()));
         } catch (e) {}
     }
 
     function clearState() {
-        [P1_MODE, P1_CURSOR, P1_FOUND].forEach(ls.del);
+        [P1_MODE, P1_CURSOR, P1_FOUND, P1_PHASE].forEach(ls.del);
+        clearCaptures();
     }
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -132,98 +179,145 @@
         }
     }
 
-    // ── サイクル進行 ──────────────────────────────────────────────────────────
+    // ── fetch 直接呼び出し（ページ遷移なし） ─────────────────────────────────
 
-    function advanceCycle(processedIdx) {
-        if (ls.get(P1_MODE) !== 'search') return;
-
-        const n       = SEARCH_URLS.length;
-        const nextIdx = (processedIdx + 1) % n;
-
-        if (nextIdx === 0) {
-            const total = ls.get(P1_FOUND) || '0';
-            p1Log(`cycle完了 累計${total}件 ${WAIT_MS / 1000}秒待機`);
-            showStatus(`1周完了 累計${total}件 | ${WAIT_MS / 1000}秒後に再スキャン`, '#0d47a1');
-            setTimeout(() => {
-                if (ls.get(P1_MODE) !== 'search') return;
-                ls.set(P1_CURSOR, '0');
-                window.location.href = SEARCH_URLS[0].url;
-            }, WAIT_MS);
-        } else {
-            ls.set(P1_CURSOR, nextIdx);
-            p1Log(`→ cat${nextIdx}`);
-            window.location.href = SEARCH_URLS[nextIdx].url;
+    async function fetchCategory(cap) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        try {
+            const res = await fetch(cap.url, {
+                method:      cap.method,
+                headers:     cap.headers,
+                credentials: 'include',
+                body:        cap.body,
+                signal:      controller.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (!Array.isArray(data.items)) throw new Error('no items');
+            return data;
+        } catch (e) {
+            clearTimeout(timer);
+            throw e;
         }
     }
 
-    // ── 検索ページ処理 ────────────────────────────────────────────────────────
+    // ── キャプチャフェーズ（初回のみ3カテゴリを1回ずつ遷移して記録） ─────────
 
-    async function runOnSearchPage() {
+    async function runCapturePhase() {
         const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
-        const cat    = SEARCH_URLS[cursor];
 
-        showStatus(`${cat.name}: 待機中…`, '#0d47a1');
-
-        let data;
-        try {
-            data = await waitForXhr(60000);
-        } catch (e) {
-            p1Log(`cat${cursor} TIMEOUT`);
-            showStatus(`タイムアウト → 次へ`, '#e65100');
-            await sleep(1500);
-            advanceCycle(cursor);
+        if (_captures[cursor]) {
+            advanceCapture(cursor);
             return;
         }
 
-        const items = data.items || [];
-        p1Log(`cat${cursor} items=${items.length}`);
-        showStatus(`${cat.name}: ${items.length}件照合中…`, '#0d47a1');
+        showStatus(`[準備 ${cursor + 1}/3] ${SEARCH_URLS[cursor].name} 待機…`, '#5d4037');
+        p1Log(`capture cat${cursor} 待機`);
 
-        let found = 0;
+        let data;
         try {
-            found = await processItems(items);
+            data = await waitForXhr(20000);
         } catch (e) {
-            p1Log(`processItems error: ${e.message}`);
+            p1Log(`capture cat${cursor} タイムアウト → リトライ`);
+            window.location.href = SEARCH_URLS[cursor].url;
+            return;
         }
 
-        if (ls.get(P1_MODE) !== 'search') return;
-
-        p1Log(`cat${cursor} ヒット:${found}`);
-        const total = parseInt(ls.get(P1_FOUND) || '0', 10) + found;
-        ls.set(P1_FOUND, total);
-        showStatus(
-            `${cat.name}: ヒット:${found}（累計${total}）`,
-            found > 0 ? '#1b5e20' : '#0d47a1'
-        );
-
-        await sleep(1500);
-        advanceCycle(cursor);
+        p1Log(`capture cat${cursor} OK items=${data.items.length}`);
+        advanceCapture(cursor);
     }
 
-    // ── ウォッチドッグ（ページ内 setInterval + visibilitychange） ──────────────
+    function advanceCapture(cursor) {
+        const next = cursor + 1;
+        if (next >= SEARCH_URLS.length) {
+            p1Log('全カテゴリ準備完了 → ループ開始');
+            ls.set(P1_PHASE, 'loop');
+            ls.set(P1_CURSOR, '0');
+            startLoopPhase();
+        } else {
+            ls.set(P1_CURSOR, String(next));
+            window.location.href = SEARCH_URLS[next].url;
+        }
+    }
+
+    // ── ループフェーズ（ページ遷移なし・fetch直接） ───────────────────────────
+
+    async function startLoopPhase() {
+        if (!allCaptured()) {
+            p1Log('キャプチャデータなし → 再準備');
+            ls.set(P1_PHASE, 'capture');
+            ls.set(P1_CURSOR, '0');
+            window.location.href = SEARCH_URLS[0].url;
+            return;
+        }
+
+        p1Log('=== ループ開始（ナビなし）===');
+
+        while (ls.get(P1_MODE) === 'search') {
+            for (let i = 0; i < SEARCH_URLS.length; i++) {
+                if (ls.get(P1_MODE) !== 'search') return;
+
+                showStatus(`[R] ${SEARCH_URLS[i].name} 照合中…`, '#0d47a1');
+                p1Log(`fetch cat${i}`);
+
+                let items = [];
+                try {
+                    const data = await fetchCategory(_captures[i]);
+                    items = data.items || [];
+                } catch (e) {
+                    p1Log(`fetch cat${i} エラー: ${e.message}`);
+                    // 認証切れ・API変更 → キャプチャを破棄して再準備
+                    if (/HTTP 4|no items/.test(e.message)) {
+                        p1Log('エラー → キャプチャ破棄・再準備');
+                        clearCaptures();
+                        ls.set(P1_PHASE, 'capture');
+                        ls.set(P1_CURSOR, '0');
+                        window.location.href = SEARCH_URLS[0].url;
+                        return;
+                    }
+                    await sleep(FETCH_DELAY);
+                    continue;
+                }
+
+                p1Log(`cat${i} items=${items.length}`);
+                let found = 0;
+                try { found = await processItems(items); } catch (e) { p1Log(`processItems error: ${e.message}`); }
+
+                const total = parseInt(ls.get(P1_FOUND) || '0', 10) + found;
+                ls.set(P1_FOUND, String(total));
+                showStatus(
+                    `[R] ${SEARCH_URLS[i].name}: ヒット${found}（累計${total}）`,
+                    found > 0 ? '#1b5e20' : '#0d47a1'
+                );
+
+                if (i < SEARCH_URLS.length - 1) await sleep(FETCH_DELAY);
+            }
+
+            const total = ls.get(P1_FOUND) || '0';
+            p1Log(`cycle完了 累計${total}件 ${WAIT_MS / 1000}秒待機`);
+            showStatus(`1周完了 累計${total}件 | ${WAIT_MS / 1000}秒後に再スキャン`, '#0d47a1');
+            await sleep(WAIT_MS);
+        }
+    }
+
+    // ── ウォッチドッグ ────────────────────────────────────────────────────────
 
     function startWatchdog() {
         setInterval(() => {
             if (ls.get(P1_MODE) !== 'search') return;
+            if (ls.get(P1_PHASE) !== 'loop') return;
             const lastHb = parseInt(ls.get(P1_HEARTBEAT) || '0', 10);
             if (lastHb > 0 && Date.now() - lastHb > WD_TIMEOUT) {
-                p1Log('watchdog(interval): 停止検知 → cat0リスタート');
+                p1Log('watchdog: 停止検知 → 再準備');
+                clearCaptures();
+                ls.set(P1_PHASE, 'capture');
                 ls.set(P1_CURSOR, '0');
                 window.location.href = SEARCH_URLS[0].url;
             }
         }, 30000);
     }
-
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible') return;
-        if (ls.get(P1_MODE) !== 'search') return;
-        const lastHb = parseInt(ls.get(P1_HEARTBEAT) || '0', 10);
-        if (lastHb > 0 && Date.now() - lastHb > 120000) {  // 2分以上止まっていたら
-            p1Log('watchdog(visibility): タブ復帰検知 → cat0リスタート');
-            ls.set(P1_CURSOR, '0');
-            window.location.href = SEARCH_URLS[0].url;
-        }
-    });
 
     // ── UI ───────────────────────────────────────────────────────────────────
 
@@ -239,17 +333,18 @@
         const b = document.getElementById('p1r-btn');
         if (!b) return;
         b.textContent      = active ? '■ リアルタイムリサーチ停止' : '▶ リアルタイムリサーチ開始';
-        b.style.background = active ? '#616161'          : '#0d47a1';
+        b.style.background = active ? '#616161' : '#0d47a1';
     }
 
     // ── エントリポイント ──────────────────────────────────────────────────────
+
+    restoreCaptures();  // ページロード時にキャプチャを復元
 
     window.addEventListener('DOMContentLoaded', () => {
         startWatchdog();
         setTimeout(() => {
             if (document.getElementById('p1r-btn')) return;
 
-            // ステータス表示（速売れの下 top:90px）
             $status = document.createElement('div');
             $status.style.cssText = [
                 'position:fixed', 'top:90px', 'right:8px', 'z-index:99998',
@@ -260,7 +355,6 @@
             ].join(';');
             document.body.appendChild($status);
 
-            // ボタン（速売れボタンの上 bottom:220px）
             const btn = document.createElement('button');
             btn.id            = 'p1r-btn';
             btn.style.cssText = [
@@ -274,15 +368,6 @@
             const active = ls.get(P1_MODE) === 'search';
             updateBtn(active);
 
-            // ウォッチドッグ：5分以上動いていなければ自動リスタート
-            if (active) {
-                const lastHb = parseInt(ls.get(P1_HEARTBEAT) || '0', 10);
-                if (lastHb > 0 && Date.now() - lastHb > WD_TIMEOUT) {
-                    ls.set(P1_CURSOR, '0');
-                    p1Log('watchdog: 停止検知 → cat0からリスタート');
-                }
-            }
-
             btn.onclick = () => {
                 if (ls.get(P1_MODE) === 'search') {
                     clearState();
@@ -293,16 +378,24 @@
                     ls.set(P1_MODE,   'search');
                     ls.set(P1_CURSOR, '0');
                     ls.set(P1_FOUND,  '0');
+                    ls.set(P1_PHASE,  'capture');
                     updateBtn(true);
                     window.location.href = SEARCH_URLS[0].url;
                 }
             };
 
-            if (active && window.location.href.includes('/search')) {
-                runOnSearchPage();
-            } else if (active) {
-                const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
-                window.location.href = SEARCH_URLS[cursor].url;
+            if (active) {
+                const phase = ls.get(P1_PHASE);
+                if (phase === 'loop') {
+                    startLoopPhase();
+                } else {
+                    if (window.location.href.includes('/search')) {
+                        runCapturePhase();
+                    } else {
+                        const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
+                        window.location.href = SEARCH_URLS[cursor].url;
+                    }
+                }
             }
         }, 900);
     });
