@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  リアルタイムリサーチ：page1高速ループ・ナビなし安定版
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -254,6 +254,7 @@
         }
 
         p1Log('=== ループ開始（ナビなし）===');
+        let _fetchErrors = 0;  // 連続エラーカウンター
 
         while (ls.get(P1_MODE) === 'search') {
             for (let i = 0; i < SEARCH_URLS.length; i++) {
@@ -266,10 +267,11 @@
                 try {
                     const data = await fetchCategory(_captures[i]);
                     items = data.items || [];
+                    _fetchErrors = 0;  // 成功したらリセット
                 } catch (e) {
-                    p1Log(`fetch cat${i} エラー: ${e.message}`);
-                    // 認証切れ・API変更 → キャプチャを破棄して再準備
-                    if (/HTTP 4|no items/.test(e.message)) {
+                    _fetchErrors++;
+                    p1Log(`fetch cat${i} エラー(${_fetchErrors}回): ${e.message}`);
+                    if (_fetchErrors >= 3 || /HTTP 4|no items/.test(e.message)) {
                         p1Log('エラー → キャプチャ破棄・再準備');
                         clearCaptures();
                         ls.set(P1_PHASE, 'capture');
