@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -113,22 +113,24 @@
             bodyObj.pageToken = pageToken;
             bodyObj.pageSize = 120;
 
-            const data = await new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 15000);
+            let data;
+            try {
+                const res = await fetch(tpl.url, {
                     method: tpl.method,
-                    url: tpl.url,
-                    headers: { ...tpl.headers, 'Content-Type': 'application/json' },
-                    data: JSON.stringify(bodyObj),
-                    responseType: 'json',
-                    timeout: 15000,
-                    onload: function(res) {
-                        try { resolve(typeof res.response === 'object' ? res.response : JSON.parse(res.responseText)); }
-                        catch(e) { reject(new Error('parseError')); }
-                    },
-                    onerror: function() { reject(new Error('requestError')); },
-                    ontimeout: function() { reject(new Error('timeout')); },
+                    headers: tpl.headers,
+                    credentials: 'include',
+                    body: JSON.stringify(bodyObj),
+                    signal: ctrl.signal,
                 });
-            });
+                clearTimeout(timer);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                data = await res.json();
+            } catch(e) {
+                clearTimeout(timer);
+                throw e;
+            }
 
             (data.items || []).forEach(item => {
                 const id = item.id || item.itemId;
@@ -177,10 +179,12 @@
                 updateStatus(`[${i+1}/${filtered.length}] ${name} エラー(${errors}): ${e.message}`);
                 if (errors >= 3 || e.message === 'NO_TEMPLATE') {
                     if (e.message === 'NO_TEMPLATE') {
-                        updateStatus('テンプレートなし → リアルタイムリサーチ起動後に再試行してください');
-                    } else {
+                        updateStatus('テンプレートなし → 検索1回後に再試行してください');
+                    } else if (/HTTP 4/.test(e.message)) {
                         localStorage.removeItem(_SHARED_TPL_KEY);
-                        updateStatus('テンプレート期限切れ → ページ再読み込み後に再試行してください');
+                        updateStatus('セッション切れ → ページ再読み込み後に再試行してください');
+                    } else {
+                        updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
                     }
                     running = false;
                     setRunningUI(false);
