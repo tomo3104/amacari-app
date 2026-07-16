@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.1
+// @version      5.2
 // @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      localhost
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_auto_collector.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_auto_collector.user.js
@@ -74,12 +75,13 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ========== fetch化: 共有テンプレートから直接API呼び出し（v5.0） ==========
+    // ========== fetch化: 共有テンプレートから直接API呼び出し（v5.2） ==========
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
+    const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     function _getSharedTpl() {
         try {
-            const s = localStorage.getItem(_SHARED_TPL_KEY);
+            const s = _uw.localStorage.getItem(_SHARED_TPL_KEY);
             return s ? JSON.parse(s) : null;
         } catch(e) { return null; }
     }
@@ -173,7 +175,7 @@
                     if (e.message === 'NO_TEMPLATE') {
                         updateStatus('テンプレートなし → 検索1回後に再試行してください');
                     } else if (/HTTP 4/.test(e.message)) {
-                        localStorage.removeItem(_SHARED_TPL_KEY);
+                        _uw.localStorage.removeItem(_SHARED_TPL_KEY);
                         updateStatus('セッション切れ → ページ再読み込み後に再試行してください');
                     } else {
                         updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);

@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      localhost
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
@@ -78,12 +79,13 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ========== fetch化: 共有テンプレートから直接API呼び出し（v2.0） ==========
+    // ========== fetch化: 共有テンプレートから直接API呼び出し（v2.2） ==========
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
+    const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     function _getSharedTpl() {
         try {
-            const s = localStorage.getItem(_SHARED_TPL_KEY);
+            const s = _uw.localStorage.getItem(_SHARED_TPL_KEY);
             return s ? JSON.parse(s) : null;
         } catch(e) { return null; }
     }
@@ -181,7 +183,7 @@
                     if (e.message === 'NO_TEMPLATE') {
                         updateStatus('テンプレートなし → 検索1回後に再試行してください');
                     } else if (/HTTP 4/.test(e.message)) {
-                        localStorage.removeItem(_SHARED_TPL_KEY);
+                        _uw.localStorage.removeItem(_SHARED_TPL_KEY);
                         updateStatus('セッション切れ → ページ再読み込み後に再試行してください');
                     } else {
                         updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
