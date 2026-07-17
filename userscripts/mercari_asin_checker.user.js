@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -568,7 +568,11 @@
                                 const mfrs = JSON.parse(res.responseText).manufacturers || [];
                                 if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
                                 const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                                runBatchWithGroups(mfrs, groups);
+                                if (_getSharedTpl()) {
+                                    runBatchFetch(mfrs, groups);
+                                } else {
+                                    runBatchWithGroups(mfrs, groups);
+                                }
                             } catch(e) { updateStatus('自動起動失敗: ' + e); }
                         },
                         onerror: () => updateStatus('サーバー未起動（auto_research）'),

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.2
+// @version      5.3
 // @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -516,7 +516,11 @@
                                 const mfrs = JSON.parse(res.responseText).manufacturers || [];
                                 if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
                                 const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                                runCrawlerWithGroups(mfrs, groups);
+                                if (_getSharedTpl()) {
+                                    runCrawlerFetch(mfrs, groups);
+                                } else {
+                                    runCrawlerWithGroups(mfrs, groups);
+                                }
                             } catch(e) { updateStatus('自動起動失敗: ' + e); }
                         },
                         onerror: () => updateStatus('サーバー未起動（auto_crawl）'),
