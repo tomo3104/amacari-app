@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -161,6 +161,9 @@
         running = true;
         setRunningUI(true);
         let errors = 0;
+        const batchStart = Date.now();
+        const groupLabel = selected.join(',');
+        postTiming({ type: 'start', group: groupLabel, total: filtered.length });
 
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
@@ -169,12 +172,14 @@
             const url = mfr.url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(name)}&${BATCH_CONDITIONS}`;
             updateStatus(`[${i+1}/${filtered.length}] ${name} fetch中...`);
 
+            const mfrStart = Date.now();
             try {
                 items = await fetchCheckerItems(url);
                 errors = 0;
                 const itemList = Object.values(items);
                 updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
                 await new Promise(resolve => sendToServer(itemList, resolve));
+                postTiming({ type: 'mfr', name, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length });
                 await sleep(500);
             } catch(e) {
                 errors++;
@@ -196,6 +201,7 @@
             }
         }
 
+        postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart });
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
@@ -301,6 +307,18 @@
 
         updateStatus(`照合完了 — ${matches.length}件ヒット！`);
         setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
+    }
+
+    // ========== タイミングログ ==========
+    function postTiming(data) {
+        GM_xmlhttpRequest({
+            method:  'POST',
+            url:     'http://localhost:8766/log-timing',
+            headers: { 'Content-Type': 'application/json' },
+            data:    JSON.stringify(data),
+            onerror: () => {},
+            ontimeout: () => {},
+        });
     }
 
     // ========== サーバー送信 ==========
