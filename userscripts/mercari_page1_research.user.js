@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  リアルタイムリサーチ：page1高速ループ・ナビなし安定版
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -402,6 +402,14 @@
                         window.location.href = SEARCH_URLS[cursor].url;
                     }
                 }
+            } else if (new URLSearchParams(location.search).get('auto_realtime') === '1') {
+                clearState();
+                ls.set(P1_MODE,   'search');
+                ls.set(P1_CURSOR, '0');
+                ls.set(P1_FOUND,  '0');
+                ls.set(P1_PHASE,  'capture');
+                updateBtn(true);
+                window.location.href = SEARCH_URLS[0].url;
             }
         }, 900);
     });
