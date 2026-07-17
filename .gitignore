@@ -1,0 +1,9 @@
+credentials.json
+list.json
+list_backup_*.json
+*.log
+__pycache__/
+*.pyc
+*.tsv
+*.xlsx
+*.txt
