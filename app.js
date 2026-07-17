@@ -57,6 +57,7 @@ const els = {
   logView: document.getElementById("log-view"),
   pipelineLogList: document.getElementById("pipeline-log-list"),
   researchLogList: document.getElementById("research-log-list"),
+  researchTimingList: document.getElementById("research-timing-list"),
   logEmpty: document.getElementById("log-empty"),
   modal: document.getElementById("reason-modal"),
   reasonGrid: document.querySelector(".reason-grid"),
@@ -134,14 +135,17 @@ async function loadLog() {
   els.logEmpty.style.display = "block";
   els.pipelineLogList.innerHTML = "";
   els.researchLogList.innerHTML = "";
+  els.researchTimingList.innerHTML = "";
   try {
-    const [r1, r2] = await Promise.all([
+    const [r1, r2, r3] = await Promise.all([
       fetch(gasUrl("pipelineLog")).then(r => r.json()),
       fetch(gasUrl("researchLog")).then(r => r.json()),
+      fetch(gasUrl("researchTiming")).then(r => r.json()),
     ]);
     els.logEmpty.style.display = "none";
     renderPipelineLog(r1.rows || []);
     renderResearchLog(r2.rows || []);
+    renderResearchTiming(r3.rows || []);
   } catch (e) {
     els.logEmpty.textContent = "読み込みに失敗しました。";
   }
@@ -165,6 +169,23 @@ function renderPipelineLog(rows) {
         <td>${r.premium}</td>
         <td>${r.listAdded}</td>
         <td>${r.durationMin}分</td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+}
+
+function renderResearchTiming(rows) {
+  if (rows.length === 0) {
+    els.researchTimingList.innerHTML = "<p style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</p>";
+    return;
+  }
+  els.researchTimingList.innerHTML = `
+    <table class="log-table">
+      <thead><tr><th>日時</th><th>グループ</th><th>社数</th><th>所要時間</th></tr></thead>
+      <tbody>${[...rows].reverse().slice(0, 20).map(r => `<tr>
+        <td>${escapeHtml(String(r.datetime))}</td>
+        <td>${escapeHtml(String(r.group))}</td>
+        <td>${r.total}</td>
+        <td>${escapeHtml(String(r.elapsed))}</td>
       </tr>`).join("")}</tbody>
     </table>`;
 }

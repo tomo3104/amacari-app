@@ -27,9 +27,10 @@ PORT             = 8766
 BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
 LIST_FILE        = os.path.join(BASE_DIR, "list.json")
 CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
-SPREADSHEET_ID   = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
-SHEET_HITS       = "hits"
-SCOPES           = ["https://www.googleapis.com/auth/spreadsheets"]
+SPREADSHEET_ID        = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
+SHEET_HITS            = "hits"
+SHEET_RESEARCH_TIMING = "research_timing"
+SCOPES                = ["https://www.googleapis.com/auth/spreadsheets"]
 
 HITS_HEADER = ["日時", "商品名", "型番", "ASIN", "メルカリURL", "Amazon価格", "メルカリ価格", "pmax", "差益", "ROI(%)", "利益率(%)", "スコア", "画像URL", "判定", "却下理由", "ランク", "購入日時"]
 MIN_MARGIN       = 15    # ヒット条件：利益率15%以上
@@ -51,6 +52,36 @@ CONSUMABLE_PREFIXES = (
 def get_sheets_service():
     creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
     return build("sheets", "v4", credentials=creds)
+
+
+def save_research_timing(group, total, elapsed_ms):
+    try:
+        service = get_sheets_service()
+        meta  = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        names = [s["properties"]["title"] for s in meta["sheets"]]
+        if SHEET_RESEARCH_TIMING not in names:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=SPREADSHEET_ID,
+                body={"requests": [{"addSheet": {"properties": {"title": SHEET_RESEARCH_TIMING}}}]},
+            ).execute()
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{SHEET_RESEARCH_TIMING}!A1",
+                valueInputOption="RAW",
+                body={"values": [["日時", "グループ", "社数", "所要時間"]]},
+            ).execute()
+        m, s = divmod(elapsed_ms // 1000, 60)
+        row = [datetime.now().strftime("%Y-%m-%d %H:%M"), group, total, f"{m}分{s}秒"]
+        service.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{SHEET_RESEARCH_TIMING}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [row]},
+        ).execute()
+        print(f"  → research_timing記録: {group} {m}分{s}秒")
+    except Exception as e:
+        print(f"research_timing保存失敗: {e}")
 
 
 def ensure_hits_sheet(service):
@@ -335,9 +366,13 @@ class Handler(BaseHTTPRequestHandler):
                     elapsed = data.get('elapsed_ms', 0) / 1000
                     print(f"[{datetime.now().strftime('%H:%M:%S')}]   {data.get('name',''):<16} {data.get('item_count',0):>4}件 {elapsed:.1f}秒")
                 elif t == 'end':
-                    ms = data.get('elapsed_ms', 0)
-                    m, s = divmod(ms // 1000, 60)
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [自動リサーチ完了] {data.get('total',0)}社 {m}分{s}秒")
+                    ms    = data.get('elapsed_ms', 0)
+                    group = data.get('group', '')
+                    total = data.get('total', 0)
+                    m, s  = divmod(ms // 1000, 60)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [自動リサーチ完了] {total}社 {m}分{s}秒")
+                    import threading
+                    threading.Thread(target=save_research_timing, args=(group, total, ms), daemon=True).start()
                 self.send_response(200)
                 self._cors()
                 self.end_headers()
