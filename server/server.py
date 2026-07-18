@@ -151,7 +151,20 @@ def save_hits(matches):
 _item_list_cache:    dict = {}   # list.jsonのキャッシュ（サーバー起動時に一度だけ読み込む）
 _pattern_cache:      dict = {}   # 型番→コンパイル済み正規表現のキャッシュ
 _seen_hit_asins:     set  = set()  # ヒット済みASIN（サーバー起動中は重複記録しない）
-_seen_candidates:    set  = set()  # 候補記録済み型番（セッション内重複防止）
+_seen_candidates:    set  = set()  # 候補記録済み型番（再起動をまたいで重複防止）
+
+CANDIDATES_SEEN_FILE = os.path.join(BASE_DIR, "seen_candidates.json")
+
+def _load_seen_candidates():
+    global _seen_candidates
+    if os.path.exists(CANDIDATES_SEEN_FILE):
+        with open(CANDIDATES_SEEN_FILE, 'r', encoding='utf-8') as f:
+            _seen_candidates = set(json.load(f))
+        print(f"  候補記録済み: {len(_seen_candidates)}件読み込み")
+
+def _save_seen_candidates():
+    with open(CANDIDATES_SEEN_FILE, 'w', encoding='utf-8') as f:
+        json.dump(list(_seen_candidates), f, ensure_ascii=False)
 
 # 新型番候補収集用
 SHEET_CANDIDATES  = '新型番候補'
@@ -299,6 +312,7 @@ def save_candidates(candidates):
             body={'values': rows},
         ).execute()
         print(f'  → 新型番候補 {len(rows)}件を記録')
+        _save_seen_candidates()
     except Exception as e:
         print(f'  → 候補記録失敗: {e}')
 
@@ -452,6 +466,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("リストとパターンを読み込み中...")
+    _load_seen_candidates()
     item_list = load_list()
     print("=" * 45)
     print(f"  ASINチェッカー サーバー  port:{PORT}")
