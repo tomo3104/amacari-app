@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.6
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -205,6 +205,10 @@
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
+        if (localStorage.getItem('autoResearch') === 'true') {
+            localStorage.removeItem('autoResearch');
+            setTimeout(() => window.close(), 5000);
+        }
     }
 
     // ========== 収集 ==========
@@ -580,30 +584,52 @@
 
     // ========== 自動起動（タスクスケジューラ用） ==========
     // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
+    // v2.6: 起動時に古いテンプレートを削除→検索ページへ遷移してXHRを捕捉→テンプレート更新後にfetch mode開始
+    const _AUTO_RESEARCH_PENDING = 'auto_research_pending';
+    const _WARMUP_SEARCH_URL = 'https://jp.mercari.com/search?keyword=Canon&status=on_sale&item_condition_id=1&shipping_payer_id=2';
+
     if (localStorage.getItem('batchMode') !== 'true') {
-        const autoGroup = new URLSearchParams(location.search).get('auto_research');
+        const autoGroup    = new URLSearchParams(location.search).get('auto_research');
+        const pendingGroup = localStorage.getItem(_AUTO_RESEARCH_PENDING);
+
         if (autoGroup) {
+            // ① 古いテンプレートを削除し、検索ページへウォームアップ遷移
             localStorage.setItem('autoResearch', 'true');
+            _uw.localStorage.removeItem(_SHARED_TPL_KEY);
+            localStorage.setItem(_AUTO_RESEARCH_PENDING, autoGroup);
             window.addEventListener('load', () => {
-                setTimeout(() => {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url: MFR_URL,
-                        onload: function(res) {
-                            try {
-                                const mfrs = JSON.parse(res.responseText).manufacturers || [];
-                                if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
-                                const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                                if (_getSharedTpl()) {
-                                    runBatchFetch(mfrs, groups);
-                                } else {
-                                    runBatchWithGroups(mfrs, groups);
-                                }
-                            } catch(e) { updateStatus('自動起動失敗: ' + e); }
-                        },
-                        onerror: () => updateStatus('サーバー未起動（auto_research）'),
-                    });
-                }, 3000);
+                setTimeout(() => { location.href = _WARMUP_SEARCH_URL; }, 1000);
+            });
+        } else if (pendingGroup && localStorage.getItem('autoResearch') === 'true') {
+            // ② ウォームアップ検索ページ上でXHRキャプチャ完了待ち → fetch mode開始
+            window.addEventListener('load', () => {
+                let waited = 0;
+                const poll = setInterval(() => {
+                    waited++;
+                    const tpl = _getSharedTpl();
+                    if (tpl || waited >= 20) {
+                        clearInterval(poll);
+                        localStorage.removeItem(_AUTO_RESEARCH_PENDING);
+                        GM_xmlhttpRequest({
+                            method: 'GET',
+                            url: MFR_URL,
+                            onload: function(res) {
+                                try {
+                                    const mfrs = JSON.parse(res.responseText).manufacturers || [];
+                                    if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
+                                    const groups = pendingGroup.toUpperCase() === 'ALL' ? ['ALL'] : pendingGroup.split(',');
+                                    if (tpl) {
+                                        runBatchFetch(mfrs, groups);
+                                    } else {
+                                        updateStatus('テンプレート未取得 → スクロールモードで開始');
+                                        runBatchWithGroups(mfrs, groups);
+                                    }
+                                } catch(e) { updateStatus('自動起動失敗: ' + e); }
+                            },
+                            onerror: () => updateStatus('サーバー未起動（auto_research）'),
+                        });
+                    }
+                }, 500);
             });
         }
     }
