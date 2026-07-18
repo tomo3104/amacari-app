@@ -283,7 +283,7 @@ def find_matches(mercari_items, item_list):
 
 def extract_model(title):
     found = _model_extract_re.findall(title.upper())
-    valid = [m for m in found if not m.isalpha() and len(m) >= 5]
+    valid = [m for m in found if any(c.isdigit() for c in m) and len(m) >= 5]
     return max(valid, key=len) if valid else ''
 
 def save_candidates(candidates):
