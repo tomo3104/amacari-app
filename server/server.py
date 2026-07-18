@@ -31,7 +31,7 @@ SPREADSHEET_ID        = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
 SHEET_HITS            = "hits"
 SHEET_RESEARCH_TIMING = "research_timing"
 SHEET_REALTIME_LOG    = "realtime_log"
-DISCORD_WEBHOOK_URL   = "https://discord.com/api/webhooks/1518124589132025998/Zk5PnfXqmnAfAH5a2TvpNbp1aD5CAYfKB0a-KZpUorOyABL2BGoDfSB3lSomb4ueI-V6"
+DISCORD_WEBHOOK_URL   = "https://discord.com/api/webhooks/1528044256965427260/h77dqPMO6brMmM9Juc1SHxX8FpdK3ymXYtQ90tMZGnr6GOXbnWdpQJParYS-EAw8Ktnl"
 REALTIME_LOG_HEADER   = ["日付", "収集件数", "型番一致", "ヒット", "新規型番候補"]
 
 _realtime_daily: dict = {"date": "", "collected": 0, "matched": 0, "hits": 0, "new_candidates": 0}
@@ -92,7 +92,12 @@ def save_research_timing(group, total, elapsed_ms):
 def send_discord_realtime(matches):
     if not DISCORD_WEBHOOK_URL:
         return
-    import urllib.request
+    try:
+        import requests as _requests
+    except ImportError:
+        import urllib.request as _urllib
+        _requests = None
+
     for m in matches:
         content = (
             f"🔍 **リアルタイムリサーチ ヒット**\n"
@@ -100,15 +105,16 @@ def send_discord_realtime(matches):
             f"メルカリ ¥{m['mercari_price']:,}　差益 ¥{m['diff']:,}　pmax ¥{m['pmax']:,}\n"
             f"{m.get('mercari_url','')}"
         )
-        body = json.dumps({"content": content}).encode("utf-8")
-        req  = urllib.request.Request(
-            DISCORD_WEBHOOK_URL,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            urllib.request.urlopen(req, timeout=10)
+            if _requests:
+                _requests.post(DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10)
+            else:
+                body = json.dumps({"content": content}).encode("utf-8")
+                req  = _urllib.Request(
+                    DISCORD_WEBHOOK_URL, data=body,
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                _urllib.urlopen(req, timeout=10)
         except Exception as e:
             print(f"  → Discord通知失敗: {e}")
 
