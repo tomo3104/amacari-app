@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -496,6 +496,9 @@
         localStorage.setItem('batchMode',  'true');
         localStorage.setItem('batchList',  JSON.stringify(filtered.map(m => ({name: m.name, url: m.url}))));
         localStorage.setItem('batchIndex', '0');
+        localStorage.setItem('batchStart', String(Date.now()));
+        localStorage.setItem('batchGroup', label);
+        postTiming({ type: 'start', group: label, total: filtered.length });
         updateStatus(`クローラーリサーチ開始 ${filtered.length}件（グループ:${label}）`);
         setTimeout(goNextBatch, 1000);
     }
@@ -525,9 +528,14 @@
         const list  = JSON.parse(localStorage.getItem('batchList') || '[]');
         const index = parseInt(localStorage.getItem('batchIndex') || '0');
         if (index >= list.length) {
+            const elapsed = Date.now() - parseInt(localStorage.getItem('batchStart') || String(Date.now()));
+            const group   = localStorage.getItem('batchGroup') || '';
+            postTiming({ type: 'end', group, total: list.length, elapsed_ms: elapsed });
             localStorage.removeItem('batchMode');
             localStorage.removeItem('batchList');
             localStorage.removeItem('batchIndex');
+            localStorage.removeItem('batchStart');
+            localStorage.removeItem('batchGroup');
             updateStatus(`クローラーリサーチ完了！ 全${list.length}件`);
             setRunningUI(false);
             if (localStorage.getItem('autoResearch') === 'true') {
