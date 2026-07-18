@@ -31,6 +31,7 @@ SPREADSHEET_ID        = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
 SHEET_HITS            = "hits"
 SHEET_RESEARCH_TIMING = "research_timing"
 SHEET_REALTIME_LOG    = "realtime_log"
+DISCORD_WEBHOOK_URL   = "https://discord.com/api/webhooks/1518124589132025998/Zk5PnfXqmnAfAH5a2TvpNbp1aD5CAYfKB0a-KZpUorOyABL2BGoDfSB3lSomb4ueI-V6"
 REALTIME_LOG_HEADER   = ["日付", "収集件数", "型番一致", "ヒット", "新規型番候補"]
 
 _realtime_daily: dict = {"date": "", "collected": 0, "matched": 0, "hits": 0, "new_candidates": 0}
@@ -86,6 +87,30 @@ def save_research_timing(group, total, elapsed_ms):
         print(f"  → research_timing記録: {group} {m}分{s}秒")
     except Exception as e:
         print(f"research_timing保存失敗: {e}")
+
+
+def send_discord_realtime(matches):
+    if not DISCORD_WEBHOOK_URL:
+        return
+    import urllib.request
+    for m in matches:
+        content = (
+            f"🔍 **リアルタイムリサーチ ヒット**\n"
+            f"型番：`{m['model']}`\n"
+            f"メルカリ ¥{m['mercari_price']:,}　差益 ¥{m['diff']:,}　pmax ¥{m['pmax']:,}\n"
+            f"{m.get('mercari_url','')}"
+        )
+        body = json.dumps({"content": content}).encode("utf-8")
+        req  = urllib.request.Request(
+            DISCORD_WEBHOOK_URL,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)
+        except Exception as e:
+            print(f"  → Discord通知失敗: {e}")
 
 
 def save_realtime_log(stats):
@@ -474,6 +499,11 @@ class Handler(BaseHTTPRequestHandler):
                 import threading
                 threading.Thread(target=save_candidates, args=(new_cands,), daemon=True).start()
                 print(f'  → 新型番候補: {len(new_cands)}件')
+
+            # リアルタイムリサーチのDiscord通知
+            if source == "realtime" and matches:
+                import threading
+                threading.Thread(target=send_discord_realtime, args=(matches,), daemon=True).start()
 
             # リアルタイムリサーチの日別集計
             if source == "realtime":
