@@ -30,6 +30,10 @@ CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
 SPREADSHEET_ID        = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
 SHEET_HITS            = "hits"
 SHEET_RESEARCH_TIMING = "research_timing"
+SHEET_REALTIME_LOG    = "realtime_log"
+REALTIME_LOG_HEADER   = ["日付", "収集件数", "型番一致", "ヒット", "新規型番候補"]
+
+_realtime_daily: dict = {"date": "", "collected": 0, "matched": 0, "hits": 0, "new_candidates": 0}
 SCOPES                = ["https://www.googleapis.com/auth/spreadsheets"]
 
 HITS_HEADER = ["日時", "商品名", "型番", "ASIN", "メルカリURL", "Amazon価格", "メルカリ価格", "pmax", "差益", "ROI(%)", "利益率(%)", "スコア", "画像URL", "判定", "却下理由", "ランク", "購入日時"]
@@ -82,6 +86,35 @@ def save_research_timing(group, total, elapsed_ms):
         print(f"  → research_timing記録: {group} {m}分{s}秒")
     except Exception as e:
         print(f"research_timing保存失敗: {e}")
+
+
+def save_realtime_log(stats):
+    try:
+        service = get_sheets_service()
+        meta  = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        names = [s["properties"]["title"] for s in meta["sheets"]]
+        if SHEET_REALTIME_LOG not in names:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=SPREADSHEET_ID,
+                body={"requests": [{"addSheet": {"properties": {"title": SHEET_REALTIME_LOG}}}]},
+            ).execute()
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{SHEET_REALTIME_LOG}!A1",
+                valueInputOption="RAW",
+                body={"values": [REALTIME_LOG_HEADER]},
+            ).execute()
+        row = [stats["date"], stats["collected"], stats["matched"], stats["hits"], stats["new_candidates"]]
+        service.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{SHEET_REALTIME_LOG}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [row]},
+        ).execute()
+        print(f"  → realtime_log記録: {stats['date']} 収集{stats['collected']}件 ヒット{stats['hits']}件")
+    except Exception as e:
+        print(f"realtime_log保存失敗: {e}")
 
 
 def ensure_hits_sheet(service):
@@ -406,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data    = json.loads(body)
             items   = data.get("items", [])
+            source  = data.get("source", "")
             matches, n_model_match = find_matches(items, load_list())
 
             response_bytes = json.dumps({"matches": matches}, ensure_ascii=False).encode("utf-8")
@@ -440,6 +474,21 @@ class Handler(BaseHTTPRequestHandler):
                 import threading
                 threading.Thread(target=save_candidates, args=(new_cands,), daemon=True).start()
                 print(f'  → 新型番候補: {len(new_cands)}件')
+
+            # リアルタイムリサーチの日別集計
+            if source == "realtime":
+                global _realtime_daily
+                today = datetime.now().strftime("%Y-%m-%d")
+                if _realtime_daily["date"] and _realtime_daily["date"] != today:
+                    import threading as _t
+                    _t.Thread(target=save_realtime_log, args=(dict(_realtime_daily),), daemon=True).start()
+                    _realtime_daily = {"date": today, "collected": 0, "matched": 0, "hits": 0, "new_candidates": 0}
+                if not _realtime_daily["date"]:
+                    _realtime_daily["date"] = today
+                _realtime_daily["collected"]     += len(items)
+                _realtime_daily["matched"]        += n_model_match
+                _realtime_daily["hits"]           += len(matches)
+                _realtime_daily["new_candidates"] += len(new_cands)
 
             try:
                 self.wfile.write(response_bytes)

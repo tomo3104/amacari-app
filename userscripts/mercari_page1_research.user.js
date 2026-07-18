@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.9
 // @description  リアルタイムリサーチ：page1高速ループ・ナビなし安定版
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -169,7 +169,7 @@
             const res  = await fetch(SERVER, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ items: formatted }),
+                body:    JSON.stringify({ items: formatted, source: 'realtime' }),
             });
             const data    = await res.json();
             const matches = data.matches || [];

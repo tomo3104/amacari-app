@@ -58,6 +58,7 @@ const els = {
   pipelineLogList: document.getElementById("pipeline-log-list"),
   researchLogList: document.getElementById("research-log-list"),
   researchTimingList: document.getElementById("research-timing-list"),
+  realtimeLogList: document.getElementById("realtime-log-list"),
   logEmpty: document.getElementById("log-empty"),
   modal: document.getElementById("reason-modal"),
   reasonGrid: document.querySelector(".reason-grid"),
@@ -137,15 +138,17 @@ async function loadLog() {
   els.researchLogList.innerHTML = "";
   els.researchTimingList.innerHTML = "";
   try {
-    const [r1, r2, r3] = await Promise.all([
+    const [r1, r2, r3, r4] = await Promise.all([
       fetch(gasUrl("pipelineLog")).then(r => r.json()),
       fetch(gasUrl("researchLog")).then(r => r.json()),
       fetch(gasUrl("researchTiming")).then(r => r.json()),
+      fetch(gasUrl("realtimeLog")).then(r => r.json()),
     ]);
     els.logEmpty.style.display = "none";
     renderPipelineLog(r1.rows || []);
-    renderResearchLog(r2.rows || []);
+    renderRealtimeLog(r4.rows || []);
     renderResearchTiming(r3.rows || []);
+    renderResearchLog(r2.rows || []);
   } catch (e) {
     els.logEmpty.textContent = "読み込みに失敗しました。";
   }
@@ -169,6 +172,24 @@ function renderPipelineLog(rows) {
         <td>${r.premium}</td>
         <td>${r.listAdded}</td>
         <td>${r.durationMin}分</td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+}
+
+function renderRealtimeLog(rows) {
+  if (rows.length === 0) {
+    els.realtimeLogList.innerHTML = "<p style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</p>";
+    return;
+  }
+  els.realtimeLogList.innerHTML = `
+    <table class="log-table">
+      <thead><tr><th>日付</th><th>収集</th><th>型番一致</th><th>ヒット</th><th>新規型番</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${escapeHtml(r.date)}</td>
+        <td>${r.collected.toLocaleString()}</td>
+        <td>${r.matched.toLocaleString()}</td>
+        <td>${r.hits}</td>
+        <td>${r.new_candidates}</td>
       </tr>`).join("")}</tbody>
     </table>`;
 }
