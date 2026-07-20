@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.5
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -163,6 +163,7 @@
         let errors = 0;
         const batchStart = Date.now();
         const groupLabel = selected.join(',');
+        let totalCollected = 0, totalMatched = 0, totalHits = 0, totalNewCands = 0;
         postTiming({ type: 'start', group: groupLabel, total: filtered.length });
 
         for (let i = 0; i < filtered.length; i++) {
@@ -178,7 +179,11 @@
                 errors = 0;
                 const itemList = Object.values(items);
                 updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
-                await new Promise(resolve => sendToServer(itemList, resolve));
+                totalCollected += itemList.length;
+                const result = await new Promise(resolve => sendToServer(itemList, resolve));
+                totalMatched  += result.n_model_match || 0;
+                totalHits     += (result.matches || []).length;
+                totalNewCands += result.new_candidates_count || 0;
                 postTiming({ type: 'mfr', name, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length });
                 await sleep(500);
             } catch(e) {
@@ -201,14 +206,15 @@
             }
         }
 
-        postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart });
+        postTiming({
+            type: 'end', group: groupLabel, total: filtered.length,
+            elapsed_ms: Date.now() - batchStart,
+            collected: totalCollected, matched: totalMatched,
+            hits: totalHits, new_candidates: totalNewCands,
+        });
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
-        if (localStorage.getItem('autoResearch') === 'true') {
-            localStorage.removeItem('autoResearch');
-            setTimeout(() => window.close(), 5000);
-        }
     }
 
     // ========== 収集 ==========
@@ -334,21 +340,22 @@
             data:    JSON.stringify({ items: itemList }),
             timeout: 60000,
             onload: function(res) {
+                let result = {};
                 try {
-                    const result = JSON.parse(res.responseText);
+                    result = JSON.parse(res.responseText);
                     showResults(result.matches || []);
                 } catch(e) {
                     updateStatus('サーバー応答エラー');
                 }
-                if (onDone) onDone();
+                if (onDone) onDone(result);
             },
             ontimeout: function() {
                 updateStatus('タイムアウト（60秒）— ヒットはシートに保存済み');
-                if (onDone) onDone();
+                if (onDone) onDone({});
             },
             onerror: function() {
                 updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）');
-                if (onDone) onDone();
+                if (onDone) onDone({});
             },
         });
     }
@@ -500,9 +507,6 @@
         localStorage.setItem('batchMode',  'true');
         localStorage.setItem('batchList',  JSON.stringify(filtered.map(m => ({name: m.name, url: m.url}))));
         localStorage.setItem('batchIndex', '0');
-        localStorage.setItem('batchStart', String(Date.now()));
-        localStorage.setItem('batchGroup', label);
-        postTiming({ type: 'start', group: label, total: filtered.length });
         updateStatus(`クローラーリサーチ開始 ${filtered.length}件（グループ:${label}）`);
         setTimeout(goNextBatch, 1000);
     }
@@ -532,14 +536,9 @@
         const list  = JSON.parse(localStorage.getItem('batchList') || '[]');
         const index = parseInt(localStorage.getItem('batchIndex') || '0');
         if (index >= list.length) {
-            const elapsed = Date.now() - parseInt(localStorage.getItem('batchStart') || String(Date.now()));
-            const group   = localStorage.getItem('batchGroup') || '';
-            postTiming({ type: 'end', group, total: list.length, elapsed_ms: elapsed });
             localStorage.removeItem('batchMode');
             localStorage.removeItem('batchList');
             localStorage.removeItem('batchIndex');
-            localStorage.removeItem('batchStart');
-            localStorage.removeItem('batchGroup');
             updateStatus(`クローラーリサーチ完了！ 全${list.length}件`);
             setRunningUI(false);
             if (localStorage.getItem('autoResearch') === 'true') {
@@ -584,52 +583,30 @@
 
     // ========== 自動起動（タスクスケジューラ用） ==========
     // URLに ?auto_research=ALL をつけてChromeを起動するとクローラーリサーチが自動開始する
-    // v2.6: 起動時に古いテンプレートを削除→検索ページへ遷移してXHRを捕捉→テンプレート更新後にfetch mode開始
-    const _AUTO_RESEARCH_PENDING = 'auto_research_pending';
-    const _WARMUP_SEARCH_URL = 'https://jp.mercari.com/search?keyword=Canon&status=on_sale&item_condition_id=1&shipping_payer_id=2';
-
     if (localStorage.getItem('batchMode') !== 'true') {
-        const autoGroup    = new URLSearchParams(location.search).get('auto_research');
-        const pendingGroup = localStorage.getItem(_AUTO_RESEARCH_PENDING);
-
+        const autoGroup = new URLSearchParams(location.search).get('auto_research');
         if (autoGroup) {
-            // ① 古いテンプレートを削除し、検索ページへウォームアップ遷移
             localStorage.setItem('autoResearch', 'true');
-            _uw.localStorage.removeItem(_SHARED_TPL_KEY);
-            localStorage.setItem(_AUTO_RESEARCH_PENDING, autoGroup);
             window.addEventListener('load', () => {
-                setTimeout(() => { location.href = _WARMUP_SEARCH_URL; }, 1000);
-            });
-        } else if (pendingGroup && localStorage.getItem('autoResearch') === 'true') {
-            // ② ウォームアップ検索ページ上でXHRキャプチャ完了待ち → fetch mode開始
-            window.addEventListener('load', () => {
-                let waited = 0;
-                const poll = setInterval(() => {
-                    waited++;
-                    const tpl = _getSharedTpl();
-                    if (tpl || waited >= 20) {
-                        clearInterval(poll);
-                        localStorage.removeItem(_AUTO_RESEARCH_PENDING);
-                        GM_xmlhttpRequest({
-                            method: 'GET',
-                            url: MFR_URL,
-                            onload: function(res) {
-                                try {
-                                    const mfrs = JSON.parse(res.responseText).manufacturers || [];
-                                    if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
-                                    const groups = pendingGroup.toUpperCase() === 'ALL' ? ['ALL'] : pendingGroup.split(',');
-                                    if (tpl) {
-                                        runBatchFetch(mfrs, groups);
-                                    } else {
-                                        updateStatus('テンプレート未取得 → スクロールモードで開始');
-                                        runBatchWithGroups(mfrs, groups);
-                                    }
-                                } catch(e) { updateStatus('自動起動失敗: ' + e); }
-                            },
-                            onerror: () => updateStatus('サーバー未起動（auto_research）'),
-                        });
-                    }
-                }, 500);
+                setTimeout(() => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: MFR_URL,
+                        onload: function(res) {
+                            try {
+                                const mfrs = JSON.parse(res.responseText).manufacturers || [];
+                                if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
+                                const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
+                                if (_getSharedTpl()) {
+                                    runBatchFetch(mfrs, groups);
+                                } else {
+                                    runBatchWithGroups(mfrs, groups);
+                                }
+                            } catch(e) { updateStatus('自動起動失敗: ' + e); }
+                        },
+                        onerror: () => updateStatus('サーバー未起動（auto_research）'),
+                    });
+                }, 3000);
             });
         }
     }

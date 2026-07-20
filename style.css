@@ -13,41 +13,48 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
   background: var(--bg);
   color: var(--navy);
-  height: 100dvh;
+  height: 100vh;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
 }
 
 .topbar {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: env(safe-area-inset-top, 10px) 12px 8px;
+  padding: env(safe-area-inset-top, 12px) 14px 10px;
   background: var(--navy);
   color: white;
-  gap: 6px;
-  flex-shrink: 0;
+  gap: 8px;
 }
 
 .logo {
   margin: 0;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 800;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
 }
 
-.tabs { display: flex; gap: 6px; width: 100%; }
+.tabs {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
 
 .tab {
   background: transparent;
   border: 1px solid rgba(255,255,255,0.4);
   color: white;
-  padding: 5px 0;
+  padding: 5px 11px;
   border-radius: 999px;
   font-size: 13px;
-  flex: 1;
-  text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tab.active {
@@ -58,8 +65,7 @@ body {
 }
 
 .view {
-  flex: 1;
-  min-height: 0;
+  height: calc(100vh - 56px);
   display: flex;
   flex-direction: column;
   padding: 12px 16px;
@@ -507,28 +513,48 @@ body {
   color: white;
 }
 
-.log-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  background: white;
-  border-radius: 12px;
-  overflow: hidden;
-}
+/* ASIN修正ボタン */
+.link-asin-fix { background: #e8eaf6; color: #3949ab; grid-column: 1 / -1; border: none; cursor: pointer; }
 
-.log-table th {
-  background: var(--navy);
-  color: white;
-  padding: 8px 6px;
-  text-align: center;
-  font-weight: 600;
-}
+/* ASIN修正モーダル内 */
+.asin-fix-note { font-size: 13px; color: #777; margin: 0 0 12px; }
+.asin-fix-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.asin-fix-label { font-size: 13px; color: #555; display: flex; flex-direction: column; gap: 4px; }
+.asin-fix-label input { padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-size: 15px; }
+#asin-fix-submit { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #3949ab; color: white; font-size: 15px; font-weight: 700; cursor: pointer; }
 
-.log-table td {
-  padding: 8px 6px;
-  text-align: center;
-  border-bottom: 1px solid #eee;
-}
+/* ログタブ */
+#log-view { overflow-y: auto; }
+.log-section { margin-bottom: 18px; }
+.log-heading { font-size: 12px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px; }
 
-.log-table tr:last-child td { border-bottom: none; }
-.log-table tr:nth-child(even) td { background: #f9f9f9; }
+.rt-log-wrap { overflow-x: auto; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+.rt-log-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rt-log-table th { padding: 8px 10px; text-align: right; font-size: 11px; font-weight: 600; color: #999; border-bottom: 1px solid #eee; }
+.rt-log-table th:first-child { text-align: left; }
+.rt-log-table td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #eee; color: var(--navy); }
+.rt-log-table td:first-child { text-align: left; font-weight: 600; }
+.rt-log-table tr:last-child td { border-bottom: none; }
+.rt-log-hit { font-weight: 700; color: #2e7d32; }
+.rt-log-new { font-weight: 700; color: #1565c0; }
+
+.auto-log-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.auto-log-card { background: white; border-radius: 12px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+.auto-log-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.auto-log-group { font-size: 13px; font-weight: 700; color: var(--navy); }
+.auto-log-meta { font-size: 11px; color: #888; display: flex; gap: 6px; align-items: center; }
+.auto-log-elapsed { background: #eef0f2; color: #445; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+.auto-log-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.auto-log-stat { text-align: center; background: var(--bg); border-radius: 8px; padding: 5px 3px; }
+.auto-log-stat .label { display: block; font-size: 10px; color: #888; margin-bottom: 1px; }
+.auto-log-stat .value { display: block; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--navy); }
+.auto-log-stat.is-hit .value { color: #2e7d32; }
+.auto-log-stat.is-new .value { color: #1565c0; }
+.log-loading { text-align: center; color: #888; font-size: 13px; padding: 16px; display: block; }
+
+/* Amazon価格インライン編集 */
+.card-grid .price-val { color: var(--navy); }
+.edit-price-btn { background: none; border: none; color: #bbb; font-size: 12px; cursor: pointer; padding: 0 2px; vertical-align: middle; }
+.edit-price-input { width: 80px; padding: 2px 5px; border-radius: 5px; border: 1px solid #aaa; font-size: 12px; vertical-align: middle; }
+.edit-price-confirm { padding: 2px 7px; border-radius: 5px; border: none; background: var(--navy); color: white; font-size: 11px; cursor: pointer; vertical-align: middle; margin-left: 2px; }
+.edit-price-cancel { padding: 2px 5px; border-radius: 5px; border: 1px solid #ccc; background: #eee; color: #666; font-size: 11px; cursor: pointer; vertical-align: middle; margin-left: 2px; }

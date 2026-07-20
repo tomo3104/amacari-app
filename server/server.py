@@ -28,14 +28,13 @@ BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
 LIST_FILE        = os.path.join(BASE_DIR, "list.json")
 CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
 SPREADSHEET_ID        = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
-SHEET_HITS            = "hits"
-SHEET_RESEARCH_TIMING = "research_timing"
-SHEET_REALTIME_LOG    = "realtime_log"
-DISCORD_WEBHOOK_URL   = "https://discord.com/api/webhooks/1528044256965427260/h77dqPMO6brMmM9Juc1SHxX8FpdK3ymXYtQ90tMZGnr6GOXbnWdpQJParYS-EAw8Ktnl"
-REALTIME_LOG_HEADER   = ["日付", "収集件数", "型番一致", "ヒット", "新規型番候補"]
+SHEET_HITS             = "hits"
+SHEET_RESEARCH_TIMING  = "research_timing"
+SHEET_REALTIME_LOG     = "realtime_log"
+SCOPES                 = ["https://www.googleapis.com/auth/spreadsheets"]
 
-_realtime_daily: dict = {"date": "", "collected": 0, "matched": 0, "hits": 0, "new_candidates": 0}
-SCOPES                = ["https://www.googleapis.com/auth/spreadsheets"]
+REALTIME_HEADER        = ["日付", "収集件数", "型番一致件数", "ヒット件数", "新規型番件数"]
+RESEARCH_TIMING_HEADER = ["日時", "グループ", "社数", "収集件数", "型番一致件数", "ヒット件数", "新規型番件数", "所要時間"]
 
 HITS_HEADER = ["日時", "商品名", "型番", "ASIN", "メルカリURL", "Amazon価格", "メルカリ価格", "pmax", "差益", "ROI(%)", "利益率(%)", "スコア", "画像URL", "判定", "却下理由", "ランク", "購入日時"]
 MIN_MARGIN       = 15    # ヒット条件：利益率15%以上
@@ -59,7 +58,7 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def save_research_timing(group, total, elapsed_ms):
+def save_research_timing(group, total, elapsed_ms, collected=0, matched=0, hits=0, new_candidates=0):
     try:
         service = get_sheets_service()
         meta  = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
@@ -73,10 +72,25 @@ def save_research_timing(group, total, elapsed_ms):
                 spreadsheetId=SPREADSHEET_ID,
                 range=f"{SHEET_RESEARCH_TIMING}!A1",
                 valueInputOption="RAW",
-                body={"values": [["日時", "グループ", "社数", "所要時間"]]},
+                body={"values": [RESEARCH_TIMING_HEADER]},
             ).execute()
+        else:
+            # 旧ヘッダー（4列）なら8列に更新
+            hres = service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{SHEET_RESEARCH_TIMING}!A1:H1",
+            ).execute()
+            current = (hres.get("values") or [[]])[0]
+            if current != RESEARCH_TIMING_HEADER:
+                service.spreadsheets().values().update(
+                    spreadsheetId=SPREADSHEET_ID,
+                    range=f"{SHEET_RESEARCH_TIMING}!A1:H1",
+                    valueInputOption="RAW",
+                    body={"values": [RESEARCH_TIMING_HEADER]},
+                ).execute()
         m, s = divmod(elapsed_ms // 1000, 60)
-        row = [datetime.now().strftime("%Y-%m-%d %H:%M"), group, total, f"{m}分{s}秒"]
+        row = [datetime.now().strftime("%Y-%m-%d %H:%M"), group, total,
+               collected, matched, hits, new_candidates, f"{m}分{s}秒"]
         service.spreadsheets().values().append(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{SHEET_RESEARCH_TIMING}!A1",
@@ -84,44 +98,16 @@ def save_research_timing(group, total, elapsed_ms):
             insertDataOption="INSERT_ROWS",
             body={"values": [row]},
         ).execute()
-        print(f"  → research_timing記録: {group} {m}分{s}秒")
+        print(f"  → research_timing記録: {group} 社数{total} 収集{collected} 一致{matched} ヒット{hits} 新規{new_candidates} {m}分{s}秒")
     except Exception as e:
         print(f"research_timing保存失敗: {e}")
 
 
-def send_discord_realtime(matches):
-    if not DISCORD_WEBHOOK_URL:
-        return
-    try:
-        import requests as _requests
-    except ImportError:
-        import urllib.request as _urllib
-        _requests = None
-
-    for m in matches:
-        content = (
-            f"🔍 **リアルタイムリサーチ ヒット**\n"
-            f"型番：`{m['model']}`\n"
-            f"メルカリ ¥{m['mercari_price']:,}　差益 ¥{m['diff']:,}　pmax ¥{m['pmax']:,}\n"
-            f"{m.get('mercari_url','')}"
-        )
-        try:
-            if _requests:
-                _requests.post(DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10)
-            else:
-                body = json.dumps({"content": content}).encode("utf-8")
-                req  = _urllib.Request(
-                    DISCORD_WEBHOOK_URL, data=body,
-                    headers={"Content-Type": "application/json"}, method="POST",
-                )
-                _urllib.urlopen(req, timeout=10)
-        except Exception as e:
-            print(f"  → Discord通知失敗: {e}")
-
-
-def save_realtime_log(stats):
+def save_realtime_log(collected, matched, hits, new_cands):
     try:
         service = get_sheets_service()
+        today = datetime.now().strftime("%Y-%m-%d")
+
         meta  = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
         names = [s["properties"]["title"] for s in meta["sheets"]]
         if SHEET_REALTIME_LOG not in names:
@@ -133,17 +119,49 @@ def save_realtime_log(stats):
                 spreadsheetId=SPREADSHEET_ID,
                 range=f"{SHEET_REALTIME_LOG}!A1",
                 valueInputOption="RAW",
-                body={"values": [REALTIME_LOG_HEADER]},
+                body={"values": [REALTIME_HEADER]},
             ).execute()
-        row = [stats["date"], stats["collected"], stats["matched"], stats["hits"], stats["new_candidates"]]
-        service.spreadsheets().values().append(
+
+        res  = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"{SHEET_REALTIME_LOG}!A1",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={"values": [row]},
+            range=f"{SHEET_REALTIME_LOG}!A1:E",
         ).execute()
-        print(f"  → realtime_log記録: {stats['date']} 収集{stats['collected']}件 ヒット{stats['hits']}件")
+        rows = res.get("values", [])
+
+        today_idx = None
+        for i, row in enumerate(rows[1:], start=2):
+            if row and str(row[0]) == today:
+                today_idx = i
+                break
+
+        def _int(v):
+            try: return int(float(str(v)))
+            except: return 0
+
+        if today_idx is not None:
+            existing = rows[today_idx - 1]
+            new_row = [
+                today,
+                _int(existing[1] if len(existing) > 1 else 0) + collected,
+                _int(existing[2] if len(existing) > 2 else 0) + matched,
+                _int(existing[3] if len(existing) > 3 else 0) + hits,
+                _int(existing[4] if len(existing) > 4 else 0) + new_cands,
+            ]
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{SHEET_REALTIME_LOG}!A{today_idx}:E{today_idx}",
+                valueInputOption="RAW",
+                body={"values": [new_row]},
+            ).execute()
+        else:
+            service.spreadsheets().values().append(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{SHEET_REALTIME_LOG}!A1",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [[today, collected, matched, hits, new_cands]]},
+            ).execute()
+        print(f"  → realtime_log: 収集+{collected} 一致+{matched} ヒット+{hits} 新規+{new_cands}")
     except Exception as e:
         print(f"realtime_log保存失敗: {e}")
 
@@ -215,20 +233,7 @@ def save_hits(matches):
 _item_list_cache:    dict = {}   # list.jsonのキャッシュ（サーバー起動時に一度だけ読み込む）
 _pattern_cache:      dict = {}   # 型番→コンパイル済み正規表現のキャッシュ
 _seen_hit_asins:     set  = set()  # ヒット済みASIN（サーバー起動中は重複記録しない）
-_seen_candidates:    set  = set()  # 候補記録済み型番（再起動をまたいで重複防止）
-
-CANDIDATES_SEEN_FILE = os.path.join(BASE_DIR, "seen_candidates.json")
-
-def _load_seen_candidates():
-    global _seen_candidates
-    if os.path.exists(CANDIDATES_SEEN_FILE):
-        with open(CANDIDATES_SEEN_FILE, 'r', encoding='utf-8') as f:
-            _seen_candidates = set(json.load(f))
-        print(f"  候補記録済み: {len(_seen_candidates)}件読み込み")
-
-def _save_seen_candidates():
-    with open(CANDIDATES_SEEN_FILE, 'w', encoding='utf-8') as f:
-        json.dump(list(_seen_candidates), f, ensure_ascii=False)
+_seen_candidates:    set  = set()  # 候補記録済み型番（セッション内重複防止）
 
 # 新型番候補収集用
 SHEET_CANDIDATES  = '新型番候補'
@@ -347,7 +352,7 @@ def find_matches(mercari_items, item_list):
 
 def extract_model(title):
     found = _model_extract_re.findall(title.upper())
-    valid = [m for m in found if any(c.isdigit() for c in m) and len(m) >= 5]
+    valid = [m for m in found if not m.isalpha() and len(m) >= 5]
     return max(valid, key=len) if valid else ''
 
 def save_candidates(candidates):
@@ -376,7 +381,6 @@ def save_candidates(candidates):
             body={'values': rows},
         ).execute()
         print(f'  → 新型番候補 {len(rows)}件を記録')
-        _save_seen_candidates()
     except Exception as e:
         print(f'  → 候補記録失敗: {e}')
 
@@ -444,13 +448,17 @@ class Handler(BaseHTTPRequestHandler):
                     elapsed = data.get('elapsed_ms', 0) / 1000
                     print(f"[{datetime.now().strftime('%H:%M:%S')}]   {data.get('name',''):<16} {data.get('item_count',0):>4}件 {elapsed:.1f}秒")
                 elif t == 'end':
-                    ms    = data.get('elapsed_ms', 0)
-                    group = data.get('group', '')
-                    total = data.get('total', 0)
+                    ms            = data.get('elapsed_ms', 0)
+                    group         = data.get('group', '')
+                    total         = data.get('total', 0)
+                    collected     = data.get('collected', 0)
+                    matched       = data.get('matched', 0)
+                    hits          = data.get('hits', 0)
+                    new_candidates = data.get('new_candidates', 0)
                     m, s  = divmod(ms // 1000, 60)
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [自動リサーチ完了] {total}社 {m}分{s}秒")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [自動リサーチ完了] {total}社 {m}分{s}秒 収集{collected} 一致{matched} ヒット{hits} 新規{new_candidates}")
                     import threading
-                    threading.Thread(target=save_research_timing, args=(group, total, ms), daemon=True).start()
+                    threading.Thread(target=save_research_timing, args=(group, total, ms, collected, matched, hits, new_candidates), daemon=True).start()
                 self.send_response(200)
                 self._cors()
                 self.end_headers()
@@ -470,25 +478,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data    = json.loads(body)
             items   = data.get("items", [])
-            source  = data.get("source", "")
             matches, n_model_match = find_matches(items, load_list())
 
-            response_bytes = json.dumps({"matches": matches}, ensure_ascii=False).encode("utf-8")
-            self.send_response(200)
-            self._cors()
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(response_bytes)))
-            self.end_headers()
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 収集:{len(items)}件 型番一致:{n_model_match}件 ヒット:{len(matches)}件")
-
-            # hitsシートへの保存はレスポンス前に実行（切断時も保存される）
-            if matches:
-                import threading
-                threading.Thread(target=save_hits, args=(matches,), daemon=True).start()
-                for m in matches:
-                    print(f"  ★ {m['model']}  メルカリ¥{m['mercari_price']:,}  差益¥{m['diff']:,}  pmax¥{m['pmax']:,}")
-
-            # 新型番候補収集（list.jsonにない型番を持つ商品）
+            # 新型番候補収集（レスポンスに件数を含めるため先に計算）
             item_list = load_list()
             new_cands = []
             for item in items:
@@ -501,30 +493,32 @@ class Handler(BaseHTTPRequestHandler):
                 _seen_candidates.add(model)
                 price = int(str(item.get('price', '0')).replace(',', ''))
                 new_cands.append({'model': model, 'name': title, 'price': price, 'url': item.get('url', '')})
+
+            response_bytes = json.dumps({
+                "matches": matches,
+                "n_model_match": n_model_match,
+                "new_candidates_count": len(new_cands),
+            }, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 収集:{len(items)}件 型番一致:{n_model_match}件 ヒット:{len(matches)}件 新規:{len(new_cands)}件")
+
+            if matches:
+                import threading
+                threading.Thread(target=save_hits, args=(matches,), daemon=True).start()
+                for m in matches:
+                    print(f"  ★ {m['model']}  メルカリ¥{m['mercari_price']:,}  差益¥{m['diff']:,}  pmax¥{m['pmax']:,}")
+
             if new_cands:
                 import threading
                 threading.Thread(target=save_candidates, args=(new_cands,), daemon=True).start()
                 print(f'  → 新型番候補: {len(new_cands)}件')
 
-            # リアルタイムリサーチのDiscord通知
-            if source == "realtime" and matches:
-                import threading
-                threading.Thread(target=send_discord_realtime, args=(matches,), daemon=True).start()
-
-            # リアルタイムリサーチの日別集計
-            if source == "realtime":
-                global _realtime_daily
-                today = datetime.now().strftime("%Y-%m-%d")
-                if _realtime_daily["date"] and _realtime_daily["date"] != today:
-                    import threading as _t
-                    _t.Thread(target=save_realtime_log, args=(dict(_realtime_daily),), daemon=True).start()
-                    _realtime_daily = {"date": today, "collected": 0, "matched": 0, "hits": 0, "new_candidates": 0}
-                if not _realtime_daily["date"]:
-                    _realtime_daily["date"] = today
-                _realtime_daily["collected"]     += len(items)
-                _realtime_daily["matched"]        += n_model_match
-                _realtime_daily["hits"]           += len(matches)
-                _realtime_daily["new_candidates"] += len(new_cands)
+            import threading
+            threading.Thread(target=save_realtime_log, args=(len(items), n_model_match, len(matches), len(new_cands)), daemon=True).start()
 
             try:
                 self.wfile.write(response_bytes)
@@ -551,7 +545,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("リストとパターンを読み込み中...")
-    _load_seen_candidates()
     item_list = load_list()
     print("=" * 45)
     print(f"  ASINチェッカー サーバー  port:{PORT}")

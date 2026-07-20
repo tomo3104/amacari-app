@@ -9,13 +9,13 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 <header class="topbar">
   <h1 class="logo">Amacari</h1>
   <nav class="tabs">
-    <button class="tab active" data-view="review">ヒット</button>
+    <button class="tab active" data-view="review">レビュー</button>
     <button class="tab" data-view="archive">アーカイブ</button>
     <button class="tab" data-view="stats">実績</button>
     <button class="tab" data-view="furima">フリマ</button>
@@ -84,24 +84,50 @@
 </main>
 
 <main id="log-view" class="view hidden">
-  <section class="stats-section">
-    <h2 class="stats-heading">クロール実績</h2>
-    <div id="pipeline-log-list"></div>
+  <section class="log-section">
+    <h2 class="log-heading">リアルタイムリサーチ（日別）</h2>
+    <div class="rt-log-wrap">
+      <table class="rt-log-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>収集</th>
+            <th>型番一致</th>
+            <th>ヒット</th>
+            <th>新規型番</th>
+          </tr>
+        </thead>
+        <tbody id="rt-log-body">
+          <tr><td colspan="5" class="log-loading">読み込み中…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
-  <section class="stats-section">
-    <h2 class="stats-heading">リアルタイムリサーチ実績（日別）</h2>
-    <div id="realtime-log-list"></div>
+  <section class="log-section">
+    <h2 class="log-heading">自動リサーチ（グループ別）</h2>
+    <ul id="auto-log-list" class="auto-log-list">
+      <li class="log-loading">読み込み中…</li>
+    </ul>
   </section>
-  <section class="stats-section">
-    <h2 class="stats-heading">自動リサーチ実績（グループ別所要時間）</h2>
-    <div id="research-timing-list"></div>
-  </section>
-  <section class="stats-section">
-    <h2 class="stats-heading">リサーチ実績（日別ヒット数）</h2>
-    <ul id="research-log-list" class="stats-list"></ul>
-  </section>
-  <p class="empty-message" id="log-empty">読み込み中…</p>
 </main>
+
+<!-- ASIN修正モーダル -->
+<div id="asin-fix-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>ASIN修正</h2>
+    <p class="asin-fix-note">旧ASIN：<span id="asin-fix-old"></span></p>
+    <div class="asin-fix-form">
+      <label class="asin-fix-label">正しいASIN
+        <input type="text" id="asin-fix-new" placeholder="B0XXXXXXXXX" autocapitalize="characters">
+      </label>
+      <label class="asin-fix-label">Amazon価格（円）
+        <input type="number" id="asin-fix-price" placeholder="12000" min="0">
+      </label>
+    </div>
+    <button id="asin-fix-submit">修正して別物却下</button>
+    <button id="asin-fix-cancel" class="reason-cancel-btn">← キャンセル</button>
+  </div>
+</div>
 
 <!-- 却下理由ピッカー -->
 <div id="reason-modal" class="modal hidden">
@@ -109,7 +135,6 @@
     <h2>却下の理由は？</h2>
     <div class="reason-grid">
       <button class="reason-btn" data-reason="開封済み">開封済み</button>
-      <button class="reason-btn" data-reason="梱包状態不明">梱包状態不明</button>
       <button class="reason-btn" data-reason="状態悪い">状態悪い</button>
       <button class="reason-btn" data-reason="別物">別物</button>
       <button class="reason-btn" data-reason="バリエーション違い">バリエーション違い</button>
@@ -130,6 +155,6 @@
   </div>
 </div>
 
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

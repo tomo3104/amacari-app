@@ -23,6 +23,7 @@ const state = {
   pendingRejectSource: "amacari", // 理由選択待ちカードの種類："amacari" or "furima"
   skipStack: [],        // 後回し（上スワイプ）したカードのスタック：下スワイプで呼び戻す
   swipeBlocked: false,  // 理由選択中はスワイプ不可
+  pendingAsinFix: null, // ASIN修正待ちのカード
   totalCount: 0,        // 読み込み時点の精査待ち件数（進捗表示の分母）
 
   // フリマウォッチ監視タブ用
@@ -54,12 +55,10 @@ const els = {
   furimaEmpty: document.getElementById("furima-empty-message"),
   furimaProgressLabel: document.getElementById("furima-progress-label"),
   furimaUndoBtn: document.getElementById("furima-undo-btn"),
-  logView: document.getElementById("log-view"),
-  pipelineLogList: document.getElementById("pipeline-log-list"),
-  researchLogList: document.getElementById("research-log-list"),
-  researchTimingList: document.getElementById("research-timing-list"),
-  realtimeLogList: document.getElementById("realtime-log-list"),
-  logEmpty: document.getElementById("log-empty"),
+  asinFixModal: document.getElementById("asin-fix-modal"),
+  asinFixOld: document.getElementById("asin-fix-old"),
+  asinFixNew: document.getElementById("asin-fix-new"),
+  asinFixPrice: document.getElementById("asin-fix-price"),
   modal: document.getElementById("reason-modal"),
   reasonGrid: document.querySelector(".reason-grid"),
   otherInput: document.getElementById("reason-other-input"),
@@ -73,9 +72,9 @@ async function loadCards() {
   els.empty.textContent = "読み込み中…";
   els.empty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("cards"));
+    const res = await fetch(gasUrl("cards", { sort: state.sort }));
     const data = await res.json();
-    state.cards = (data.cards || []).map(c => Object.assign(c, { source: "amacari" }));
+    state.cards = data.cards || [];
     state.skipStack = [];
     state.totalCount = state.cards.length;
     renderStack();
@@ -131,96 +130,6 @@ async function loadStats() {
   }
 }
 
-async function loadLog() {
-  els.logEmpty.textContent = "読み込み中…";
-  els.logEmpty.style.display = "block";
-  els.pipelineLogList.innerHTML = "";
-  els.researchLogList.innerHTML = "";
-  els.researchTimingList.innerHTML = "";
-  try {
-    const [r1, r2, r3, r4] = await Promise.all([
-      fetch(gasUrl("pipelineLog")).then(r => r.json()),
-      fetch(gasUrl("researchLog")).then(r => r.json()),
-      fetch(gasUrl("researchTiming")).then(r => r.json()),
-      fetch(gasUrl("realtimeLog")).then(r => r.json()),
-    ]);
-    els.logEmpty.style.display = "none";
-    renderPipelineLog(r1.rows || []);
-    renderRealtimeLog(r4.rows || []);
-    renderResearchTiming(r3.rows || []);
-    renderResearchLog(r2.rows || []);
-  } catch (e) {
-    els.logEmpty.textContent = "読み込みに失敗しました。";
-  }
-}
-
-function renderPipelineLog(rows) {
-  if (rows.length === 0) {
-    els.pipelineLogList.innerHTML = "<p style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</p>";
-    return;
-  }
-  els.pipelineLogList.innerHTML = `
-    <table class="log-table">
-      <thead><tr>
-        <th>日時</th><th>収集</th><th>新規型番</th><th>調査</th><th>プレミアム</th><th>リスト追加</th><th>時間</th>
-      </tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td>${escapeHtml(r.datetime)}</td>
-        <td>${r.crawled}</td>
-        <td>${r.newModels}</td>
-        <td>${r.processed}</td>
-        <td>${r.premium}</td>
-        <td>${r.listAdded}</td>
-        <td>${r.durationMin}分</td>
-      </tr>`).join("")}</tbody>
-    </table>`;
-}
-
-function renderRealtimeLog(rows) {
-  if (rows.length === 0) {
-    els.realtimeLogList.innerHTML = "<p style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</p>";
-    return;
-  }
-  els.realtimeLogList.innerHTML = `
-    <table class="log-table">
-      <thead><tr><th>日付</th><th>収集</th><th>型番一致</th><th>ヒット</th><th>新規型番</th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td>${escapeHtml(r.date)}</td>
-        <td>${r.collected.toLocaleString()}</td>
-        <td>${r.matched.toLocaleString()}</td>
-        <td>${r.hits}</td>
-        <td>${r.new_candidates}</td>
-      </tr>`).join("")}</tbody>
-    </table>`;
-}
-
-function renderResearchTiming(rows) {
-  if (rows.length === 0) {
-    els.researchTimingList.innerHTML = "<p style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</p>";
-    return;
-  }
-  els.researchTimingList.innerHTML = `
-    <table class="log-table">
-      <thead><tr><th>日時</th><th>グループ</th><th>社数</th><th>所要時間</th></tr></thead>
-      <tbody>${[...rows].reverse().slice(0, 20).map(r => `<tr>
-        <td>${escapeHtml(String(r.datetime))}</td>
-        <td>${escapeHtml(String(r.group))}</td>
-        <td>${r.total}</td>
-        <td>${escapeHtml(String(r.elapsed))}</td>
-      </tr>`).join("")}</tbody>
-    </table>`;
-}
-
-function renderResearchLog(rows) {
-  if (rows.length === 0) {
-    els.researchLogList.innerHTML = "<li style='color:#888;font-size:0.85em;padding:8px 0'>まだ実績がありません</li>";
-    return;
-  }
-  els.researchLogList.innerHTML = rows.map(r =>
-    `<li class="stats-row"><div class="stats-row-head"><span class="stats-date">${escapeHtml(r.date)}</span><span class="stats-count">${r.hits}件ヒット</span></div></li>`
-  ).join("");
-}
-
 async function loadFurimaCards() {
   els.furimaEmpty.textContent = "読み込み中…";
   els.furimaEmpty.style.display = "block";
@@ -258,7 +167,7 @@ function renderStack() {
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
-    if (depthFromTop === 0) attachSwipe(el, card, card.source || "amacari");
+    if (depthFromTop === 0) attachSwipe(el, card);
     els.stack.appendChild(el);
   });
 }
@@ -307,7 +216,7 @@ function buildCardEl(card) {
         </div>
       </div>
       <div class="card-grid">
-        <div><span>Amazon価格</span>${formatYen(card.amazon_price)}</div>
+        <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="edit-price-btn no-swipe" data-row="${card.row}" aria-label="価格を編集">✏</button></div>
         <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
         <div><span>実利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
@@ -324,7 +233,8 @@ function buildCardEl(card) {
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-btn link-keepa" href="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=5&amazon=1&new=1&used=1&salesrank=1&range=180&width=1500&height=600&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-btn link-keepa" href="https://keepa.com/#search/1-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <button class="link-btn link-asin-fix" data-row="${card.row}">ASIN修正</button>
       </div>
     </div>
   `;
@@ -371,7 +281,7 @@ function buildFurimaCardEl(card) {
   if (card.asin) {
     links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>`);
     links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>`);
-    links.push(`<a class="link-btn link-keepa" href="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(card.asin)}&domain=5&amazon=1&new=1&used=1&salesrank=1&range=180&width=1500&height=600&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff" target="_blank" rel="noopener">Keepa</a>`);
+    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#search/1-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
   }
 
   el.innerHTML = `
@@ -401,6 +311,70 @@ function buildFurimaCardEl(card) {
   `;
   return el;
 }
+
+// ---------- Amazon価格インライン編集 ----------
+
+function recalcWithNewPrice(card, newPrice) {
+  const pmax = Math.round(Number(card.pmax) + (newPrice - Number(card.amazon_price)) * 0.85);
+  const mercariPrice = Number(card.mercari_price);
+  const diff = Math.round(pmax - mercariPrice);
+  const roi = mercariPrice ? Math.round(diff / mercariPrice * 1000) / 10 : 0;
+  const margin = newPrice ? Math.round(diff / newPrice * 1000) / 10 : 0;
+  const score = Math.round((roi * 0.5 + margin * 0.3 + newPrice / 1000 * 0.2) * 10) / 10;
+  const real_profit = Math.round(diff + newPrice * 0.15);
+  const real_margin = newPrice ? Math.round(real_profit / newPrice * 1000) / 10 : 0;
+  return { amazon_price: newPrice, pmax, diff, roi, margin, score, real_profit, real_margin };
+}
+
+els.stack.addEventListener("click", e => {
+  const btn = e.target.closest(".edit-price-btn");
+  if (!btn) return;
+  e.stopPropagation();
+  const row = Number(btn.dataset.row);
+  const div = btn.parentElement;
+  const valEl = div.querySelector(".price-val");
+  if (div.querySelector(".edit-price-input")) return;
+
+  valEl.style.display = "none";
+  btn.style.display = "none";
+
+  const input = Object.assign(document.createElement("input"), {
+    type: "number", className: "edit-price-input no-swipe",
+    value: Number(valEl.dataset.price), min: "0"
+  });
+  const ok = Object.assign(document.createElement("button"), {
+    className: "edit-price-confirm no-swipe", textContent: "確定", type: "button"
+  });
+  const ng = Object.assign(document.createElement("button"), {
+    className: "edit-price-cancel no-swipe", textContent: "×", type: "button"
+  });
+  div.append(input, ok, ng);
+  input.focus(); input.select();
+
+  function apply() {
+    const newPrice = Math.round(Number(input.value));
+    if (!newPrice || newPrice <= 0) { cancel(); return; }
+    const card = state.cards.find(c => c.row === row);
+    if (!card) { cancel(); return; }
+    const upd = recalcWithNewPrice(card, newPrice);
+    Object.assign(card, upd);
+    gasPost("updateAmazonPrice", { row, ...upd });
+    renderStack();
+  }
+
+  function cancel() {
+    valEl.style.display = "";
+    btn.style.display = "";
+    [input, ok, ng].forEach(el => el.remove());
+  }
+
+  ok.addEventListener("click", e => { e.stopPropagation(); apply(); });
+  ng.addEventListener("click", e => { e.stopPropagation(); cancel(); });
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.stopPropagation(); apply(); }
+    if (e.key === "Escape") { e.stopPropagation(); cancel(); }
+  });
+});
 
 // ---------- Keepaグラフ再読込 ----------
 
@@ -503,7 +477,7 @@ function attachSwipe(el, card, source) {
   }
 
   el.addEventListener("pointerdown", e => {
-    if (e.target.closest(".copy-btn, .keepa-reload-btn, .link-btn")) return;
+    if (e.target.closest(".copy-btn, .keepa-reload-btn, .link-btn, .no-swipe")) return;
     if (state.swipeBlocked) return; // 理由選択中はスワイプ不可
     el.setPointerCapture(e.pointerId);
     onStart(e.clientX, e.clientY);
@@ -564,14 +538,53 @@ function finishVerticalSwipe(el, card, direction, source) {
   }, 220);
 }
 
+// ---------- ASIN修正 ----------
+
+els.stack.addEventListener("click", e => {
+  const btn = e.target.closest(".link-asin-fix");
+  if (!btn) return;
+  e.stopPropagation();
+  const row = Number(btn.dataset.row);
+  const card = state.cards.find(c => c.row === row);
+  if (!card) return;
+  state.pendingAsinFix = card;
+  els.asinFixOld.textContent = card.asin;
+  els.asinFixNew.value = "";
+  els.asinFixPrice.value = card.amazon_price || "";
+  els.asinFixModal.classList.remove("hidden");
+});
+
+document.getElementById("asin-fix-submit").addEventListener("click", async () => {
+  const card = state.pendingAsinFix;
+  if (!card) return;
+  const newAsin = els.asinFixNew.value.trim().toUpperCase();
+  const newPrice = Math.round(Number(els.asinFixPrice.value));
+  if (!newAsin || !newPrice) { alert("ASINとAmazon価格を両方入力してください"); return; }
+  const oldFee = Math.max(Math.round(Number(card.amazon_price) * 0.85 - Number(card.pmax)), 450);
+  const newPmax = Math.round(newPrice * 0.85 - oldFee);
+  await gasPost("saveAsinCorrection", {
+    row: card.row, model: card.model,
+    old_asin: card.asin, new_asin: newAsin,
+    amazon_price: newPrice, pmax: newPmax,
+  });
+  state.cards = state.cards.filter(c => c.row !== card.row);
+  state.pendingAsinFix = null;
+  els.asinFixModal.classList.add("hidden");
+  renderStack();
+});
+
+document.getElementById("asin-fix-cancel").addEventListener("click", () => {
+  state.pendingAsinFix = null;
+  els.asinFixModal.classList.add("hidden");
+});
+
 // ---------- 判定の送信 ----------
 
 async function judge(card, judgment, reason, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
-  const actionName = source === "furima" ? "furimaJudge" : source === "research" ? "researchJudge" : "judge";
   try {
-    await gasPost(actionName, { row: card.row, judgment, reason });
+    await gasPost(isFurima ? "furimaJudge" : "judge", { row: card.row, judgment, reason });
     if (judgment === "却下") {
       if (isFurima) {
         state.furimaLastRejected = card;
@@ -593,9 +606,8 @@ async function undoLastReject(source) {
   if (!card) return;
   const btn = isFurima ? els.furimaUndoBtn : els.undoBtn;
   btn.disabled = true;
-  const undoAction = source === "furima" ? "furimaUndo" : source === "research" ? "researchUndo" : "undo";
   try {
-    await gasPost(undoAction, { row: card.row });
+    await gasPost(isFurima ? "furimaUndo" : "undo", { row: card.row });
     if (isFurima) {
       state.furimaLastRejected = null;
       state.furimaCards.unshift(card);
@@ -668,7 +680,7 @@ function renderArchive(items) {
       <div class="archive-actions">
         <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
         <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-keepa" href="https://graph.keepa.com/pricehistory.png?asin=${encodeURIComponent(item.asin)}&domain=5&amazon=1&new=1&used=1&salesrank=1&range=180&width=1500&height=600&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-keepa" href="https://keepa.com/#search/1-${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">Keepa</a>
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
@@ -812,11 +824,11 @@ els.archiveModeSelect.addEventListener("change", loadArchive);
 // ---------- タブ切り替え ----------
 
 const VIEWS = {
-  review: { el: els.reviewView, load: loadCards },
+  review:  { el: els.reviewView,  load: loadCards },
   archive: { el: els.archiveView, load: loadArchive },
-  stats: { el: els.statsView, load: loadStats },
-  furima: { el: els.furimaView, load: loadFurimaCards },
-  log: { el: els.logView, load: loadLog },
+  stats:   { el: els.statsView,   load: loadStats },
+  furima:  { el: els.furimaView,  load: loadFurimaCards },
+  log:     { el: document.getElementById("log-view"), load: loadLog },
 };
 
 els.tabs.forEach(tab => {
@@ -868,6 +880,70 @@ function formatPercent(v) {
 function formatRank(v) {
   const n = Number(v);
   return Number.isFinite(n) && v !== "" && v !== null ? `${n.toLocaleString()}位` : "−";
+}
+
+// ---------- ログ ----------
+
+async function loadLog() {
+  const rtBody  = document.getElementById("rt-log-body");
+  const autoList = document.getElementById("auto-log-list");
+  rtBody.innerHTML   = '<tr><td colspan="5" class="log-loading">読み込み中…</td></tr>';
+  autoList.innerHTML = '<li class="log-loading">読み込み中…</li>';
+  try {
+    const [rtRes, autoRes] = await Promise.all([
+      fetch(gasUrl("realtimeLog")),
+      fetch(gasUrl("researchTiming")),
+    ]);
+    const rtData   = await rtRes.json();
+    const autoData = await autoRes.json();
+    renderRealtimeLog(rtData.rows   || []);
+    renderAutoLog(autoData.rows || []);
+  } catch (e) {
+    rtBody.innerHTML   = '<tr><td colspan="5" class="log-loading">読み込みに失敗しました。</td></tr>';
+    autoList.innerHTML = '<li class="log-loading">読み込みに失敗しました。</li>';
+  }
+}
+
+function renderRealtimeLog(rows) {
+  const tbody = document.getElementById("rt-log-body");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="log-loading">データがありません。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${escapeHtml(r.date)}</td>
+      <td>${Number(r.collected).toLocaleString()}</td>
+      <td>${Number(r.matched).toLocaleString()}</td>
+      <td class="${Number(r.hits) > 0 ? 'rt-log-hit' : ''}">${Number(r.hits).toLocaleString()}</td>
+      <td class="${Number(r.new_candidates) > 0 ? 'rt-log-new' : ''}">${Number(r.new_candidates).toLocaleString()}</td>
+    </tr>
+  `).join("");
+}
+
+function renderAutoLog(rows) {
+  const list = document.getElementById("auto-log-list");
+  if (!rows.length) {
+    list.innerHTML = '<li class="log-loading">データがありません。</li>';
+    return;
+  }
+  list.innerHTML = rows.map(r => `
+    <li class="auto-log-card">
+      <div class="auto-log-head">
+        <span class="auto-log-group">グループ ${escapeHtml(r.group)}</span>
+        <div class="auto-log-meta">
+          <span>${escapeHtml(r.datetime)}</span>
+          ${r.elapsed ? `<span class="auto-log-elapsed">${escapeHtml(r.elapsed)}</span>` : ''}
+        </div>
+      </div>
+      <div class="auto-log-stats">
+        <div class="auto-log-stat"><span class="label">社数</span><span class="value">${Number(r.total).toLocaleString()}</span></div>
+        <div class="auto-log-stat"><span class="label">収集</span><span class="value">${Number(r.collected).toLocaleString()}</span></div>
+        <div class="auto-log-stat is-hit"><span class="label">ヒット</span><span class="value">${Number(r.hits).toLocaleString()}</span></div>
+        <div class="auto-log-stat is-new"><span class="label">新規型番</span><span class="value">${Number(r.new_candidates).toLocaleString()}</span></div>
+      </div>
+    </li>
+  `).join("");
 }
 
 // ---------- 起動 ----------
