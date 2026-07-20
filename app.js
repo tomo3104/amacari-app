@@ -233,7 +233,7 @@ function buildCardEl(card) {
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-btn link-keepa" href="https://keepa.com/#search/1-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix" data-row="${card.row}">ASIN修正</button>
       </div>
     </div>
@@ -281,7 +281,7 @@ function buildFurimaCardEl(card) {
   if (card.asin) {
     links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>`);
     links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>`);
-    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#search/1-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
+    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
   }
 
   el.innerHTML = `
@@ -680,7 +680,7 @@ function renderArchive(items) {
       <div class="archive-actions">
         <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
         <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-keepa" href="https://keepa.com/#search/1-${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">Keepa</a>
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
