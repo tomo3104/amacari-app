@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      2.8
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -198,6 +198,13 @@
                     } else {
                         updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
                     }
+                    postTiming({
+                        type: 'end', group: groupLabel, total: filtered.length,
+                        elapsed_ms: Date.now() - batchStart,
+                        collected: totalCollected, matched: totalMatched,
+                        hits: totalHits, new_candidates: totalNewCands,
+                    });
+                    await sleep(2000);
                     running = false;
                     setRunningUI(false);
                     return;
@@ -212,6 +219,7 @@
             collected: totalCollected, matched: totalMatched,
             hits: totalHits, new_candidates: totalNewCands,
         });
+        await sleep(2000);
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
