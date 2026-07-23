@@ -199,7 +199,7 @@
                     } else {
                         updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
                     }
-                    postTiming({
+                    await postTiming({
                         type: 'end', group: groupLabel, total: filtered.length,
                         elapsed_ms: Date.now() - batchStart,
                         collected: totalCollected, matched: totalMatched,
@@ -214,7 +214,7 @@
             }
         }
 
-        postTiming({
+        await postTiming({
             type: 'end', group: groupLabel, total: filtered.length,
             elapsed_ms: Date.now() - batchStart,
             collected: totalCollected, matched: totalMatched,
@@ -330,13 +330,16 @@
 
     // ========== タイミングログ ==========
     function postTiming(data) {
-        GM_xmlhttpRequest({
-            method:  'POST',
-            url:     'http://localhost:8766/log-timing',
-            headers: { 'Content-Type': 'application/json' },
-            data:    JSON.stringify(data),
-            onerror: () => {},
-            ontimeout: () => {},
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method:   'POST',
+                url:      'http://localhost:8766/log-timing',
+                headers:  { 'Content-Type': 'application/json' },
+                data:     JSON.stringify(data),
+                onload:   () => resolve(),
+                onerror:  () => resolve(),
+                ontimeout: () => resolve(),
+            });
         });
     }
 
