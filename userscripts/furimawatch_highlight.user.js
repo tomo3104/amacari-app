@@ -255,7 +255,7 @@
     // タイムラインが更新されないため、無人運用時は定期的にページ自体をリロードする
     const AUTO_RELOAD_INTERVAL_MS = 60 * 60 * 1000; // 1時間
 
-    window.addEventListener('load', () => {
+    function init() {
         if (!getAccount()) promptAccount();
         addAccountButton();
         setTimeout(run, 1500);
@@ -272,7 +272,15 @@
         observer.observe(document.body, { childList: true, subtree: true });
 
         setTimeout(() => location.reload(), AUTO_RELOAD_INTERVAL_MS);
-    });
+    }
+
+    // Firefoxではloadイベントがスクリプト注入より先に発火する場合があるため
+    // readyStateで判定して即時実行にフォールバックする
+    if (document.readyState === 'complete') {
+        init();
+    } else {
+        window.addEventListener('load', init);
+    }
 
     window.addEventListener('hashchange', () => {
         setTimeout(run, 1500);
