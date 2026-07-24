@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -190,14 +190,26 @@
                 postTiming({ type: 'mfr', name, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched: result.n_model_match || 0, hits: (result.matches || []).length, new_cands: result.new_candidates_count || 0 });
                 await sleep(500);
             } catch(e) {
+                if (/HTTP 4/.test(e.message)) {
+                    updateStatus(`[${i+1}/${filtered.length}] ${name} セッション切れ → テンプレート更新中...`);
+                    _uw.localStorage.removeItem(_SHARED_TPL_KEY);
+                    const refreshTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=on_sale');
+                    await sleep(8000);
+                    try { if (refreshTab) refreshTab.close(); } catch(_) {}
+                    if (_getSharedTpl()) {
+                        i--;
+                        await sleep(1000);
+                        continue;
+                    }
+                    updateStatus('テンプレート再取得失敗 → 中断');
+                    await postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
+                    running = false; setRunningUI(false); return;
+                }
                 errors++;
                 updateStatus(`[${i+1}/${filtered.length}] ${name} エラー(${errors}): ${e.message}`);
                 if (errors >= 3 || e.message === 'NO_TEMPLATE') {
                     if (e.message === 'NO_TEMPLATE') {
                         updateStatus('テンプレートなし → 検索1回後に再試行してください');
-                    } else if (/HTTP 4/.test(e.message)) {
-                        _uw.localStorage.removeItem(_SHARED_TPL_KEY);
-                        updateStatus('セッション切れ → ページ再読み込み後に再試行してください');
                     } else {
                         updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
                     }
@@ -352,7 +364,7 @@
             url:     SERVER_URL,
             headers: { 'Content-Type': 'application/json' },
             data:    JSON.stringify({ items: itemList }),
-            timeout: 60000,
+            timeout: 120000,
             onload: function(res) {
                 let result = {};
                 try {
