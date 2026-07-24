@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      3.1
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -96,6 +96,7 @@
 
         const sp = new URLSearchParams(new URL(mfrUrl).search);
         const keyword = sp.get('keyword') || '';
+        const brandId = sp.get('brand_id');
         const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
         const apiStatus = statusMap[sp.get('status') || 'on_sale'] || 'STATUS_ON_SALE';
 
@@ -110,6 +111,7 @@
             delete sc.categoryId;
             delete sc.priceMin;
             delete sc.priceMax;
+            if (brandId) { sc.brandId = [parseInt(brandId)]; } else { delete sc.brandId; }
             if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
             if (sp.get('shipping_payer_id')) sc.shippingPayerId = sp.get('shipping_payer_id').split(',').map(Number);
             bodyObj.pageToken = pageToken;
@@ -185,7 +187,7 @@
                 totalMatched  += result.n_model_match || 0;
                 totalHits     += (result.matches || []).length;
                 totalNewCands += result.new_candidates_count || 0;
-                postTiming({ type: 'mfr', name, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length });
+                postTiming({ type: 'mfr', name, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched: result.n_model_match || 0, hits: (result.matches || []).length, new_cands: result.new_candidates_count || 0 });
                 await sleep(500);
             } catch(e) {
                 errors++;
