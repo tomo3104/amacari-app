@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.4
-// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトfetch対応・brand_id/価格帯をAPIボディに正しく適用）
+// @version      5.5
+// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトfetch対応・全メーカー完了後に1回だけstep1送信）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -155,6 +155,7 @@
         running = true;
         setRunningUI(true);
         let errors = 0;
+        const allItems = {};  // 全メーカー分を蓄積
 
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
@@ -163,15 +164,11 @@
             updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} fetch中...`);
 
             try {
-                items = await fetchCollectorItems(url);
+                const fetched = await fetchCollectorItems(url);
                 errors = 0;
-                const total = Object.keys(items).length;
-                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${total}件 → 送信中`);
-                GM_setClipboard(formatOutput());
-                await new Promise(resolve => {
-                    GM_xmlhttpRequest({ method: 'POST', url: 'http://localhost:8765/run-step1', onload: resolve, onerror: resolve });
-                });
-                await sleep(1500);
+                Object.assign(allItems, fetched);
+                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${Object.keys(fetched).length}件（累計${Object.keys(allItems).length}件）`);
+                await sleep(300);
             } catch(e) {
                 errors++;
                 updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} エラー(${errors}): ${e.message}`);
@@ -192,9 +189,24 @@
             }
         }
 
+        if (!running) {
+            setRunningUI(false);
+            updateStatus('中止しました');
+            return;
+        }
+
+        // 全メーカー完了後に1回だけstep1を呼ぶ
+        items = allItems;
+        const grandTotal = Object.keys(items).length;
+        updateStatus(`全${filtered.length}件完了（${grandTotal}件）→ step1送信中...`);
+        GM_setClipboard(formatOutput());
+        await new Promise(resolve => {
+            GM_xmlhttpRequest({ method: 'POST', url: 'http://localhost:8765/run-step1', onload: resolve, onerror: resolve });
+        });
+
         running = false;
         setRunningUI(false);
-        updateStatus(`クローラーコレクト完了 全${filtered.length}件`);
+        updateStatus(`クローラーコレクト完了 全${filtered.length}件（${grandTotal}件）`);
     }
 
     // ========== 商品収集 ==========
