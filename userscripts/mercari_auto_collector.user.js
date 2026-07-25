@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.5
-// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトfetch対応・全メーカー完了後に1回だけstep1送信）
+// @version      5.6
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・/collect-itemsでインライン処理）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -195,18 +195,31 @@
             return;
         }
 
-        // 全メーカー完了後に1回だけstep1を呼ぶ
+        // 全メーカー完了後に /collect-items でインライン処理
         items = allItems;
         const grandTotal = Object.keys(items).length;
-        updateStatus(`全${filtered.length}件完了（${grandTotal}件）→ step1送信中...`);
-        GM_setClipboard(formatOutput());
-        await new Promise(resolve => {
-            GM_xmlhttpRequest({ method: 'POST', url: 'http://localhost:8765/run-step1', onload: resolve, onerror: resolve });
+        updateStatus(`全${filtered.length}件完了（${grandTotal}件）→ 型番抽出中...`);
+        const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
+        const result = await new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: 'http://localhost:8765/collect-items',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ items: itemList }),
+                timeout: 120000,
+                onload: function(res) {
+                    try { resolve(JSON.parse(res.responseText)); } catch(e) { resolve({}); }
+                },
+                onerror: () => resolve({}),
+                ontimeout: () => resolve({}),
+            });
         });
 
         running = false;
         setRunningUI(false);
-        updateStatus(`クローラーコレクト完了 全${filtered.length}件（${grandTotal}件）`);
+        const newCount = result.new_count || 0;
+        const totalModels = result.total || 0;
+        updateStatus(`コレクト完了 全${filtered.length}件(${grandTotal}件) ／ 新規型番${newCount}件（累計${totalModels}件）`);
     }
 
     // ========== 商品収集 ==========
