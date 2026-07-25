@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.3
-// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトが自分のサーバー(8765)だけで完結するように変更）
+// @version      5.4
+// @description  メルカリ検索結果を全ページ自動収集してクリップボードにコピー（クローラーコレクトfetch対応・brand_id/価格帯をAPIボディに正しく適用）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -90,10 +90,13 @@
         const tpl = _getSharedTpl();
         if (!tpl) throw new Error('NO_TEMPLATE');
 
-        const sp = new URLSearchParams(new URL(mfrUrl).search);
-        const keyword = sp.get('keyword') || '';
+        const sp       = new URLSearchParams(new URL(mfrUrl).search);
+        const keyword  = sp.get('keyword') || '';
+        const brandIds = sp.get('brand_id') ? sp.get('brand_id').split(',').map(Number) : null;
         const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
         const apiStatus = statusMap[sp.get('status') || 'sold_out'] || 'STATUS_SOLD_OUT';
+        const priceMin  = sp.get('price_min') ? Number(sp.get('price_min')) : null;
+        const priceMax  = sp.get('price_max') ? Number(sp.get('price_max')) : null;
 
         const allItems = {};
         let pageToken = '';
@@ -102,14 +105,15 @@
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
             sc.keyword = keyword;
-            sc.status = [apiStatus];
+            sc.status  = [apiStatus];
+            if (brandIds) sc.brandId = brandIds; else delete sc.brandId;
             delete sc.categoryId;
-            delete sc.priceMin;
-            delete sc.priceMax;
+            if (priceMin != null) sc.priceMin = priceMin; else delete sc.priceMin;
+            if (priceMax != null) sc.priceMax = priceMax; else delete sc.priceMax;
             if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
             if (sp.get('shipping_payer_id')) sc.shippingPayerId = sp.get('shipping_payer_id').split(',').map(Number);
             bodyObj.pageToken = pageToken;
-            bodyObj.pageSize = 120;
+            bodyObj.pageSize  = 120;
 
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), 15000);
