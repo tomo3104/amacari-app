@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  KeepaページでASINの最終価格を取得・記録（フルリロード方式・自動巡回対応）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -20,10 +20,13 @@
 
     let autoRunning = false;
     let autoTimer   = null;
-    let handled     = false;  // 同一ページで二重処理防止
+    let handled     = false;
+    let resumed     = false;   // resumeAuto を1回だけ実行するフラグ
+    let startBtn    = null;
+    let overlayEl   = null;
 
-    // ===== XHR インターセプト =====
-    const XHR  = unsafeWindow.XMLHttpRequest;
+    // ===== XHR インターセプト（document-start で設定）=====
+    const XHR   = unsafeWindow.XMLHttpRequest;
     const _open = XHR.prototype.open;
     const _send = XHR.prototype.send;
 
@@ -41,7 +44,7 @@
         return _send.apply(this, arguments);
     };
 
-    // fetch インターセプト（Request オブジェクト対応）
+    // fetch インターセプト
     const _fetch = unsafeWindow.fetch;
     unsafeWindow.fetch = function (input, init) {
         const p = _fetch.apply(this, arguments);
@@ -64,11 +67,15 @@
 
     function handleKeepaData(data) {
         if (handled) return;
+
+        // XHR受信時点でlocalStorageを確認してautoモードを補完
+        if (localStorage.getItem(LS_RUNNING) === 'true') autoRunning = true;
+
         const products = data.products || [];
 
         if (autoRunning) {
             if (!products.length) {
-                onAutoResult(null, null);  // データなし → 即スキップ
+                onAutoResult(null, null);
                 return;
             }
             const product = products[0];
@@ -104,7 +111,6 @@
     // ===== 自動巡回モード =====
 
     function startAuto() {
-        // 古いlocalStorageをクリアしてから開始
         localStorage.removeItem(LS_QUEUE);
         localStorage.removeItem(LS_INDEX);
         localStorage.setItem(LS_RUNNING, 'false');
@@ -133,13 +139,13 @@
         clearTimeout(autoTimer);
         localStorage.setItem(LS_RUNNING, 'false');
         updateStartBtn();
-        const el = document.getElementById('kpr-overlay');
-        if (el) el.remove();
+        if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     }
 
-    // クエリパラメータを変えてフルページロードを強制
+    // ハッシュを設定してからreload（?r=パラメータ不要）
     function goToAsin(asin) {
-        location.href = `https://keepa.com/?r=${Date.now()}#!product/5-${asin}`;
+        location.hash = `#!product/5-${asin}`;
+        setTimeout(() => location.reload(), 50);
     }
 
     function goNext() {
@@ -193,8 +199,10 @@
         });
     }
 
-    // ===== 自動モード再開（ページロード時） =====
+    // ページリロード後に自動モードを再開
     function resumeAuto() {
+        if (resumed) return;
+        resumed = true;
         const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
         const index = parseInt(localStorage.getItem(LS_INDEX) || '0');
         if (!queue.length || index >= queue.length) {
@@ -203,22 +211,35 @@
         }
         const cand = queue[index];
         autoRunning = true;
+        updateStartBtn();
         showAutoOverlay(cand, index, queue.length, null, 'ページ読み込み中...');
 
-        // 10秒以内にAPIレスポンスが来なければスキップ
+        // 12秒以内にAPIレスポンスが来なければスキップ
         autoTimer = setTimeout(() => {
             if (!handled) {
                 showAutoOverlay(cand, index, queue.length, null, '⚠ タイムアウト - スキップ');
                 setTimeout(() => goNext(), 1000);
             }
-        }, 10000);
+        }, 12000);
     }
 
     // ===== UI =====
 
     function getOrCreate(id) {
+        // 既存の参照があれば再利用（DOMから外れていても再アタッチ）
+        if (overlayEl) {
+            if (document.body && !document.body.contains(overlayEl)) {
+                document.body.appendChild(overlayEl);
+            }
+            return overlayEl;
+        }
         let el = document.getElementById(id);
-        if (!el) { el = document.createElement('div'); el.id = id; document.body && document.body.appendChild(el); }
+        if (!el) {
+            el = document.createElement('div');
+            el.id = id;
+            if (document.body) document.body.appendChild(el);
+        }
+        overlayEl = el;
         return el;
     }
 
@@ -262,16 +283,16 @@
                     background:#37474f;color:#fff;font-size:12px;cursor:pointer;">閉じる</button>
             </div>`;
         const cl = document.getElementById('kpr-close-done');
-        if (cl) cl.onclick = () => el.remove();
+        if (cl) cl.onclick = () => { overlayEl = null; el.remove(); };
     }
 
     // ===== 手動モード =====
 
     function showManualOverlay(asin, priceList, bestPrice) {
-        const existing = document.getElementById('kpr-overlay');
-        if (existing) existing.remove();
+        if (overlayEl) { overlayEl.remove(); overlayEl = null; }
         const box = document.createElement('div');
         box.id = 'kpr-overlay';
+        overlayEl = box;
         const rows = priceList.map(f =>
             `<div style="display:flex;justify-content:space-between;margin:4px 0;">
                 <span style="color:#aaa">${f.label}</span>
@@ -300,7 +321,7 @@
             </div>`;
         const attach = () => {
             document.body.appendChild(box);
-            document.getElementById('kpr-close').onclick = () => box.remove();
+            document.getElementById('kpr-close').onclick = () => { box.remove(); overlayEl = null; };
             const saveBtn = document.getElementById('kpr-save');
             if (saveBtn) {
                 saveBtn.onclick = () => {
@@ -337,7 +358,6 @@
     }
 
     // ===== 起動ボタン =====
-    let startBtn = null;
 
     function updateStartBtn() {
         if (!startBtn) return;
@@ -347,26 +367,45 @@
     }
 
     function addStartButton() {
-        startBtn = document.createElement('button');
-        Object.assign(startBtn.style, {
-            position: 'fixed', bottom: '20px', right: '16px', zIndex: '99998',
-            padding: '10px 18px', border: 'none', borderRadius: '10px',
-            background: '#1565c0', color: '#fff', fontSize: '13px',
-            cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 12px rgba(0,0,0,.5)',
-        });
-        updateStartBtn();
-        startBtn.onclick = () => {
-            if (localStorage.getItem(LS_RUNNING) === 'true') stopAuto();
-            else startAuto();
-        };
-        document.body.appendChild(startBtn);
+        if (!document.body) return;
+        // 既にDOMにあれば何もしない
+        if (startBtn && document.body.contains(startBtn)) return;
 
-        // ページロード時に自動モード再開
-        if (localStorage.getItem(LS_RUNNING) === 'true') {
-            setTimeout(() => resumeAuto(), 300);
+        if (!startBtn) {
+            startBtn = document.createElement('button');
+            Object.assign(startBtn.style, {
+                position: 'fixed', bottom: '20px', right: '16px', zIndex: '99998',
+                padding: '10px 18px', border: 'none', borderRadius: '10px',
+                background: '#1565c0', color: '#fff', fontSize: '13px',
+                cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 12px rgba(0,0,0,.5)',
+            });
+            updateStartBtn();
+            startBtn.onclick = () => {
+                if (localStorage.getItem(LS_RUNNING) === 'true') stopAuto();
+                else startAuto();
+            };
+        }
+        document.body.appendChild(startBtn);
+    }
+
+    // ===== Keep-alive: Keepa SPAがDOMを再構築してもボタン・オーバーレイを維持 =====
+    function keepAlive() {
+        if (!document.body) return;
+        addStartButton();
+        if (overlayEl && !document.body.contains(overlayEl)) {
+            document.body.appendChild(overlayEl);
         }
     }
 
-    document.addEventListener('DOMContentLoaded', addStartButton);
+    // ===== 初期化 =====
+    document.addEventListener('DOMContentLoaded', () => {
+        addStartButton();
+        setInterval(keepAlive, 800);
+
+        if (localStorage.getItem(LS_RUNNING) === 'true') {
+            // Keepa SPAの初期化完了後に再開（2秒待機）
+            setTimeout(() => resumeAuto(), 2000);
+        }
+    });
 
 })();
