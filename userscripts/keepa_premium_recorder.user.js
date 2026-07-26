@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  KeepaページでASINの最終価格を取得・記録（フルリロード方式・自動巡回対応）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -142,10 +142,10 @@
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     }
 
-    // ハッシュを設定してからreload（?r=パラメータ不要）
+    // replaceStateでURLを更新してからリロード（hashchangeイベントを発火させない）
     function goToAsin(asin) {
-        location.hash = `#!product/5-${asin}`;
-        setTimeout(() => location.reload(), 50);
+        unsafeWindow.history.replaceState(null, '', `/#!product/5-${asin}`);
+        unsafeWindow.location.reload();
     }
 
     function goNext() {
