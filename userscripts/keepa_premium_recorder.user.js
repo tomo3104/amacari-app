@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.3
-// @description  KeepaページでASINの最終価格を取得・記録（フルリロード方式・自動巡回対応）
+// @version      3.4
+// @description  KeepaページでASINの最終価格を取得・記録（GM_setValue使用・KeepaのlocalStorage上書き対策）
 // @match        https://keepa.com/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @grant        unsafeWindow
 // ==/UserScript==
 
@@ -14,19 +17,24 @@
     'use strict';
 
     const SERVER     = 'http://localhost:8766';
-    const LS_QUEUE   = 'kpr_queue';
-    const LS_INDEX   = 'kpr_index';
-    const LS_RUNNING = 'kpr_running';
+    const K_QUEUE    = 'kpr_queue';
+    const K_INDEX    = 'kpr_index';
+    const K_RUNNING  = 'kpr_running';
+
+    // GM_getValue / GM_setValue はTampermonkey固有ストレージ（Keepaに消されない）
+    const gmGet  = (k, d) => GM_getValue(k, d);
+    const gmSet  = (k, v) => GM_setValue(k, v);
+    const gmDel  = (k)    => GM_deleteValue(k);
 
     let autoRunning = false;
     let autoTimer   = null;
-    let cdTimer     = null;   // カウントダウン更新タイマー
+    let cdTimer     = null;
     let handled     = false;
     let resumed     = false;
     let startBtn    = null;
     let overlayEl   = null;
 
-    // ===== XHR インターセプト（document-start で設定）=====
+    // ===== XHR インターセプト =====
     const XHR   = unsafeWindow.XMLHttpRequest;
     const _open = XHR.prototype.open;
     const _send = XHR.prototype.send;
@@ -38,24 +46,22 @@
 
     XHR.prototype.send = function () {
         if (this._kUrl && this._kUrl.includes('api.keepa.com/product')) {
-            console.log('[KPR] Keepa XHR 検知:', this._kUrl);
+            console.log('[KPR] XHR検知:', this._kUrl.slice(0, 80));
             this.addEventListener('load', function () {
                 try { handleKeepaData(JSON.parse(this.responseText)); } catch (e) {
-                    console.log('[KPR] XHR parse error:', e);
+                    console.log('[KPR] XHR parseエラー:', e);
                 }
             });
         }
         return _send.apply(this, arguments);
     };
 
-    // fetch インターセプト
     const _fetch = unsafeWindow.fetch;
     unsafeWindow.fetch = function (input, init) {
         const p = _fetch.apply(this, arguments);
-        const url = typeof input === 'string' ? input
-                  : (input && input.url) ? input.url : '';
+        const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
         if (url.includes('api.keepa.com/product')) {
-            console.log('[KPR] Keepa fetch 検知:', url);
+            console.log('[KPR] fetch検知:', url.slice(0, 80));
             p.then(r => r.clone().json().then(handleKeepaData).catch(() => {}));
         }
         return p;
@@ -72,10 +78,9 @@
 
     function handleKeepaData(data) {
         if (handled) return;
-        console.log('[KPR] handleKeepaData 呼ばれた, autoRunning=', autoRunning, 'LS_RUNNING=', localStorage.getItem(LS_RUNNING));
+        console.log('[KPR] handleKeepaData, autoRunning=', autoRunning, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
 
-        // localStorage確認してautoモードを補完
-        if (localStorage.getItem(LS_RUNNING) === 'true') autoRunning = true;
+        if (gmGet(K_RUNNING, 'false') === 'true') autoRunning = true;
 
         const products = data.products || [];
 
@@ -111,31 +116,29 @@
             if (p && p > 0) found.push({ label: labels[idx], price: p });
         });
         const best = found.find(f => f.label === '新品（第三者）') ||
-                     found.find(f => f.label === 'BuyBox') ||
-                     found[0] || null;
+                     found.find(f => f.label === 'BuyBox') || found[0] || null;
         showManualOverlay(asin, found, best ? best.price : null);
     }
 
     // ===== 自動巡回モード =====
 
     function startAuto() {
-        localStorage.removeItem(LS_QUEUE);
-        localStorage.removeItem(LS_INDEX);
-        localStorage.setItem(LS_RUNNING, 'false');
+        gmDel(K_QUEUE);
+        gmDel(K_INDEX);
+        gmSet(K_RUNNING, 'false');
         showStatusOverlay('キューを読み込み中...');
         GM_xmlhttpRequest({
-            method: 'GET',
-            url: `${SERVER}/premium-queue`,
-            timeout: 20000,
+            method: 'GET', url: `${SERVER}/premium-queue`, timeout: 20000,
             onload: res => {
                 try {
                     const data  = JSON.parse(res.responseText);
                     const queue = data.queue || [];
                     if (!queue.length) { showStatusOverlay('未処理の候補がありません'); return; }
                     console.log('[KPR] キュー取得:', queue.length, '件');
-                    localStorage.setItem(LS_QUEUE,   JSON.stringify(queue));
-                    localStorage.setItem(LS_INDEX,   '0');
-                    localStorage.setItem(LS_RUNNING, 'true');
+                    gmSet(K_QUEUE,   JSON.stringify(queue));
+                    gmSet(K_INDEX,   '0');
+                    gmSet(K_RUNNING, 'true');
+                    console.log('[KPR] GM保存完了, 次へ:', queue[0].asin);
                     goToAsin(queue[0].asin);
                 } catch (e) {
                     console.log('[KPR] キュー取得失敗:', e);
@@ -150,12 +153,11 @@
         autoRunning = false;
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
-        localStorage.setItem(LS_RUNNING, 'false');
+        gmSet(K_RUNNING, 'false');
         updateStartBtn();
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     }
 
-    // location.href で強制フルリロード（?r= でURLをユニークにしてSPAをバイパス）
     function goToAsin(asin) {
         const url = `https://keepa.com/?r=${Date.now()}#!product/5-${asin}`;
         console.log('[KPR] goToAsin →', url);
@@ -165,16 +167,16 @@
     function goNext() {
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
-        const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
-        const index = parseInt(localStorage.getItem(LS_INDEX) || '0') + 1;
-        console.log('[KPR] goNext: index=', index, '/ total=', queue.length);
+        const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
+        const index = parseInt(gmGet(K_INDEX, '0')) + 1;
+        console.log('[KPR] goNext: index=', index, '/', queue.length);
         if (index >= queue.length) {
-            localStorage.setItem(LS_RUNNING, 'false');
+            gmSet(K_RUNNING, 'false');
             autoRunning = false;
             showCompleteOverlay(queue.length);
             return;
         }
-        localStorage.setItem(LS_INDEX, String(index));
+        gmSet(K_INDEX, String(index));
         goToAsin(queue[index].asin);
     }
 
@@ -185,8 +187,8 @@
         clearInterval(cdTimer);
         console.log('[KPR] onAutoResult: asin=', asin, 'price=', price);
 
-        const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
-        const index = parseInt(localStorage.getItem(LS_INDEX) || '0');
+        const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
+        const index = parseInt(gmGet(K_INDEX, '0'));
         const cand  = queue[index] || {};
 
         if (!price) {
@@ -197,19 +199,15 @@
 
         showAutoOverlay(cand, index, queue.length, price, '送信中...');
         GM_xmlhttpRequest({
-            method:  'POST',
-            url:     `${SERVER}/save-premium-price`,
+            method: 'POST', url: `${SERVER}/save-premium-price`,
             headers: { 'Content-Type': 'application/json' },
-            data:    JSON.stringify({ asin: asin || cand.asin, price }),
-            timeout: 30000,
+            data: JSON.stringify({ asin: asin || cand.asin, price }), timeout: 30000,
             onload: res => {
                 try {
                     const r = JSON.parse(res.responseText);
                     if (r.ok) showAutoOverlay(cand, index, queue.length, price, `✅ 記録完了  pmax ¥${r.pmax.toLocaleString()}`);
                     else      showAutoOverlay(cand, index, queue.length, price, `⚠ ${r.error || 'エラー'}`);
-                } catch (e) {
-                    showAutoOverlay(cand, index, queue.length, price, '⚠ 通信エラー');
-                }
+                } catch (e) { showAutoOverlay(cand, index, queue.length, price, '⚠ 通信エラー'); }
                 setTimeout(() => goNext(), 2000);
             },
             onerror:   () => { showAutoOverlay(cand, index, queue.length, price, '⚠ サーバー未起動'); setTimeout(() => goNext(), 2000); },
@@ -217,22 +215,23 @@
         });
     }
 
-    // ページリロード後に自動モードを再開
     function resumeAuto() {
         if (resumed) return;
         resumed = true;
-        const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
-        const index = parseInt(localStorage.getItem(LS_INDEX) || '0');
+        const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
+        const index = parseInt(gmGet(K_INDEX, '0'));
         console.log('[KPR] resumeAuto: index=', index, 'queue.length=', queue.length);
+
         if (!queue.length || index >= queue.length) {
-            localStorage.setItem(LS_RUNNING, 'false');
+            gmSet(K_RUNNING, 'false');
+            updateStartBtn();
             return;
         }
+
         const cand = queue[index];
         autoRunning = true;
         updateStartBtn();
 
-        // カウントダウン付きオーバーレイ
         let sec = 15;
         const updateCd = () => {
             showAutoOverlay(cand, index, queue.length, null, `API待機中... (${sec}秒)`);
@@ -241,7 +240,6 @@
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
-        // 15秒以内にAPIレスポンスが来なければスキップ
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
             if (!handled) {
@@ -254,31 +252,23 @@
 
     // ===== UI =====
 
+    const OV_STYLE = [
+        'position:fixed', 'top:80px', 'right:16px', 'z-index:2147483647',
+        'width:270px', 'background:#1b2733', 'color:#e0e0e0',
+        'border-radius:12px', 'padding:16px', 'font-family:sans-serif',
+        'font-size:13px', 'box-shadow:0 4px 20px rgba(0,0,0,.6)', 'line-height:1.5',
+    ].map(s => s + ' !important').join(';');
+
     function getOrCreate(id) {
         if (overlayEl) {
-            if (document.body && !document.body.contains(overlayEl)) {
-                document.body.appendChild(overlayEl);
-            }
+            if (document.body && !document.body.contains(overlayEl)) document.body.appendChild(overlayEl);
             return overlayEl;
         }
         let el = document.getElementById(id);
-        if (!el) {
-            el = document.createElement('div');
-            el.id = id;
-            if (document.body) document.body.appendChild(el);
-        }
+        if (!el) { el = document.createElement('div'); el.id = id; if (document.body) document.body.appendChild(el); }
         overlayEl = el;
         return el;
     }
-
-    // オーバーレイ本体に直接fixed指定（CSS競合を避けるため最大z-indexを使用）
-    const OV_STYLE = `
-        position:fixed !important;top:80px !important;right:16px !important;
-        z-index:2147483647 !important;width:270px !important;
-        background:#1b2733 !important;color:#e0e0e0 !important;
-        border-radius:12px !important;padding:16px !important;
-        font-family:sans-serif !important;font-size:13px !important;
-        box-shadow:0 4px 20px rgba(0,0,0,.6) !important;line-height:1.5 !important;`;
 
     function showAutoOverlay(cand, index, total, price, status) {
         const el = getOrCreate('kpr-overlay');
@@ -290,7 +280,7 @@
             ${price ? `<div style="color:#fff;font-weight:bold;font-size:18px;margin-bottom:6px;">¥${price.toLocaleString()}</div>` : ''}
             <div style="color:#90caf9;font-size:12px;margin-bottom:12px;">${status}</div>
             <button id="kpr-stop" style="padding:6px 14px;border:none;border-radius:6px;
-                background:#c62828;color:#fff;font-size:12px;cursor:pointer;font-weight:bold;">■ 停止</button>`;
+                background:#c62828 !important;color:#fff !important;font-size:12px;cursor:pointer;font-weight:bold;">■ 停止</button>`;
         const s = document.getElementById('kpr-stop');
         if (s) s.onclick = stopAuto;
     }
@@ -308,7 +298,7 @@
             <div style="font-size:14px;font-weight:bold;color:#4caf50;margin-bottom:8px;">✅ 自動取得完了</div>
             <div style="font-size:12px;color:#aaa;">${total} 件の処理が完了しました。</div>
             <button id="kpr-close-done" style="margin-top:10px;padding:6px 12px;border:none;border-radius:6px;
-                background:#37474f;color:#fff;font-size:12px;cursor:pointer;">閉じる</button>`;
+                background:#37474f !important;color:#fff !important;font-size:12px;cursor:pointer;">閉じる</button>`;
         const cl = document.getElementById('kpr-close-done');
         if (cl) cl.onclick = () => { overlayEl = null; el.remove(); };
     }
@@ -337,10 +327,10 @@
                 <span style="color:#aaa;font-size:11px;">使用価格（編集可）</span><br>
                 <input id="kpr-price" type="number" value="${bestPrice}"
                     style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
-                           background:#0d1921;color:#fff;font-size:14px;margin-top:4px;box-sizing:border-box;">
+                           background:#0d1921 !important;color:#fff !important;font-size:14px;margin-top:4px;box-sizing:border-box;">
             </div>
             <button id="kpr-save" style="width:100%;padding:9px;border:none;border-radius:8px;
-                background:#2e7d32;color:#fff;font-size:13px;cursor:pointer;font-weight:bold;">📥 記録する</button>
+                background:#2e7d32 !important;color:#fff !important;font-size:13px;cursor:pointer;font-weight:bold;">📥 記録する</button>
             <div id="kpr-status" style="margin-top:8px;font-size:11px;color:#aaa;text-align:center;min-height:16px;"></div>
             ` : ''}`;
         const attach = () => {
@@ -351,8 +341,7 @@
                 saveBtn.onclick = () => {
                     const price = parseInt(document.getElementById('kpr-price').value);
                     if (!price || price <= 0) { alert('価格を入力してください'); return; }
-                    saveBtn.disabled = true;
-                    saveBtn.textContent = '送信中…';
+                    saveBtn.disabled = true; saveBtn.textContent = '送信中…';
                     GM_xmlhttpRequest({
                         method: 'POST', url: `${SERVER}/save-premium-price`,
                         headers: { 'Content-Type': 'application/json' },
@@ -361,14 +350,10 @@
                             try {
                                 const r = JSON.parse(res.responseText);
                                 if (r.ok) {
-                                    saveBtn.textContent = '✅ 記録完了';
-                                    saveBtn.style.background = '#1565c0';
+                                    saveBtn.textContent = '✅ 記録完了'; saveBtn.style.background = '#1565c0';
                                     document.getElementById('kpr-status').textContent =
                                         `${r.model}  pmax ¥${r.pmax.toLocaleString()}  手数料 ¥${r.fee.toLocaleString()}`;
-                                } else {
-                                    saveBtn.textContent = '⚠ エラー'; saveBtn.disabled = false;
-                                    document.getElementById('kpr-status').textContent = r.error || '';
-                                }
+                                } else { saveBtn.textContent = '⚠ エラー'; saveBtn.disabled = false; }
                             } catch (e) { saveBtn.textContent = '⚠ 通信エラー'; saveBtn.disabled = false; }
                         },
                         onerror:   () => { saveBtn.textContent = '⚠ サーバー未起動'; saveBtn.disabled = false; },
@@ -377,23 +362,24 @@
                 };
             }
         };
-        if (document.body) attach();
-        else document.addEventListener('DOMContentLoaded', attach);
+        if (document.body) attach(); else document.addEventListener('DOMContentLoaded', attach);
     }
 
     // ===== 起動ボタン =====
 
     function updateStartBtn() {
         if (!startBtn) return;
-        const running = localStorage.getItem(LS_RUNNING) === 'true';
+        const running = gmGet(K_RUNNING, 'false') === 'true';
         startBtn.textContent = running ? '■ 停止' : '🤖 自動取得';
-        startBtn.style.background = running ? '#c62828' : '#1565c0';
+        startBtn.style.cssText = startBtn.style.cssText.replace(
+            /background:[^;]+/,
+            `background:${running ? '#c62828' : '#1565c0'}`
+        );
     }
 
     function addStartButton() {
         if (!document.body) return;
         if (startBtn && document.body.contains(startBtn)) return;
-
         if (!startBtn) {
             startBtn = document.createElement('button');
             startBtn.setAttribute('style', [
@@ -401,32 +387,27 @@
                 'padding:10px 18px', 'border:none', 'border-radius:10px',
                 'background:#1565c0', 'color:#fff', 'font-size:13px',
                 'cursor:pointer', 'font-weight:bold', 'box-shadow:0 2px 12px rgba(0,0,0,.5)',
-            ].join('!important;') + '!important');
+            ].map(s => s + ' !important').join(';'));
             updateStartBtn();
             startBtn.onclick = () => {
-                if (localStorage.getItem(LS_RUNNING) === 'true') stopAuto();
-                else startAuto();
+                if (gmGet(K_RUNNING, 'false') === 'true') stopAuto(); else startAuto();
             };
         }
         document.body.appendChild(startBtn);
     }
 
-    // ===== Keep-alive =====
     function keepAlive() {
         if (!document.body) return;
         addStartButton();
-        if (overlayEl && !document.body.contains(overlayEl)) {
-            document.body.appendChild(overlayEl);
-        }
+        if (overlayEl && !document.body.contains(overlayEl)) document.body.appendChild(overlayEl);
     }
 
     // ===== 初期化 =====
     document.addEventListener('DOMContentLoaded', () => {
-        console.log('[KPR] DOMContentLoaded, LS_RUNNING=', localStorage.getItem(LS_RUNNING), 'URL=', location.href);
+        console.log('[KPR] DOMContentLoaded, K_RUNNING=', gmGet(K_RUNNING, 'false'), 'URL=', location.href);
         addStartButton();
         setInterval(keepAlive, 800);
-
-        if (localStorage.getItem(LS_RUNNING) === 'true') {
+        if (gmGet(K_RUNNING, 'false') === 'true') {
             setTimeout(() => resumeAuto(), 2000);
         }
     });
