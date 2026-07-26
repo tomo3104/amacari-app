@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  KeepaページでASINの最終価格を取得・記録（フルリロード方式・自動巡回対応）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -20,8 +20,9 @@
 
     let autoRunning = false;
     let autoTimer   = null;
+    let cdTimer     = null;   // カウントダウン更新タイマー
     let handled     = false;
-    let resumed     = false;   // resumeAuto を1回だけ実行するフラグ
+    let resumed     = false;
     let startBtn    = null;
     let overlayEl   = null;
 
@@ -37,8 +38,11 @@
 
     XHR.prototype.send = function () {
         if (this._kUrl && this._kUrl.includes('api.keepa.com/product')) {
+            console.log('[KPR] Keepa XHR 検知:', this._kUrl);
             this.addEventListener('load', function () {
-                try { handleKeepaData(JSON.parse(this.responseText)); } catch (e) {}
+                try { handleKeepaData(JSON.parse(this.responseText)); } catch (e) {
+                    console.log('[KPR] XHR parse error:', e);
+                }
             });
         }
         return _send.apply(this, arguments);
@@ -51,6 +55,7 @@
         const url = typeof input === 'string' ? input
                   : (input && input.url) ? input.url : '';
         if (url.includes('api.keepa.com/product')) {
+            console.log('[KPR] Keepa fetch 検知:', url);
             p.then(r => r.clone().json().then(handleKeepaData).catch(() => {}));
         }
         return p;
@@ -67,14 +72,16 @@
 
     function handleKeepaData(data) {
         if (handled) return;
+        console.log('[KPR] handleKeepaData 呼ばれた, autoRunning=', autoRunning, 'LS_RUNNING=', localStorage.getItem(LS_RUNNING));
 
-        // XHR受信時点でlocalStorageを確認してautoモードを補完
+        // localStorage確認してautoモードを補完
         if (localStorage.getItem(LS_RUNNING) === 'true') autoRunning = true;
 
         const products = data.products || [];
 
         if (autoRunning) {
             if (!products.length) {
+                console.log('[KPR] products空 → スキップ');
                 onAutoResult(null, null);
                 return;
             }
@@ -87,6 +94,7 @@
                 if (p && p > 0) found.push(p);
             });
             const best = found.length ? Math.max(...found) : null;
+            console.log('[KPR] ASIN:', asin, '→ 価格:', best);
             onAutoResult(asin, best);
             return;
         }
@@ -124,11 +132,15 @@
                     const data  = JSON.parse(res.responseText);
                     const queue = data.queue || [];
                     if (!queue.length) { showStatusOverlay('未処理の候補がありません'); return; }
+                    console.log('[KPR] キュー取得:', queue.length, '件');
                     localStorage.setItem(LS_QUEUE,   JSON.stringify(queue));
                     localStorage.setItem(LS_INDEX,   '0');
                     localStorage.setItem(LS_RUNNING, 'true');
                     goToAsin(queue[0].asin);
-                } catch (e) { showStatusOverlay('⚠ サーバーへの接続失敗'); }
+                } catch (e) {
+                    console.log('[KPR] キュー取得失敗:', e);
+                    showStatusOverlay('⚠ サーバーへの接続失敗');
+                }
             },
             onerror: () => showStatusOverlay('⚠ サーバー未起動'),
         });
@@ -137,21 +149,25 @@
     function stopAuto() {
         autoRunning = false;
         clearTimeout(autoTimer);
+        clearInterval(cdTimer);
         localStorage.setItem(LS_RUNNING, 'false');
         updateStartBtn();
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     }
 
-    // replaceStateでURLを更新してからリロード（hashchangeイベントを発火させない）
+    // location.href で強制フルリロード（?r= でURLをユニークにしてSPAをバイパス）
     function goToAsin(asin) {
-        unsafeWindow.history.replaceState(null, '', `/#!product/5-${asin}`);
-        unsafeWindow.location.reload();
+        const url = `https://keepa.com/?r=${Date.now()}#!product/5-${asin}`;
+        console.log('[KPR] goToAsin →', url);
+        unsafeWindow.location.href = url;
     }
 
     function goNext() {
         clearTimeout(autoTimer);
+        clearInterval(cdTimer);
         const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
         const index = parseInt(localStorage.getItem(LS_INDEX) || '0') + 1;
+        console.log('[KPR] goNext: index=', index, '/ total=', queue.length);
         if (index >= queue.length) {
             localStorage.setItem(LS_RUNNING, 'false');
             autoRunning = false;
@@ -166,6 +182,8 @@
         if (handled) return;
         handled = true;
         clearTimeout(autoTimer);
+        clearInterval(cdTimer);
+        console.log('[KPR] onAutoResult: asin=', asin, 'price=', price);
 
         const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
         const index = parseInt(localStorage.getItem(LS_INDEX) || '0');
@@ -205,6 +223,7 @@
         resumed = true;
         const queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
         const index = parseInt(localStorage.getItem(LS_INDEX) || '0');
+        console.log('[KPR] resumeAuto: index=', index, 'queue.length=', queue.length);
         if (!queue.length || index >= queue.length) {
             localStorage.setItem(LS_RUNNING, 'false');
             return;
@@ -212,21 +231,30 @@
         const cand = queue[index];
         autoRunning = true;
         updateStartBtn();
-        showAutoOverlay(cand, index, queue.length, null, 'ページ読み込み中...');
 
-        // 12秒以内にAPIレスポンスが来なければスキップ
+        // カウントダウン付きオーバーレイ
+        let sec = 15;
+        const updateCd = () => {
+            showAutoOverlay(cand, index, queue.length, null, `API待機中... (${sec}秒)`);
+            sec--;
+        };
+        updateCd();
+        cdTimer = setInterval(updateCd, 1000);
+
+        // 15秒以内にAPIレスポンスが来なければスキップ
         autoTimer = setTimeout(() => {
+            clearInterval(cdTimer);
             if (!handled) {
+                console.log('[KPR] タイムアウト → goNext');
                 showAutoOverlay(cand, index, queue.length, null, '⚠ タイムアウト - スキップ');
                 setTimeout(() => goNext(), 1000);
             }
-        }, 12000);
+        }, 15000);
     }
 
     // ===== UI =====
 
     function getOrCreate(id) {
-        // 既存の参照があれば再利用（DOMから外れていても再アタッチ）
         if (overlayEl) {
             if (document.body && !document.body.contains(overlayEl)) {
                 document.body.appendChild(overlayEl);
@@ -243,45 +271,44 @@
         return el;
     }
 
+    // オーバーレイ本体に直接fixed指定（CSS競合を避けるため最大z-indexを使用）
+    const OV_STYLE = `
+        position:fixed !important;top:80px !important;right:16px !important;
+        z-index:2147483647 !important;width:270px !important;
+        background:#1b2733 !important;color:#e0e0e0 !important;
+        border-radius:12px !important;padding:16px !important;
+        font-family:sans-serif !important;font-size:13px !important;
+        box-shadow:0 4px 20px rgba(0,0,0,.6) !important;line-height:1.5 !important;`;
+
     function showAutoOverlay(cand, index, total, price, status) {
         const el = getOrCreate('kpr-overlay');
+        el.setAttribute('style', OV_STYLE);
         el.innerHTML = `
-            <div style="position:fixed;top:80px;right:16px;z-index:99999;
-                background:#1b2733;color:#fff;border-radius:12px;padding:16px;width:260px;
-                font-family:sans-serif;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);">
-                <div style="font-size:11px;color:#aaa;margin-bottom:2px;">🤖 自動取得中  [${index + 1} / ${total}]</div>
-                <div style="font-size:11px;color:#aaa;">型番: <b style="color:#ccc">${cand.model || '-'}</b></div>
-                <div style="font-size:11px;color:#aaa;margin-bottom:10px;">ASIN: ${cand.asin || '-'}</div>
-                ${price ? `<div style="color:#fff;font-weight:bold;font-size:18px;margin-bottom:8px;">¥${price.toLocaleString()}</div>` : ''}
-                <div style="color:#90caf9;font-size:12px;margin-bottom:12px;">${status}</div>
-                <button id="kpr-stop" style="padding:6px 14px;border:none;border-radius:6px;
-                    background:#c62828;color:#fff;font-size:12px;cursor:pointer;font-weight:bold;">■ 停止</button>
-            </div>`;
+            <div style="font-size:11px;color:#aaa;margin-bottom:2px;">🤖 自動取得中  [${index + 1} / ${total}]</div>
+            <div style="font-size:11px;color:#aaa;">型番: <b style="color:#ddd">${cand.model || '-'}</b></div>
+            <div style="font-size:11px;color:#aaa;margin-bottom:8px;">ASIN: ${cand.asin || '-'}</div>
+            ${price ? `<div style="color:#fff;font-weight:bold;font-size:18px;margin-bottom:6px;">¥${price.toLocaleString()}</div>` : ''}
+            <div style="color:#90caf9;font-size:12px;margin-bottom:12px;">${status}</div>
+            <button id="kpr-stop" style="padding:6px 14px;border:none;border-radius:6px;
+                background:#c62828;color:#fff;font-size:12px;cursor:pointer;font-weight:bold;">■ 停止</button>`;
         const s = document.getElementById('kpr-stop');
         if (s) s.onclick = stopAuto;
     }
 
     function showStatusOverlay(msg) {
         const el = getOrCreate('kpr-overlay');
-        el.innerHTML = `
-            <div style="position:fixed;top:80px;right:16px;z-index:99999;
-                background:#1b2733;color:#fff;border-radius:12px;padding:16px;width:240px;
-                font-family:sans-serif;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);">
-                <div style="color:#90caf9;font-size:13px;">${msg}</div>
-            </div>`;
+        el.setAttribute('style', OV_STYLE);
+        el.innerHTML = `<div style="color:#90caf9;font-size:13px;">${msg}</div>`;
     }
 
     function showCompleteOverlay(total) {
         const el = getOrCreate('kpr-overlay');
+        el.setAttribute('style', OV_STYLE);
         el.innerHTML = `
-            <div style="position:fixed;top:80px;right:16px;z-index:99999;
-                background:#1b2733;color:#fff;border-radius:12px;padding:16px;width:260px;
-                font-family:sans-serif;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);">
-                <div style="font-size:14px;font-weight:bold;color:#4caf50;margin-bottom:8px;">✅ 自動取得完了</div>
-                <div style="font-size:12px;color:#aaa;">${total} 件の処理が完了しました。</div>
-                <button id="kpr-close-done" style="margin-top:10px;padding:6px 12px;border:none;border-radius:6px;
-                    background:#37474f;color:#fff;font-size:12px;cursor:pointer;">閉じる</button>
-            </div>`;
+            <div style="font-size:14px;font-weight:bold;color:#4caf50;margin-bottom:8px;">✅ 自動取得完了</div>
+            <div style="font-size:12px;color:#aaa;">${total} 件の処理が完了しました。</div>
+            <button id="kpr-close-done" style="margin-top:10px;padding:6px 12px;border:none;border-radius:6px;
+                background:#37474f;color:#fff;font-size:12px;cursor:pointer;">閉じる</button>`;
         const cl = document.getElementById('kpr-close-done');
         if (cl) cl.onclick = () => { overlayEl = null; el.remove(); };
     }
@@ -293,6 +320,7 @@
         const box = document.createElement('div');
         box.id = 'kpr-overlay';
         overlayEl = box;
+        box.setAttribute('style', OV_STYLE);
         const rows = priceList.map(f =>
             `<div style="display:flex;justify-content:space-between;margin:4px 0;">
                 <span style="color:#aaa">${f.label}</span>
@@ -300,25 +328,21 @@
             </div>`
         ).join('') || '<div style="color:#e57373">価格データなし</div>';
         box.innerHTML = `
-            <div style="position:fixed;top:80px;right:16px;z-index:99999;
-                background:#1b2733;color:#fff;border-radius:12px;padding:16px;width:240px;
-                font-family:sans-serif;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);">
-                <button id="kpr-close" style="position:absolute;top:8px;right:10px;background:none;border:none;color:#aaa;cursor:pointer;font-size:14px;">✕</button>
-                <div style="font-size:11px;color:#aaa;margin-bottom:4px;">📦 プレミアム価格記録</div>
-                <div style="font-size:11px;color:#aaa;margin-bottom:10px;">ASIN: ${asin}</div>
-                <div style="margin-bottom:12px;">${rows}</div>
-                ${bestPrice ? `
-                <div style="margin-bottom:8px;">
-                    <span style="color:#aaa;font-size:11px;">使用価格（編集可）</span><br>
-                    <input id="kpr-price" type="number" value="${bestPrice}"
-                        style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
-                               background:#0d1921;color:#fff;font-size:14px;margin-top:4px;box-sizing:border-box;">
-                </div>
-                <button id="kpr-save" style="width:100%;padding:9px;border:none;border-radius:8px;
-                    background:#2e7d32;color:#fff;font-size:13px;cursor:pointer;font-weight:bold;">📥 記録する</button>
-                <div id="kpr-status" style="margin-top:8px;font-size:11px;color:#aaa;text-align:center;min-height:16px;"></div>
-                ` : ''}
-            </div>`;
+            <button id="kpr-close" style="position:absolute;top:8px;right:10px;background:none;border:none;color:#aaa;cursor:pointer;font-size:14px;">✕</button>
+            <div style="font-size:11px;color:#aaa;margin-bottom:4px;">📦 プレミアム価格記録</div>
+            <div style="font-size:11px;color:#aaa;margin-bottom:10px;">ASIN: ${asin}</div>
+            <div style="margin-bottom:12px;">${rows}</div>
+            ${bestPrice ? `
+            <div style="margin-bottom:8px;">
+                <span style="color:#aaa;font-size:11px;">使用価格（編集可）</span><br>
+                <input id="kpr-price" type="number" value="${bestPrice}"
+                    style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
+                           background:#0d1921;color:#fff;font-size:14px;margin-top:4px;box-sizing:border-box;">
+            </div>
+            <button id="kpr-save" style="width:100%;padding:9px;border:none;border-radius:8px;
+                background:#2e7d32;color:#fff;font-size:13px;cursor:pointer;font-weight:bold;">📥 記録する</button>
+            <div id="kpr-status" style="margin-top:8px;font-size:11px;color:#aaa;text-align:center;min-height:16px;"></div>
+            ` : ''}`;
         const attach = () => {
             document.body.appendChild(box);
             document.getElementById('kpr-close').onclick = () => { box.remove(); overlayEl = null; };
@@ -368,17 +392,16 @@
 
     function addStartButton() {
         if (!document.body) return;
-        // 既にDOMにあれば何もしない
         if (startBtn && document.body.contains(startBtn)) return;
 
         if (!startBtn) {
             startBtn = document.createElement('button');
-            Object.assign(startBtn.style, {
-                position: 'fixed', bottom: '20px', right: '16px', zIndex: '99998',
-                padding: '10px 18px', border: 'none', borderRadius: '10px',
-                background: '#1565c0', color: '#fff', fontSize: '13px',
-                cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 12px rgba(0,0,0,.5)',
-            });
+            startBtn.setAttribute('style', [
+                'position:fixed', 'bottom:20px', 'right:16px', 'z-index:2147483646',
+                'padding:10px 18px', 'border:none', 'border-radius:10px',
+                'background:#1565c0', 'color:#fff', 'font-size:13px',
+                'cursor:pointer', 'font-weight:bold', 'box-shadow:0 2px 12px rgba(0,0,0,.5)',
+            ].join('!important;') + '!important');
             updateStartBtn();
             startBtn.onclick = () => {
                 if (localStorage.getItem(LS_RUNNING) === 'true') stopAuto();
@@ -388,7 +411,7 @@
         document.body.appendChild(startBtn);
     }
 
-    // ===== Keep-alive: Keepa SPAがDOMを再構築してもボタン・オーバーレイを維持 =====
+    // ===== Keep-alive =====
     function keepAlive() {
         if (!document.body) return;
         addStartButton();
@@ -399,11 +422,11 @@
 
     // ===== 初期化 =====
     document.addEventListener('DOMContentLoaded', () => {
+        console.log('[KPR] DOMContentLoaded, LS_RUNNING=', localStorage.getItem(LS_RUNNING), 'URL=', location.href);
         addStartButton();
         setInterval(keepAlive, 800);
 
         if (localStorage.getItem(LS_RUNNING) === 'true') {
-            // Keepa SPAの初期化完了後に再開（2秒待機）
             setTimeout(() => resumeAuto(), 2000);
         }
     });
