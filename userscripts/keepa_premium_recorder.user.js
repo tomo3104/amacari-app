@@ -104,6 +104,10 @@
     // ===== 自動巡回モード =====
 
     function startAuto() {
+        // 古いlocalStorageをクリアしてから開始
+        localStorage.removeItem(LS_QUEUE);
+        localStorage.removeItem(LS_INDEX);
+        localStorage.setItem(LS_RUNNING, 'false');
         showStatusOverlay('キューを読み込み中...');
         GM_xmlhttpRequest({
             method: 'GET',
@@ -254,10 +258,11 @@
                 font-family:sans-serif;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);">
                 <div style="font-size:14px;font-weight:bold;color:#4caf50;margin-bottom:8px;">✅ 自動取得完了</div>
                 <div style="font-size:12px;color:#aaa;">${total} 件の処理が完了しました。</div>
-                <button onclick="document.getElementById('kpr-overlay').remove()"
-                    style="margin-top:10px;padding:6px 12px;border:none;border-radius:6px;
+                <button id="kpr-close-done" style="margin-top:10px;padding:6px 12px;border:none;border-radius:6px;
                     background:#37474f;color:#fff;font-size:12px;cursor:pointer;">閉じる</button>
             </div>`;
+        const cl = document.getElementById('kpr-close-done');
+        if (cl) cl.onclick = () => el.remove();
     }
 
     // ===== 手動モード =====
