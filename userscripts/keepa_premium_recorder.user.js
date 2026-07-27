@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.4
-// @description  KeepaページでASINの最終価格を取得・記録（GM_setValue使用・KeepaのlocalStorage上書き対策）
+// @version      3.5
+// @description  KeepaページでASINの最終価格を取得・記録（2段階リダイレクト・GM_setValue使用）
 // @match        https://keepa.com/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
@@ -16,15 +16,27 @@
 (function () {
     'use strict';
 
-    const SERVER     = 'http://localhost:8766';
-    const K_QUEUE    = 'kpr_queue';
-    const K_INDEX    = 'kpr_index';
-    const K_RUNNING  = 'kpr_running';
+    const SERVER    = 'http://localhost:8766';
+    const K_QUEUE   = 'kpr_queue';
+    const K_INDEX   = 'kpr_index';
+    const K_RUNNING = 'kpr_running';
 
-    // GM_getValue / GM_setValue はTampermonkey固有ストレージ（Keepaに消されない）
-    const gmGet  = (k, d) => GM_getValue(k, d);
-    const gmSet  = (k, v) => GM_setValue(k, v);
-    const gmDel  = (k)    => GM_deleteValue(k);
+    const gmGet = (k, d) => GM_getValue(k, d);
+    const gmSet = (k, v) => GM_setValue(k, v);
+    const gmDel = (k)    => GM_deleteValue(k);
+
+    // ===== document-start: ?r=中継URLを検知したら即クリーンURLへリダイレクト =====
+    // keepa.com/?r=timestamp#!product/5-ASIN → keepa.com/#!product/5-ASIN
+    // （KeepaはクリーンURL形式でないとAPIを呼ばないため）
+    if (unsafeWindow.location.search.includes('r=') &&
+        gmGet(K_RUNNING, 'false') === 'true' &&
+        unsafeWindow.location.hash.includes('#!product/')) {
+        const cleanUrl = 'https://keepa.com/' + unsafeWindow.location.hash;
+        console.log('[KPR] 中継URL検知 → クリーンURLへ:', cleanUrl);
+        unsafeWindow.location.replace(cleanUrl);
+        // 以降の初期化はクリーンURLページで行うので終了
+        return;
+    }
 
     let autoRunning = false;
     let autoTimer   = null;
@@ -45,13 +57,16 @@
     };
 
     XHR.prototype.send = function () {
-        if (this._kUrl && this._kUrl.includes('api.keepa.com/product')) {
-            console.log('[KPR] XHR検知:', this._kUrl.slice(0, 80));
-            this.addEventListener('load', function () {
-                try { handleKeepaData(JSON.parse(this.responseText)); } catch (e) {
-                    console.log('[KPR] XHR parseエラー:', e);
-                }
-            });
+        if (this._kUrl) {
+            // 全外部リクエストをログ（デバッグ用）
+            if (!this._kUrl.startsWith('chrome') && !this._kUrl.includes('localhost')) {
+                console.log('[KPR] XHR:', this._kUrl.slice(0, 100));
+            }
+            if (this._kUrl.includes('keepa.com/product') || this._kUrl.includes('keepa.com/api')) {
+                this.addEventListener('load', function () {
+                    try { handleKeepaData(JSON.parse(this.responseText)); } catch (e) {}
+                });
+            }
         }
         return _send.apply(this, arguments);
     };
@@ -60,8 +75,10 @@
     unsafeWindow.fetch = function (input, init) {
         const p = _fetch.apply(this, arguments);
         const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
-        if (url.includes('api.keepa.com/product')) {
-            console.log('[KPR] fetch検知:', url.slice(0, 80));
+        if (!url.startsWith('chrome') && !url.includes('localhost') && url.startsWith('http')) {
+            console.log('[KPR] fetch:', url.slice(0, 100));
+        }
+        if (url.includes('keepa.com/product') || url.includes('keepa.com/api')) {
             p.then(r => r.clone().json().then(handleKeepaData).catch(() => {}));
         }
         return p;
@@ -78,18 +95,12 @@
 
     function handleKeepaData(data) {
         if (handled) return;
-        console.log('[KPR] handleKeepaData, autoRunning=', autoRunning, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
-
+        console.log('[KPR] handleKeepaData 呼ばれた');
         if (gmGet(K_RUNNING, 'false') === 'true') autoRunning = true;
 
         const products = data.products || [];
-
         if (autoRunning) {
-            if (!products.length) {
-                console.log('[KPR] products空 → スキップ');
-                onAutoResult(null, null);
-                return;
-            }
+            if (!products.length) { onAutoResult(null, null); return; }
             const product = products[0];
             const asin    = product.asin;
             const csv     = product.csv || [];
@@ -123,8 +134,7 @@
     // ===== 自動巡回モード =====
 
     function startAuto() {
-        gmDel(K_QUEUE);
-        gmDel(K_INDEX);
+        gmDel(K_QUEUE); gmDel(K_INDEX);
         gmSet(K_RUNNING, 'false');
         showStatusOverlay('キューを読み込み中...');
         GM_xmlhttpRequest({
@@ -138,12 +148,8 @@
                     gmSet(K_QUEUE,   JSON.stringify(queue));
                     gmSet(K_INDEX,   '0');
                     gmSet(K_RUNNING, 'true');
-                    console.log('[KPR] GM保存完了, 次へ:', queue[0].asin);
                     goToAsin(queue[0].asin);
-                } catch (e) {
-                    console.log('[KPR] キュー取得失敗:', e);
-                    showStatusOverlay('⚠ サーバーへの接続失敗');
-                }
+                } catch (e) { showStatusOverlay('⚠ サーバーへの接続失敗'); }
             },
             onerror: () => showStatusOverlay('⚠ サーバー未起動'),
         });
@@ -158,9 +164,10 @@
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     }
 
+    // 中継URL経由でフルリロードを強制（?r= → クリーンURL の2段階）
     function goToAsin(asin) {
         const url = `https://keepa.com/?r=${Date.now()}#!product/5-${asin}`;
-        console.log('[KPR] goToAsin →', url);
+        console.log('[KPR] goToAsin(中継):', url);
         unsafeWindow.location.href = url;
     }
 
@@ -169,7 +176,7 @@
         clearInterval(cdTimer);
         const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
         const index = parseInt(gmGet(K_INDEX, '0')) + 1;
-        console.log('[KPR] goNext: index=', index, '/', queue.length);
+        console.log('[KPR] goNext:', index, '/', queue.length);
         if (index >= queue.length) {
             gmSet(K_RUNNING, 'false');
             autoRunning = false;
@@ -185,7 +192,7 @@
         handled = true;
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
-        console.log('[KPR] onAutoResult: asin=', asin, 'price=', price);
+        console.log('[KPR] onAutoResult: price=', price);
 
         const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
         const index = parseInt(gmGet(K_INDEX, '0'));
@@ -205,7 +212,7 @@
             onload: res => {
                 try {
                     const r = JSON.parse(res.responseText);
-                    if (r.ok) showAutoOverlay(cand, index, queue.length, price, `✅ 記録完了  pmax ¥${r.pmax.toLocaleString()}`);
+                    if (r.ok) showAutoOverlay(cand, index, queue.length, price, `✅ 記録完了 pmax¥${r.pmax.toLocaleString()}`);
                     else      showAutoOverlay(cand, index, queue.length, price, `⚠ ${r.error || 'エラー'}`);
                 } catch (e) { showAutoOverlay(cand, index, queue.length, price, '⚠ 通信エラー'); }
                 setTimeout(() => goNext(), 2000);
@@ -243,7 +250,7 @@
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
             if (!handled) {
-                console.log('[KPR] タイムアウト → goNext');
+                console.log('[KPR] タイムアウト → スキップ');
                 showAutoOverlay(cand, index, queue.length, null, '⚠ タイムアウト - スキップ');
                 setTimeout(() => goNext(), 1000);
             }
@@ -371,10 +378,7 @@
         if (!startBtn) return;
         const running = gmGet(K_RUNNING, 'false') === 'true';
         startBtn.textContent = running ? '■ 停止' : '🤖 自動取得';
-        startBtn.style.cssText = startBtn.style.cssText.replace(
-            /background:[^;]+/,
-            `background:${running ? '#c62828' : '#1565c0'}`
-        );
+        startBtn.style.background = running ? '#c62828' : '#1565c0';
     }
 
     function addStartButton() {
@@ -404,7 +408,7 @@
 
     // ===== 初期化 =====
     document.addEventListener('DOMContentLoaded', () => {
-        console.log('[KPR] DOMContentLoaded, K_RUNNING=', gmGet(K_RUNNING, 'false'), 'URL=', location.href);
+        console.log('[KPR] DOMContentLoaded URL=', location.href, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
         addStartButton();
         setInterval(keepAlive, 800);
         if (gmGet(K_RUNNING, 'false') === 'true') {
