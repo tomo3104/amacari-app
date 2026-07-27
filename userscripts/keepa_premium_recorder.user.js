@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      3.10
 // @description  KeepaページでASINの最終価格を取得・記録（2段階リダイレクト・GM_setValue使用）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -112,6 +112,11 @@
 
     XHR.prototype.open = function (method, url) {
         this._kUrl = url;
+        // hello.graphリクエストURLからKeepaトークンを捕捉
+        if (url && url.includes('hello.graph')) {
+            const m = url.match(/[?&]token=([a-zA-Z0-9]{20,})/);
+            if (m) { gmSet('kpr_token', m[1]); console.log('[KPR] token捕捉:', m[1].slice(0,8)+'...'); }
+        }
         return _open.apply(this, arguments);
     };
 
@@ -299,7 +304,41 @@
         });
     }
 
-    // ===== IndexedDB keepa2Cache 直読み =====
+    // ===== Keepa API 直接呼び出し（GM_xmlhttpRequest経由・CORS回避）=====
+    function callKeepaAPI(asin) {
+        const token = gmGet('kpr_token', '');
+        if (!token) { console.log('[KPR] token未取得 - スキップ'); return; }
+        console.log('[KPR] API直接呼び出し:', asin);
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: `https://api.keepa.com/product?key=${token}&domain=5&asin=${asin}&stats=180&offers=20`,
+            timeout: 30000,
+            onload: res => {
+                // ページ遷移済みチェック
+                const curAsin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
+                if (curAsin !== asin || handled) return;
+                try {
+                    const data = JSON.parse(res.responseText);
+                    console.log('[KPR] API応答 tokensLeft=', data.tokensLeft,
+                        'products=', (data.products || []).length,
+                        'error=', data.error || '-');
+                    if (data.products && data.products.length) {
+                        handleKeepaData(data);
+                    } else {
+                        console.log('[KPR] API データなし raw=', res.responseText.slice(0, 200));
+                        onAutoResult(null, null);
+                    }
+                } catch (e) {
+                    console.log('[KPR] API解析エラー:', e.message, res.responseText.slice(0, 150));
+                    onAutoResult(null, null);
+                }
+            },
+            onerror:   () => { if (!handled) { console.log('[KPR] API接続エラー'); onAutoResult(null, null); } },
+            ontimeout: () => { if (!handled) { console.log('[KPR] APIタイムアウト'); onAutoResult(null, null); } },
+        });
+    }
+
+    // ===== IndexedDB keepa2Cache 直読み（フォールバック）=====
     function tryReadIDB(asin) {
         console.log('[KPR] IDB直読み試行:', asin);
         try {
@@ -379,21 +418,10 @@
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
-        // スクロールでIntersectionObserver(遅延読み込み)を強制トリガー
-        setTimeout(() => {
-            if (handled) return;
-            console.log('[KPR] スクロール実行（チャート遅延読み込みトリガー）');
-            unsafeWindow.scrollTo(0, 600);
-            // チャートDOM要素があれば直接scrollIntoView
-            const chartEl = document.querySelector('#chart, canvas, [id*="chart"], [class*="chart"]');
-            if (chartEl) { console.log('[KPR] chart要素:', chartEl.id || chartEl.className); chartEl.scrollIntoView(); }
-        }, 1500);
-        setTimeout(() => { if (handled) unsafeWindow.scrollTo(0, 1200); }, 3500);
-
-        // 3秒後にIDB直読みを試みる（KeepaがIDBを読み終えた後）
-        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 3000);
-        // 8秒後も再試行
-        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 8000);
+        // 1.5秒後: トークン捕捉完了後に直接APIコール（メイン手段）
+        setTimeout(() => { if (!handled) callKeepaAPI(cand.asin); }, 1500);
+        // 5秒後: IDB直読みもフォールバックとして試みる
+        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 5000);
 
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
