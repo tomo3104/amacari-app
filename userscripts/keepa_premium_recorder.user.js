@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  KeepaページでASINの最終価格を取得・記録（2段階リダイレクト・GM_setValue使用）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -45,6 +45,29 @@
     let resumed     = false;
     let startBtn    = null;
     let overlayEl   = null;
+
+    // ===== EventSource (SSE) インターセプト =====
+    try {
+        const _ES = unsafeWindow.EventSource;
+        if (typeof _ES === 'function') {
+            unsafeWindow.EventSource = function(url, init) {
+                console.log('[KPR] SSE接続:', url);
+                const es = init ? new _ES(url, init) : new _ES(url);
+                es.addEventListener('message', evt => {
+                    const d = evt.data || '';
+                    console.log('[KPR] SSE←:', d.slice(0, 300));
+                    if (d.includes('"products"') || d.includes('"csv"') || d.includes('"asin"')) {
+                        try {
+                            const p = JSON.parse(d);
+                            if (p.products) handleKeepaData(p);
+                        } catch (e) {}
+                    }
+                });
+                return es;
+            };
+            unsafeWindow.EventSource.prototype = _ES.prototype;
+        }
+    } catch (e) { console.log('[KPR] SSE intercept error:', e.message); }
 
     // ===== WebSocket インターセプト (document-startで必須) =====
     try {
@@ -287,39 +310,38 @@
                 console.log('[KPR] keepa2Cache stores:', stores);
                 if (!stores.length) { db.close(); return; }
 
-                let attempted = 0;
                 stores.forEach(sn => {
                     try {
                         const tx = db.transaction(sn, 'readonly');
                         const store = tx.objectStore(sn);
 
-                        // まず1件カーソルでキー構造を確認
-                        if (attempted === 0) {
-                            attempted++;
-                            const cur = store.openCursor();
-                            cur.onsuccess = () => {
-                                if (cur.result) {
-                                    console.log('[KPR] IDB sample key=', cur.result.key,
-                                        'val keys=', Object.keys(cur.result.value || {}).join(','));
-                                }
-                            };
-                        }
-
-                        // ASINをキーとして取得
-                        const getReq = store.get(asin);
-                        getReq.onsuccess = () => {
-                            if (getReq.result) {
-                                const r = getReq.result;
-                                console.log('[KPR] IDB HIT store=' + sn + ':', JSON.stringify(r).slice(0, 500));
-                                if (!handled) {
-                                    // csv配列を持っていればそのまま、なければproducts[]でラップ
-                                    handleKeepaData(r.products ? r : { products: [r] });
-                                }
-                            } else {
-                                console.log('[KPR] IDB MISS store=' + sn + ' asin=' + asin);
+                        // レコード件数とサンプルキーを確認
+                        const cnt = store.count();
+                        cnt.onsuccess = () => {
+                            console.log('[KPR] IDB store=' + sn + ' count=', cnt.result);
+                            if (cnt.result > 0) {
+                                // 最初の5件のキーを取得
+                                const kReq = store.getAllKeys(null, 5);
+                                kReq.onsuccess = () => console.log('[KPR] IDB sample keys:', kReq.result);
                             }
                         };
-                        getReq.onerror = () => console.log('[KPR] IDB get error store=' + sn);
+
+                        // キー形式をいくつか試す（ASIN / 5-ASIN / marketplace:ASIN）
+                        ['', '5-', 'jp-', '5:'].forEach(prefix => {
+                            const key = prefix + asin;
+                            const getReq = store.get(key);
+                            getReq.onsuccess = () => {
+                                if (getReq.result) {
+                                    const r = getReq.result;
+                                    console.log('[KPR] IDB HIT key=' + key + ' store=' + sn + ':', JSON.stringify(r).slice(0, 500));
+                                    if (!handled) {
+                                        handleKeepaData(r.products ? r : { products: [r] });
+                                    }
+                                } else {
+                                    if (prefix === '') console.log('[KPR] IDB MISS store=' + sn + ' asin=' + asin);
+                                }
+                            };
+                        });
                     } catch (e) {
                         console.log('[KPR] IDB tx error store=' + sn + ':', e.message);
                     }
@@ -357,10 +379,21 @@
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
+        // スクロールでIntersectionObserver(遅延読み込み)を強制トリガー
+        setTimeout(() => {
+            if (handled) return;
+            console.log('[KPR] スクロール実行（チャート遅延読み込みトリガー）');
+            unsafeWindow.scrollTo(0, 600);
+            // チャートDOM要素があれば直接scrollIntoView
+            const chartEl = document.querySelector('#chart, canvas, [id*="chart"], [class*="chart"]');
+            if (chartEl) { console.log('[KPR] chart要素:', chartEl.id || chartEl.className); chartEl.scrollIntoView(); }
+        }, 1500);
+        setTimeout(() => { if (handled) unsafeWindow.scrollTo(0, 1200); }, 3500);
+
         // 3秒後にIDB直読みを試みる（KeepaがIDBを読み終えた後）
         setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 3000);
-        // 7秒後も再試行（非同期書き込みのフォールバック）
-        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 7000);
+        // 8秒後も再試行
+        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 8000);
 
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
