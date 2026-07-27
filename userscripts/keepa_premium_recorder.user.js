@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.18
+// @version      3.19
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -166,7 +166,7 @@
 
         if (!price) {
             showAutoOverlay(cand, index, queue.length, null, null, '価格データなし - スキップ');
-            setTimeout(() => goNext(), 1500);
+            setTimeout(() => goNext(), 500);
             return;
         }
 
@@ -181,10 +181,10 @@
                     if (r.ok) showAutoOverlay(cand, index, queue.length, price, dateStr, `✅ 記録完了 pmax¥${r.pmax.toLocaleString()}`);
                     else      showAutoOverlay(cand, index, queue.length, price, dateStr, `⚠ ${r.error || 'エラー'}`);
                 } catch (e) { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ 通信エラー'); }
-                setTimeout(() => goNext(), 2000);
+                setTimeout(() => goNext(), 800);
             },
-            onerror:   () => { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ サーバー未起動'); setTimeout(() => goNext(), 2000); },
-            ontimeout: () => { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ 送信タイムアウト'); setTimeout(() => goNext(), 2000); },
+            onerror:   () => { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ サーバー未起動'); setTimeout(() => goNext(), 800); },
+            ontimeout: () => { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ 送信タイムアウト'); setTimeout(() => goNext(), 800); },
         });
     }
 
@@ -205,15 +205,15 @@
         autoRunning = true;
         updateStartBtn();
 
-        let sec = 25;
+        let sec = 15;
         const updateCd = () => {
-            showAutoOverlay(cand, index, queue.length, null, `チャート読み込み待機中... (${sec}秒)`);
+            showAutoOverlay(cand, index, queue.length, null, null, `チャート読み込み待機中... (${sec}秒)`);
             sec--;
         };
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
-        // 毎秒Flotチャートをポーリングして価格を取得
+        // 500ms間隔でFlotチャートをポーリングして価格を取得
         pollTimer = setInterval(() => {
             if (handled) { clearInterval(pollTimer); return; }
             const result = readFlotPrice();
@@ -222,17 +222,17 @@
                 console.log('[KPR] チャート価格取得:', asin, '→', result.price, result.date);
                 onAutoResult(asin, result);
             }
-        }, 1000);
+        }, 500);
 
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
             clearInterval(pollTimer);
             if (!handled) {
                 console.log('[KPR] タイムアウト → スキップ');
-                showAutoOverlay(cand, index, queue.length, null, '⚠ タイムアウト - スキップ');
-                setTimeout(() => goNext(), 1000);
+                showAutoOverlay(cand, index, queue.length, null, null, '⚠ タイムアウト - スキップ');
+                setTimeout(() => goNext(), 500);
             }
-        }, 25000);
+        }, 15000);
     }
 
     // ===== UI =====
@@ -407,7 +407,7 @@
 
         if (gmGet(K_RUNNING, 'false') === 'true') {
             // 自動モード: Keepaのチャート描画を待ってから開始
-            setTimeout(() => resumeAuto(), 3000);
+            setTimeout(() => resumeAuto(), 1500);
         } else if (unsafeWindow.location.hash.includes('#!product/')) {
             // 手動モード: チャートが描画されたら価格オーバーレイを表示
             let manualAttempts = 0;
