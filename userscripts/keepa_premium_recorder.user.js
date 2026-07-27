@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.7
 // @description  KeepaページでASINの最終価格を取得・記録（2段階リダイレクト・GM_setValue使用）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -46,6 +46,42 @@
     let startBtn    = null;
     let overlayEl   = null;
 
+    // ===== WebSocket インターセプト (document-startで必須) =====
+    try {
+        const _WS = unsafeWindow.WebSocket;
+        function PatchedWS(url, protocols) {
+            console.log('[KPR] WS接続:', url);
+            const ws = (protocols !== undefined) ? new _WS(url, protocols) : new _WS(url);
+            ws.addEventListener('message', evt => {
+                if (typeof evt.data !== 'string') return;
+                const d = evt.data;
+                console.log('[KPR] WS←:', d.slice(0, 300));
+                if (d.includes('"products"') || d.includes('"asin"') || d.includes('"csv"')) {
+                    try {
+                        const parsed = JSON.parse(d);
+                        if (parsed.products) handleKeepaData(parsed);
+                        else if (parsed.data && parsed.data.products) handleKeepaData(parsed.data);
+                    } catch (e) {}
+                }
+            });
+            return ws;
+        }
+        PatchedWS.prototype = _WS.prototype;
+        PatchedWS.CONNECTING = 0; PatchedWS.OPEN = 1; PatchedWS.CLOSING = 2; PatchedWS.CLOSED = 3;
+        unsafeWindow.WebSocket = PatchedWS;
+    } catch (e) {
+        console.log('[KPR] WS intercept error:', e.message);
+    }
+
+    // ===== IndexedDB open 傍受（使用DB名のデバッグ用） =====
+    try {
+        const _idbOpen = unsafeWindow.indexedDB.open.bind(unsafeWindow.indexedDB);
+        unsafeWindow.indexedDB.open = function(name, version) {
+            console.log('[KPR] IDB.open:', name, version || '');
+            return _idbOpen.apply(this, arguments);
+        };
+    } catch (e) {}
+
     // ===== XHR インターセプト =====
     const XHR   = unsafeWindow.XMLHttpRequest;
     const _open = XHR.prototype.open;
@@ -58,13 +94,21 @@
 
     XHR.prototype.send = function () {
         if (this._kUrl) {
-            // 全外部リクエストをログ（デバッグ用）
             if (!this._kUrl.startsWith('chrome') && !this._kUrl.includes('localhost')) {
-                console.log('[KPR] XHR:', this._kUrl.slice(0, 100));
+                console.log('[KPR] XHR→:', this._kUrl.slice(0, 120));
             }
-            if (this._kUrl.includes('keepa.com/product') || this._kUrl.includes('keepa.com/api')) {
+            // keepa.com系は全レスポンスをログ＋解析を試みる
+            if (this._kUrl.includes('keepa.com') && !this._kUrl.startsWith('chrome')) {
                 this.addEventListener('load', function () {
-                    try { handleKeepaData(JSON.parse(this.responseText)); } catch (e) {}
+                    const rt = this.responseText || '';
+                    console.log('[KPR] XHR←:', this.status, rt.slice(0, 250));
+                    if (rt.includes('"products"') || rt.includes('"csv"') || rt.includes('"asin"')) {
+                        try {
+                            const parsed = JSON.parse(rt);
+                            if (parsed.products) handleKeepaData(parsed);
+                            else if (parsed.data && parsed.data.products) handleKeepaData(parsed.data);
+                        } catch (e) {}
+                    }
                 });
             }
         }
@@ -72,17 +116,27 @@
     };
 
     const _fetch = unsafeWindow.fetch;
-    unsafeWindow.fetch = function (input, init) {
-        const p = _fetch.apply(this, arguments);
-        const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
-        if (!url.startsWith('chrome') && !url.includes('localhost') && url.startsWith('http')) {
-            console.log('[KPR] fetch:', url.slice(0, 100));
-        }
-        if (url.includes('keepa.com/product') || url.includes('keepa.com/api')) {
-            p.then(r => r.clone().json().then(handleKeepaData).catch(() => {}));
-        }
-        return p;
-    };
+    if (typeof _fetch === 'function') {
+        unsafeWindow.fetch = function (input, init) {
+            const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
+            if (!url.startsWith('chrome') && !url.includes('localhost') && url.startsWith('http')) {
+                console.log('[KPR] fetch→:', url.slice(0, 120));
+            }
+            const p = _fetch.apply(this, arguments);
+            if (url.includes('keepa.com')) {
+                p.then(r => r.clone().text().then(rt => {
+                    console.log('[KPR] fetch←:', rt.slice(0, 250));
+                    if (rt.includes('"products"') || rt.includes('"csv"')) {
+                        try {
+                            const parsed = JSON.parse(rt);
+                            if (parsed.products) handleKeepaData(parsed);
+                        } catch (e) {}
+                    }
+                }).catch(() => {})).catch(() => {});
+            }
+            return p;
+        };
+    }
 
     // ===== 価格抽出 =====
     function getLastPrice(arr) {
