@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  KeepaページでASINの最終価格を取得・記録（2段階リダイレクト・GM_setValue使用）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -276,6 +276,62 @@
         });
     }
 
+    // ===== IndexedDB keepa2Cache 直読み =====
+    function tryReadIDB(asin) {
+        console.log('[KPR] IDB直読み試行:', asin);
+        try {
+            const req = unsafeWindow.indexedDB.open('keepa2Cache');
+            req.onsuccess = evt => {
+                const db = evt.target.result;
+                const stores = [...db.objectStoreNames];
+                console.log('[KPR] keepa2Cache stores:', stores);
+                if (!stores.length) { db.close(); return; }
+
+                let attempted = 0;
+                stores.forEach(sn => {
+                    try {
+                        const tx = db.transaction(sn, 'readonly');
+                        const store = tx.objectStore(sn);
+
+                        // まず1件カーソルでキー構造を確認
+                        if (attempted === 0) {
+                            attempted++;
+                            const cur = store.openCursor();
+                            cur.onsuccess = () => {
+                                if (cur.result) {
+                                    console.log('[KPR] IDB sample key=', cur.result.key,
+                                        'val keys=', Object.keys(cur.result.value || {}).join(','));
+                                }
+                            };
+                        }
+
+                        // ASINをキーとして取得
+                        const getReq = store.get(asin);
+                        getReq.onsuccess = () => {
+                            if (getReq.result) {
+                                const r = getReq.result;
+                                console.log('[KPR] IDB HIT store=' + sn + ':', JSON.stringify(r).slice(0, 500));
+                                if (!handled) {
+                                    // csv配列を持っていればそのまま、なければproducts[]でラップ
+                                    handleKeepaData(r.products ? r : { products: [r] });
+                                }
+                            } else {
+                                console.log('[KPR] IDB MISS store=' + sn + ' asin=' + asin);
+                            }
+                        };
+                        getReq.onerror = () => console.log('[KPR] IDB get error store=' + sn);
+                    } catch (e) {
+                        console.log('[KPR] IDB tx error store=' + sn + ':', e.message);
+                    }
+                });
+                setTimeout(() => { try { db.close(); } catch(e) {} }, 2000);
+            };
+            req.onerror = () => console.log('[KPR] keepa2Cache open error');
+        } catch (e) {
+            console.log('[KPR] tryReadIDB error:', e.message);
+        }
+    }
+
     function resumeAuto() {
         if (resumed) return;
         resumed = true;
@@ -293,13 +349,18 @@
         autoRunning = true;
         updateStartBtn();
 
-        let sec = 15;
+        let sec = 20;
         const updateCd = () => {
-            showAutoOverlay(cand, index, queue.length, null, `API待機中... (${sec}秒)`);
+            showAutoOverlay(cand, index, queue.length, null, `データ待機中... (${sec}秒)`);
             sec--;
         };
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
+
+        // 3秒後にIDB直読みを試みる（KeepaがIDBを読み終えた後）
+        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 3000);
+        // 7秒後も再試行（非同期書き込みのフォールバック）
+        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 7000);
 
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
@@ -308,7 +369,7 @@
                 showAutoOverlay(cand, index, queue.length, null, '⚠ タイムアウト - スキップ');
                 setTimeout(() => goNext(), 1000);
             }
-        }, 15000);
+        }, 20000);
     }
 
     // ===== UI =====
