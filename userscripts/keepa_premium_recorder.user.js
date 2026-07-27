@@ -1,12 +1,11 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.10
-// @description  KeepaページでASINの最終価格を取得・記録（2段階リダイレクト・GM_setValue使用）
+// @version      3.11
+// @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
-// @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
@@ -26,191 +25,54 @@
     const gmDel = (k)    => GM_deleteValue(k);
 
     // ===== document-start: ?r=中継URLを検知したら即クリーンURLへリダイレクト =====
-    // keepa.com/?r=timestamp#!product/5-ASIN → keepa.com/#!product/5-ASIN
-    // （KeepaはクリーンURL形式でないとAPIを呼ばないため）
     if (unsafeWindow.location.search.includes('r=') &&
         gmGet(K_RUNNING, 'false') === 'true' &&
         unsafeWindow.location.hash.includes('#!product/')) {
         const cleanUrl = 'https://keepa.com/' + unsafeWindow.location.hash;
         console.log('[KPR] 中継URL検知 → クリーンURLへ:', cleanUrl);
         unsafeWindow.location.replace(cleanUrl);
-        // 以降の初期化はクリーンURLページで行うので終了
         return;
     }
+
+    // NOTE: XHR/fetch/WebSocket/SSE/IDB の書き換えは一切行わない
+    //       KeepaがXHRプロトタイプ改変を検知してAPIコールを止めるため
 
     let autoRunning = false;
     let autoTimer   = null;
     let cdTimer     = null;
+    let pollTimer   = null;
     let handled     = false;
     let resumed     = false;
     let startBtn    = null;
     let overlayEl   = null;
 
-    // ===== EventSource (SSE) インターセプト =====
-    try {
-        const _ES = unsafeWindow.EventSource;
-        if (typeof _ES === 'function') {
-            unsafeWindow.EventSource = function(url, init) {
-                console.log('[KPR] SSE接続:', url);
-                const es = init ? new _ES(url, init) : new _ES(url);
-                es.addEventListener('message', evt => {
-                    const d = evt.data || '';
-                    console.log('[KPR] SSE←:', d.slice(0, 300));
-                    if (d.includes('"products"') || d.includes('"csv"') || d.includes('"asin"')) {
-                        try {
-                            const p = JSON.parse(d);
-                            if (p.products) handleKeepaData(p);
-                        } catch (e) {}
-                    }
-                });
-                return es;
-            };
-            unsafeWindow.EventSource.prototype = _ES.prototype;
-        }
-    } catch (e) { console.log('[KPR] SSE intercept error:', e.message); }
+    // ===== Flotチャートから価格を読み取る =====
+    function readFlotPrice() {
+        try {
+            const $ = unsafeWindow.jQuery || unsafeWindow.$;
+            if (!$) return null;
+            const canvas = document.querySelector('.flot-base');
+            if (!canvas) return null;
+            const plot = $(canvas).data('plot');
+            if (!plot) return null;
+            const allSeries = plot.getData();
+            if (!allSeries || !allSeries.length) return null;
 
-    // ===== WebSocket インターセプト (document-startで必須) =====
-    try {
-        const _WS = unsafeWindow.WebSocket;
-        function PatchedWS(url, protocols) {
-            console.log('[KPR] WS接続:', url);
-            const ws = (protocols !== undefined) ? new _WS(url, protocols) : new _WS(url);
-            ws.addEventListener('message', evt => {
-                if (typeof evt.data !== 'string') return;
-                const d = evt.data;
-                console.log('[KPR] WS←:', d.slice(0, 300));
-                if (d.includes('"products"') || d.includes('"asin"') || d.includes('"csv"')) {
-                    try {
-                        const parsed = JSON.parse(d);
-                        if (parsed.products) handleKeepaData(parsed);
-                        else if (parsed.data && parsed.data.products) handleKeepaData(parsed.data);
-                    } catch (e) {}
+            const prices = [];
+            allSeries.forEach(series => {
+                if (!series.data || !series.data.length) return;
+                // ランク系列（Y軸2本目 or 値が極端に大きい）をスキップ
+                if (series.yaxis && series.yaxis.n === 2) return;
+                for (let j = series.data.length - 1; j >= 0; j--) {
+                    const p = series.data[j][1];
+                    if (p > 0 && p < 5000000) { prices.push(p); break; }
                 }
             });
-            return ws;
+            console.log('[KPR] Flot価格候補:', prices);
+            return prices.length ? Math.max(...prices) : null;
+        } catch (e) {
+            return null;
         }
-        PatchedWS.prototype = _WS.prototype;
-        PatchedWS.CONNECTING = 0; PatchedWS.OPEN = 1; PatchedWS.CLOSING = 2; PatchedWS.CLOSED = 3;
-        unsafeWindow.WebSocket = PatchedWS;
-    } catch (e) {
-        console.log('[KPR] WS intercept error:', e.message);
-    }
-
-    // ===== IndexedDB open 傍受（使用DB名のデバッグ用） =====
-    try {
-        const _idbOpen = unsafeWindow.indexedDB.open.bind(unsafeWindow.indexedDB);
-        unsafeWindow.indexedDB.open = function(name, version) {
-            console.log('[KPR] IDB.open:', name, version || '');
-            return _idbOpen.apply(this, arguments);
-        };
-    } catch (e) {}
-
-    // ===== XHR インターセプト =====
-    const XHR   = unsafeWindow.XMLHttpRequest;
-    const _open = XHR.prototype.open;
-    const _send = XHR.prototype.send;
-
-    XHR.prototype.open = function (method, url) {
-        this._kUrl = url;
-        // hello.graphリクエストURLからKeepaトークンを捕捉
-        if (url && url.includes('hello.graph')) {
-            const m = url.match(/[?&]token=([a-zA-Z0-9]{20,})/);
-            if (m) { gmSet('kpr_token', m[1]); console.log('[KPR] token捕捉:', m[1].slice(0,8)+'...'); }
-        }
-        return _open.apply(this, arguments);
-    };
-
-    XHR.prototype.send = function () {
-        if (this._kUrl) {
-            if (!this._kUrl.startsWith('chrome') && !this._kUrl.includes('localhost')) {
-                console.log('[KPR] XHR→:', this._kUrl.slice(0, 120));
-            }
-            // keepa.com系は全レスポンスをログ＋解析を試みる
-            if (this._kUrl.includes('keepa.com') && !this._kUrl.startsWith('chrome')) {
-                this.addEventListener('load', function () {
-                    const rt = this.responseText || '';
-                    console.log('[KPR] XHR←:', this.status, rt.slice(0, 250));
-                    if (rt.includes('"products"') || rt.includes('"csv"') || rt.includes('"asin"')) {
-                        try {
-                            const parsed = JSON.parse(rt);
-                            if (parsed.products) handleKeepaData(parsed);
-                            else if (parsed.data && parsed.data.products) handleKeepaData(parsed.data);
-                        } catch (e) {}
-                    }
-                });
-            }
-        }
-        return _send.apply(this, arguments);
-    };
-
-    const _fetch = unsafeWindow.fetch;
-    if (typeof _fetch === 'function') {
-        unsafeWindow.fetch = function (input, init) {
-            const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
-            if (!url.startsWith('chrome') && !url.includes('localhost') && url.startsWith('http')) {
-                console.log('[KPR] fetch→:', url.slice(0, 120));
-            }
-            const p = _fetch.apply(this, arguments);
-            if (url.includes('keepa.com')) {
-                p.then(r => r.clone().text().then(rt => {
-                    console.log('[KPR] fetch←:', rt.slice(0, 250));
-                    if (rt.includes('"products"') || rt.includes('"csv"')) {
-                        try {
-                            const parsed = JSON.parse(rt);
-                            if (parsed.products) handleKeepaData(parsed);
-                        } catch (e) {}
-                    }
-                }).catch(() => {})).catch(() => {});
-            }
-            return p;
-        };
-    }
-
-    // ===== 価格抽出 =====
-    function getLastPrice(arr) {
-        if (!arr || arr.length < 2) return null;
-        for (let i = arr.length - 1; i >= 1; i -= 2) {
-            if (arr[i] > 0) return arr[i];
-        }
-        return null;
-    }
-
-    function handleKeepaData(data) {
-        if (handled) return;
-        console.log('[KPR] handleKeepaData 呼ばれた');
-        if (gmGet(K_RUNNING, 'false') === 'true') autoRunning = true;
-
-        const products = data.products || [];
-        if (autoRunning) {
-            if (!products.length) { onAutoResult(null, null); return; }
-            const product = products[0];
-            const asin    = product.asin;
-            const csv     = product.csv || [];
-            const found   = [];
-            [0, 1, 2, 9].forEach(idx => {
-                const p = getLastPrice(csv[idx]);
-                if (p && p > 0) found.push(p);
-            });
-            const best = found.length ? Math.max(...found) : null;
-            console.log('[KPR] ASIN:', asin, '→ 価格:', best);
-            onAutoResult(asin, best);
-            return;
-        }
-
-        // 手動モード
-        if (!products.length) return;
-        const product = products[0];
-        const asin    = product.asin;
-        const csv     = product.csv || [];
-        const labels  = { 0: 'Amazon', 1: '新品（第三者）', 2: '中古', 9: 'BuyBox' };
-        const found   = [];
-        [0, 1, 2, 9].forEach(idx => {
-            const p = getLastPrice(csv[idx]);
-            if (p && p > 0) found.push({ label: labels[idx], price: p });
-        });
-        const best = found.find(f => f.label === '新品（第三者）') ||
-                     found.find(f => f.label === 'BuyBox') || found[0] || null;
-        showManualOverlay(asin, found, best ? best.price : null);
     }
 
     // ===== 自動巡回モード =====
@@ -241,12 +103,12 @@
         autoRunning = false;
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
+        clearInterval(pollTimer);
         gmSet(K_RUNNING, 'false');
         updateStartBtn();
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     }
 
-    // 中継URL経由でフルリロードを強制（?r= → クリーンURL の2段階）
     function goToAsin(asin) {
         const url = `https://keepa.com/?r=${Date.now()}#!product/5-${asin}`;
         console.log('[KPR] goToAsin(中継):', url);
@@ -256,6 +118,7 @@
     function goNext() {
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
+        clearInterval(pollTimer);
         const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
         const index = parseInt(gmGet(K_INDEX, '0')) + 1;
         console.log('[KPR] goNext:', index, '/', queue.length);
@@ -274,6 +137,7 @@
         handled = true;
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
+        clearInterval(pollTimer);
         console.log('[KPR] onAutoResult: price=', price);
 
         const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
@@ -304,95 +168,6 @@
         });
     }
 
-    // ===== Keepa API 直接呼び出し（GM_xmlhttpRequest経由・CORS回避）=====
-    function callKeepaAPI(asin) {
-        const token = gmGet('kpr_token', '');
-        if (!token) { console.log('[KPR] token未取得 - スキップ'); return; }
-        console.log('[KPR] API直接呼び出し:', asin);
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: `https://api.keepa.com/product?key=${token}&domain=5&asin=${asin}&stats=180&offers=20`,
-            timeout: 30000,
-            onload: res => {
-                // ページ遷移済みチェック
-                const curAsin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
-                if (curAsin !== asin || handled) return;
-                try {
-                    const data = JSON.parse(res.responseText);
-                    console.log('[KPR] API応答 tokensLeft=', data.tokensLeft,
-                        'products=', (data.products || []).length,
-                        'error=', data.error || '-');
-                    if (data.products && data.products.length) {
-                        handleKeepaData(data);
-                    } else {
-                        console.log('[KPR] API データなし raw=', res.responseText.slice(0, 200));
-                        onAutoResult(null, null);
-                    }
-                } catch (e) {
-                    console.log('[KPR] API解析エラー:', e.message, res.responseText.slice(0, 150));
-                    onAutoResult(null, null);
-                }
-            },
-            onerror:   () => { if (!handled) { console.log('[KPR] API接続エラー'); onAutoResult(null, null); } },
-            ontimeout: () => { if (!handled) { console.log('[KPR] APIタイムアウト'); onAutoResult(null, null); } },
-        });
-    }
-
-    // ===== IndexedDB keepa2Cache 直読み（フォールバック）=====
-    function tryReadIDB(asin) {
-        console.log('[KPR] IDB直読み試行:', asin);
-        try {
-            const req = unsafeWindow.indexedDB.open('keepa2Cache');
-            req.onsuccess = evt => {
-                const db = evt.target.result;
-                const stores = [...db.objectStoreNames];
-                console.log('[KPR] keepa2Cache stores:', stores);
-                if (!stores.length) { db.close(); return; }
-
-                stores.forEach(sn => {
-                    try {
-                        const tx = db.transaction(sn, 'readonly');
-                        const store = tx.objectStore(sn);
-
-                        // レコード件数とサンプルキーを確認
-                        const cnt = store.count();
-                        cnt.onsuccess = () => {
-                            console.log('[KPR] IDB store=' + sn + ' count=', cnt.result);
-                            if (cnt.result > 0) {
-                                // 最初の5件のキーを取得
-                                const kReq = store.getAllKeys(null, 5);
-                                kReq.onsuccess = () => console.log('[KPR] IDB sample keys:', kReq.result);
-                            }
-                        };
-
-                        // キー形式をいくつか試す（ASIN / 5-ASIN / marketplace:ASIN）
-                        ['', '5-', 'jp-', '5:'].forEach(prefix => {
-                            const key = prefix + asin;
-                            const getReq = store.get(key);
-                            getReq.onsuccess = () => {
-                                if (getReq.result) {
-                                    const r = getReq.result;
-                                    console.log('[KPR] IDB HIT key=' + key + ' store=' + sn + ':', JSON.stringify(r).slice(0, 500));
-                                    if (!handled) {
-                                        handleKeepaData(r.products ? r : { products: [r] });
-                                    }
-                                } else {
-                                    if (prefix === '') console.log('[KPR] IDB MISS store=' + sn + ' asin=' + asin);
-                                }
-                            };
-                        });
-                    } catch (e) {
-                        console.log('[KPR] IDB tx error store=' + sn + ':', e.message);
-                    }
-                });
-                setTimeout(() => { try { db.close(); } catch(e) {} }, 2000);
-            };
-            req.onerror = () => console.log('[KPR] keepa2Cache open error');
-        } catch (e) {
-            console.log('[KPR] tryReadIDB error:', e.message);
-        }
-    }
-
     function resumeAuto() {
         if (resumed) return;
         resumed = true;
@@ -410,27 +185,34 @@
         autoRunning = true;
         updateStartBtn();
 
-        let sec = 20;
+        let sec = 25;
         const updateCd = () => {
-            showAutoOverlay(cand, index, queue.length, null, `データ待機中... (${sec}秒)`);
+            showAutoOverlay(cand, index, queue.length, null, `チャート読み込み待機中... (${sec}秒)`);
             sec--;
         };
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
-        // 1.5秒後: トークン捕捉完了後に直接APIコール（メイン手段）
-        setTimeout(() => { if (!handled) callKeepaAPI(cand.asin); }, 1500);
-        // 5秒後: IDB直読みもフォールバックとして試みる
-        setTimeout(() => { if (!handled) tryReadIDB(cand.asin); }, 5000);
+        // 毎秒Flotチャートをポーリングして価格を取得
+        pollTimer = setInterval(() => {
+            if (handled) { clearInterval(pollTimer); return; }
+            const price = readFlotPrice();
+            if (price !== null) {
+                const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
+                console.log('[KPR] チャート価格取得:', asin, '→', price);
+                onAutoResult(asin, price);
+            }
+        }, 1000);
 
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
+            clearInterval(pollTimer);
             if (!handled) {
                 console.log('[KPR] タイムアウト → スキップ');
                 showAutoOverlay(cand, index, queue.length, null, '⚠ タイムアウト - スキップ');
                 setTimeout(() => goNext(), 1000);
             }
-        }, 20000);
+        }, 25000);
     }
 
     // ===== UI =====
@@ -488,54 +270,45 @@
 
     // ===== 手動モード =====
 
-    function showManualOverlay(asin, priceList, bestPrice) {
+    function showManualOverlay(asin, price) {
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
         const box = document.createElement('div');
         box.id = 'kpr-overlay';
         overlayEl = box;
         box.setAttribute('style', OV_STYLE);
-        const rows = priceList.map(f =>
-            `<div style="display:flex;justify-content:space-between;margin:4px 0;">
-                <span style="color:#aaa">${f.label}</span>
-                <span style="color:#fff;font-weight:bold;">¥${f.price.toLocaleString()}</span>
-            </div>`
-        ).join('') || '<div style="color:#e57373">価格データなし</div>';
         box.innerHTML = `
             <button id="kpr-close" style="position:absolute;top:8px;right:10px;background:none;border:none;color:#aaa;cursor:pointer;font-size:14px;">✕</button>
             <div style="font-size:11px;color:#aaa;margin-bottom:4px;">📦 プレミアム価格記録</div>
             <div style="font-size:11px;color:#aaa;margin-bottom:10px;">ASIN: ${asin}</div>
-            <div style="margin-bottom:12px;">${rows}</div>
-            ${bestPrice ? `
             <div style="margin-bottom:8px;">
-                <span style="color:#aaa;font-size:11px;">使用価格（編集可）</span><br>
-                <input id="kpr-price" type="number" value="${bestPrice}"
+                <span style="color:#aaa;font-size:11px;">チャート取得価格（編集可）</span><br>
+                <input id="kpr-price" type="number" value="${price}"
                     style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
                            background:#0d1921 !important;color:#fff !important;font-size:14px;margin-top:4px;box-sizing:border-box;">
             </div>
             <button id="kpr-save" style="width:100%;padding:9px;border:none;border-radius:8px;
                 background:#2e7d32 !important;color:#fff !important;font-size:13px;cursor:pointer;font-weight:bold;">📥 記録する</button>
-            <div id="kpr-status" style="margin-top:8px;font-size:11px;color:#aaa;text-align:center;min-height:16px;"></div>
-            ` : ''}`;
+            <div id="kpr-status" style="margin-top:8px;font-size:11px;color:#aaa;text-align:center;min-height:16px;"></div>`;
         const attach = () => {
             document.body.appendChild(box);
             document.getElementById('kpr-close').onclick = () => { box.remove(); overlayEl = null; };
             const saveBtn = document.getElementById('kpr-save');
             if (saveBtn) {
                 saveBtn.onclick = () => {
-                    const price = parseInt(document.getElementById('kpr-price').value);
-                    if (!price || price <= 0) { alert('価格を入力してください'); return; }
+                    const p = parseInt(document.getElementById('kpr-price').value);
+                    if (!p || p <= 0) { alert('価格を入力してください'); return; }
                     saveBtn.disabled = true; saveBtn.textContent = '送信中…';
                     GM_xmlhttpRequest({
                         method: 'POST', url: `${SERVER}/save-premium-price`,
                         headers: { 'Content-Type': 'application/json' },
-                        data: JSON.stringify({ asin, price }), timeout: 30000,
+                        data: JSON.stringify({ asin, price: p }), timeout: 30000,
                         onload: res => {
                             try {
                                 const r = JSON.parse(res.responseText);
                                 if (r.ok) {
                                     saveBtn.textContent = '✅ 記録完了'; saveBtn.style.background = '#1565c0';
                                     document.getElementById('kpr-status').textContent =
-                                        `${r.model}  pmax ¥${r.pmax.toLocaleString()}  手数料 ¥${r.fee.toLocaleString()}`;
+                                        `pmax ¥${r.pmax.toLocaleString()}  手数料 ¥${r.fee.toLocaleString()}`;
                                 } else { saveBtn.textContent = '⚠ エラー'; saveBtn.disabled = false; }
                             } catch (e) { saveBtn.textContent = '⚠ 通信エラー'; saveBtn.disabled = false; }
                         },
@@ -587,8 +360,25 @@
         console.log('[KPR] DOMContentLoaded URL=', location.href, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
         addStartButton();
         setInterval(keepAlive, 800);
+
         if (gmGet(K_RUNNING, 'false') === 'true') {
-            setTimeout(() => resumeAuto(), 2000);
+            // 自動モード: Keepaのチャート描画を待ってから開始
+            setTimeout(() => resumeAuto(), 3000);
+        } else if (unsafeWindow.location.hash.includes('#!product/')) {
+            // 手動モード: チャートが描画されたら価格オーバーレイを表示
+            let manualAttempts = 0;
+            const manualPoll = setInterval(() => {
+                manualAttempts++;
+                const price = readFlotPrice();
+                if (price !== null) {
+                    clearInterval(manualPoll);
+                    const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
+                    if (asin) showManualOverlay(asin, price);
+                } else if (manualAttempts > 30) {
+                    clearInterval(manualPoll);
+                    console.log('[KPR] 手動モード: 30秒でタイムアウト');
+                }
+            }, 1000);
         }
     });
 
