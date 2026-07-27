@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.21
+// @version      3.22
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -381,10 +381,21 @@
     }
 
     // ===== 初期化 =====
-    document.addEventListener('DOMContentLoaded', () => {
-        console.log('[KPR] DOMContentLoaded URL=', location.href, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
+
+    // keepAliveはDOMContentLoadedを待たずに即起動（extensionが再起動した時も機能させるため）
+    setInterval(keepAlive, 800);
+
+    function onReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn);
+        } else {
+            fn(); // 既にページ読み込み済み（extensionが再起動した場合）
+        }
+    }
+
+    onReady(() => {
+        console.log('[KPR] onReady URL=', location.href, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
         addStartButton();
-        setInterval(keepAlive, 800);
 
         // タブ復帰時の停止検知: autoRunningがfalse、またはハートビートが30秒以上古ければ再起動
         document.addEventListener('visibilitychange', () => {
@@ -418,8 +429,9 @@
         }
 
         if (gmGet(K_RUNNING, 'false') === 'true') {
-            // 自動モード: Keepaのチャート描画を待ってから開始
-            setTimeout(() => resumeAuto(), 1500);
+            // 自動モード: Keepaのチャート描画を待ってから開始（extension再起動時は即時）
+            const resumeDelay = document.readyState === 'loading' ? 1500 : 0;
+            setTimeout(() => resumeAuto(), resumeDelay);
 
             // マスターウォッチドッグ: 30秒ごとにハートビートを監視（90秒以上古ければリロード）
             setInterval(() => {
