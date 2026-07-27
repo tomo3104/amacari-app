@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.11
+// @version      3.12
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -53,7 +53,7 @@
             if (!$) return null;
             const canvas = document.querySelector('.flot-base');
             if (!canvas) return null;
-            const plot = $(canvas).data('plot');
+            const plot = $(canvas.parentElement).data('plot');
             if (!plot) return null;
             const allSeries = plot.getData();
             if (!allSeries || !allSeries.length) return null;
