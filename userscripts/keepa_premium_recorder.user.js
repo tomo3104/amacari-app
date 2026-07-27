@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.14
+// @version      3.15
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -47,23 +47,23 @@
     let overlayEl   = null;
 
     // ===== Flotチャートから価格を読み取る =====
-    let _debugOnce = true;
+    function keepaTsToDateStr(ts) {
+        const d = new Date((ts + 21564000) * 60000);
+        return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+    }
+
     function readFlotPrice() {
         try {
             const $ = unsafeWindow.jQuery || unsafeWindow.$;
-            if (_debugOnce) { console.log('[KPR] debug: $=', typeof $, 'jQuery=', typeof unsafeWindow.jQuery); }
-            if (!$) { if (_debugOnce) { _debugOnce = false; console.log('[KPR] debug: jQuery not found'); } return null; }
+            if (!$) return null;
             const canvas = document.querySelector('.flot-base');
-            if (_debugOnce) { console.log('[KPR] debug: canvas=', !!canvas); }
-            if (!canvas) { if (_debugOnce) { _debugOnce = false; } return null; }
+            if (!canvas) return null;
             const plot = $(canvas.parentElement).data('plot');
-            if (_debugOnce) { console.log('[KPR] debug: plot=', !!plot); }
-            if (!plot) { if (_debugOnce) { _debugOnce = false; } return null; }
+            if (!plot) return null;
             const allSeries = plot.getData();
-            if (_debugOnce) { console.log('[KPR] debug: series.length=', allSeries ? allSeries.length : 'null'); _debugOnce = false; }
             if (!allSeries || !allSeries.length) return null;
 
-            const prices = [];
+            const candidates = [];
             allSeries.forEach(series => {
                 if (!series.data || !series.data.length) return;
                 // ランク系列（Y軸2本目 or 値が極端に大きい）をスキップ
@@ -71,11 +71,15 @@
                 for (let j = series.data.length - 1; j >= 0; j--) {
                     if (!series.data[j]) continue;
                     const p = series.data[j][1];
-                    if (p > 0 && p < 5000000) { prices.push(p); break; }
+                    const ts = series.data[j][0];
+                    if (p > 0 && p < 5000000) { candidates.push({ price: p, ts }); break; }
                 }
             });
-            console.log('[KPR] Flot価格候補:', prices);
-            return prices.length ? Math.max(...prices) : null;
+            if (!candidates.length) return null;
+            console.log('[KPR] Flot価格候補:', candidates);
+            candidates.sort((a, b) => b.price - a.price);
+            const best = candidates[0];
+            return { price: best.price, date: keepaTsToDateStr(best.ts) };
         } catch (e) {
             console.log('[KPR] readFlotPrice例外:', e);
             return null;
@@ -139,25 +143,28 @@
         goToAsin(queue[index].asin);
     }
 
-    function onAutoResult(asin, price) {
+    function onAutoResult(asin, priceObj) {
         if (handled) return;
         handled = true;
         clearTimeout(autoTimer);
         clearInterval(cdTimer);
         clearInterval(pollTimer);
-        console.log('[KPR] onAutoResult: price=', price);
+
+        const price   = priceObj ? priceObj.price : null;
+        const dateStr = priceObj ? priceObj.date  : null;
+        console.log('[KPR] onAutoResult: price=', price, 'date=', dateStr);
 
         const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
         const index = parseInt(gmGet(K_INDEX, '0'));
         const cand  = queue[index] || {};
 
         if (!price) {
-            showAutoOverlay(cand, index, queue.length, null, '価格データなし - スキップ');
+            showAutoOverlay(cand, index, queue.length, null, null, '価格データなし - スキップ');
             setTimeout(() => goNext(), 1500);
             return;
         }
 
-        showAutoOverlay(cand, index, queue.length, price, '送信中...');
+        showAutoOverlay(cand, index, queue.length, price, dateStr, '送信中...');
         GM_xmlhttpRequest({
             method: 'POST', url: `${SERVER}/save-premium-price`,
             headers: { 'Content-Type': 'application/json' },
@@ -165,13 +172,13 @@
             onload: res => {
                 try {
                     const r = JSON.parse(res.responseText);
-                    if (r.ok) showAutoOverlay(cand, index, queue.length, price, `✅ 記録完了 pmax¥${r.pmax.toLocaleString()}`);
-                    else      showAutoOverlay(cand, index, queue.length, price, `⚠ ${r.error || 'エラー'}`);
-                } catch (e) { showAutoOverlay(cand, index, queue.length, price, '⚠ 通信エラー'); }
+                    if (r.ok) showAutoOverlay(cand, index, queue.length, price, dateStr, `✅ 記録完了 pmax¥${r.pmax.toLocaleString()}`);
+                    else      showAutoOverlay(cand, index, queue.length, price, dateStr, `⚠ ${r.error || 'エラー'}`);
+                } catch (e) { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ 通信エラー'); }
                 setTimeout(() => goNext(), 2000);
             },
-            onerror:   () => { showAutoOverlay(cand, index, queue.length, price, '⚠ サーバー未起動'); setTimeout(() => goNext(), 2000); },
-            ontimeout: () => { showAutoOverlay(cand, index, queue.length, price, '⚠ 送信タイムアウト'); setTimeout(() => goNext(), 2000); },
+            onerror:   () => { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ サーバー未起動'); setTimeout(() => goNext(), 2000); },
+            ontimeout: () => { showAutoOverlay(cand, index, queue.length, price, dateStr, '⚠ 送信タイムアウト'); setTimeout(() => goNext(), 2000); },
         });
     }
 
@@ -203,11 +210,11 @@
         // 毎秒Flotチャートをポーリングして価格を取得
         pollTimer = setInterval(() => {
             if (handled) { clearInterval(pollTimer); return; }
-            const price = readFlotPrice();
-            if (price !== null) {
+            const result = readFlotPrice();
+            if (result !== null) {
                 const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
-                console.log('[KPR] チャート価格取得:', asin, '→', price);
-                onAutoResult(asin, price);
+                console.log('[KPR] チャート価格取得:', asin, '→', result.price, result.date);
+                onAutoResult(asin, result);
             }
         }, 1000);
 
@@ -242,14 +249,15 @@
         return el;
     }
 
-    function showAutoOverlay(cand, index, total, price, status) {
+    function showAutoOverlay(cand, index, total, price, dateStr, status) {
         const el = getOrCreate('kpr-overlay');
         el.setAttribute('style', OV_STYLE);
         el.innerHTML = `
             <div style="font-size:11px;color:#aaa;margin-bottom:2px;">🤖 自動取得中  [${index + 1} / ${total}]</div>
             <div style="font-size:11px;color:#aaa;">型番: <b style="color:#ddd">${cand.model || '-'}</b></div>
             <div style="font-size:11px;color:#aaa;margin-bottom:8px;">ASIN: ${cand.asin || '-'}</div>
-            ${price ? `<div style="color:#fff;font-weight:bold;font-size:18px;margin-bottom:6px;">¥${price.toLocaleString()}</div>` : ''}
+            ${price ? `<div style="color:#fff;font-weight:bold;font-size:18px;margin-bottom:2px;">¥${price.toLocaleString()}</div>` : ''}
+            ${dateStr ? `<div style="color:#80cbc4;font-size:10px;margin-bottom:6px;">${dateStr}時点</div>` : ''}
             <div style="color:#90caf9;font-size:12px;margin-bottom:12px;">${status}</div>
             <button id="kpr-stop" style="padding:6px 14px;border:none;border-radius:6px;
                 background:#c62828 !important;color:#fff !important;font-size:12px;cursor:pointer;font-weight:bold;">■ 停止</button>`;
@@ -277,7 +285,7 @@
 
     // ===== 手動モード =====
 
-    function showManualOverlay(asin, price) {
+    function showManualOverlay(asin, price, dateStr) {
         if (overlayEl) { overlayEl.remove(); overlayEl = null; }
         const box = document.createElement('div');
         box.id = 'kpr-overlay';
@@ -288,7 +296,7 @@
             <div style="font-size:11px;color:#aaa;margin-bottom:4px;">📦 プレミアム価格記録</div>
             <div style="font-size:11px;color:#aaa;margin-bottom:10px;">ASIN: ${asin}</div>
             <div style="margin-bottom:8px;">
-                <span style="color:#aaa;font-size:11px;">チャート取得価格（編集可）</span><br>
+                <span style="color:#aaa;font-size:11px;">チャート取得価格（編集可）${dateStr ? `<span style="color:#80cbc4;margin-left:6px;">${dateStr}時点</span>` : ''}</span><br>
                 <input id="kpr-price" type="number" value="${price}"
                     style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
                            background:#0d1921 !important;color:#fff !important;font-size:14px;margin-top:4px;box-sizing:border-box;">
@@ -376,11 +384,11 @@
             let manualAttempts = 0;
             const manualPoll = setInterval(() => {
                 manualAttempts++;
-                const price = readFlotPrice();
-                if (price !== null) {
+                const result = readFlotPrice();
+                if (result !== null) {
                     clearInterval(manualPoll);
                     const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
-                    if (asin) showManualOverlay(asin, price);
+                    if (asin) showManualOverlay(asin, result.price, result.date);
                 } else if (manualAttempts > 30) {
                     clearInterval(manualPoll);
                     console.log('[KPR] 手動モード: 30秒でタイムアウト');
