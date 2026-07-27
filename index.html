@@ -9,7 +9,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <header class="topbar">
@@ -27,7 +27,8 @@
   <div class="toolbar">
     <label>並び替え：
       <select id="sort-select">
-        <option value="new" selected>新着順</option>
+        <option value="rank" selected>ランク順</option>
+        <option value="new">新着順</option>
         <option value="score">スコア順</option>
         <option value="profit">利益順</option>
         <option value="roi">ROI順</option>
@@ -159,6 +160,83 @@
   </div>
 </div>
 
-<script src="app.js?v=20"></script>
+<!-- メルカリ画像プレビューモーダル -->
+<div id="mercari-img-modal" class="modal hidden">
+  <div id="mercari-img-overlay"></div>
+  <div id="mercari-img-container">
+    <div id="mercari-img-header">
+      <span id="mercari-img-meta"></span>
+      <button id="mercari-img-close">✕</button>
+    </div>
+    <div id="mercari-img-body">
+      <p id="mercari-img-loading">読み込み中…</p>
+      <div id="mercari-img-gallery"></div>
+      <p id="mercari-img-desc"></p>
+    </div>
+  </div>
+</div>
+
+<style>
+/* 激熱カード（実利益率30%以上） */
+.card--hot {
+  border: 2px solid #ff8c00;
+  box-shadow: 0 0 0 2px #ff8c00, 0 6px 24px rgba(0,0,0,.2);
+}
+.hot-badge {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 10;
+  background: linear-gradient(135deg, #ff6000, #ffb300);
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(255,100,0,.45);
+  pointer-events: none;
+}
+.card--hot .highlight-margin {
+  background: #fff3e0;
+  color: #e65100;
+}
+.card--hot .highlight-margin .value {
+  font-size: 22px;
+}
+
+/* 下スワイプ：後回しスタックが空のときのバウンス */
+@keyframes bounce-down {
+  0%   { transform: translateY(0); }
+  30%  { transform: translateY(28px); }
+  60%  { transform: translateY(-8px); }
+  80%  { transform: translateY(10px); }
+  100% { transform: translateY(0); }
+}
+.card--bounce { animation: bounce-down 0.4s ease forwards; }
+
+#mercari-img-modal { position:fixed; inset:0; z-index:2000; display:flex; align-items:flex-end; }
+#mercari-img-modal.hidden { display:none; }
+#mercari-img-overlay { position:absolute; inset:0; background:rgba(0,0,0,.6); }
+#mercari-img-container {
+  position:relative; width:100%; max-height:90vh;
+  background:#1b2733; border-radius:16px 16px 0 0;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+#mercari-img-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 16px 8px; flex-shrink:0;
+}
+#mercari-img-meta { font-size:.8rem; color:#aaa; }
+#mercari-img-close {
+  background:none; border:none; color:#fff; font-size:1.2rem;
+  padding:4px 8px; cursor:pointer;
+}
+#mercari-img-body { overflow-y:auto; padding:0 12px 24px; -webkit-overflow-scrolling:touch; }
+#mercari-img-loading { color:#aaa; text-align:center; padding:24px 0; }
+#mercari-img-gallery { display:flex; flex-direction:column; gap:10px; }
+#mercari-img-gallery img { width:100%; border-radius:8px; display:block; }
+#mercari-img-desc { font-size:.78rem; color:#aaa; padding:8px 4px 0; white-space:pre-wrap; }
+</style>
+
+<script src="app.js?v=23"></script>
 </body>
 </html>

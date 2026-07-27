@@ -17,7 +17,7 @@ function gasPost(action, body) {
 
 const state = {
   cards: [],
-  sort: "new",
+  sort: "rank",
   lastRejected: null,   // 巻き戻し用：直前に却下したカード
   pendingReject: null,  // 理由選択待ちのカード
   pendingRejectSource: "amacari", // 理由選択待ちカードの種類："amacari" or "furima"
@@ -66,6 +66,34 @@ const els = {
   otherSubmit: document.getElementById("reason-other-submit"),
 };
 
+// ---------- 位置の保存・復元（localStorage） ----------
+
+const POS_KEY = "amacari_pos";
+
+function savePosition() {
+  if (state.cards.length === 0) {
+    localStorage.removeItem(POS_KEY);
+    return;
+  }
+  localStorage.setItem(POS_KEY, JSON.stringify({
+    row: state.cards[0].row,
+    sort: state.sort,
+    total: state.totalCount,
+  }));
+}
+
+function restorePosition() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(POS_KEY) || "null");
+    if (!saved || saved.sort !== state.sort) return;
+    const idx = state.cards.findIndex(c => c.row === saved.row);
+    if (idx > 0) {
+      state.cards = [...state.cards.slice(idx), ...state.cards.slice(0, idx)];
+      state.totalCount = Math.max(saved.total, state.cards.length);
+    }
+  } catch (_) {}
+}
+
 // ---------- データ取得 ----------
 
 async function loadCards() {
@@ -77,6 +105,7 @@ async function loadCards() {
     state.cards = data.cards || [];
     state.skipStack = [];
     state.totalCount = state.cards.length;
+    restorePosition();
     renderStack();
   } catch (e) {
     els.empty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
@@ -170,6 +199,8 @@ function renderStack() {
     if (depthFromTop === 0) attachSwipe(el, card);
     els.stack.appendChild(el);
   });
+
+  savePosition();
 }
 
 function pastJudgmentClass(judgment) {
@@ -186,13 +217,15 @@ function formatPastJudgment(card) {
 
 function buildCardEl(card) {
   const el = document.createElement("div");
-  el.className = "card";
+  const isHot = Number(card.real_margin) >= 30;
+  el.className = isHot ? "card card--hot" : "card";
 
   const thumb = card.image_url
     ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
     : `<div class="card-thumb"></div>`;
 
   el.innerHTML = `
+    ${isHot ? '<div class="hot-badge">🔥 激熱</div>' : ''}
     <div class="swipe-flag flag-like">仕入れ対象</div>
     <div class="swipe-flag flag-nope">却下</div>
     <div class="swipe-flag flag-skip">あとで</div>
@@ -232,6 +265,7 @@ function buildCardEl(card) {
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
+        <button class="link-btn link-mercari-img no-swipe" data-url="${escapeAttr(card.mercari_url)}" aria-label="メルカリ画像">🖼</button>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix" data-row="${card.row}">ASIN修正</button>
@@ -396,6 +430,65 @@ els.stack.addEventListener("click", e => {
   img.src = img.src.split("&t=")[0] + "&t=" + Date.now();
 });
 
+// ---------- メルカリ画像プレビュー ----------
+
+const mercariImgModal    = document.getElementById("mercari-img-modal");
+const mercariImgOverlay  = document.getElementById("mercari-img-overlay");
+const mercariImgClose    = document.getElementById("mercari-img-close");
+const mercariImgLoading  = document.getElementById("mercari-img-loading");
+const mercariImgGallery  = document.getElementById("mercari-img-gallery");
+const mercariImgDesc     = document.getElementById("mercari-img-desc");
+const mercariImgMeta     = document.getElementById("mercari-img-meta");
+
+function openMercariImgModal(mercariUrl) {
+  mercariImgModal.classList.remove("hidden");
+  mercariImgLoading.style.display = "block";
+  mercariImgGallery.innerHTML = "";
+  mercariImgDesc.textContent = "";
+  mercariImgMeta.textContent = "";
+
+  fetch(gasUrl("mercariImages", { url: mercariUrl }))
+    .then(r => r.json())
+    .then(data => {
+      mercariImgLoading.style.display = "none";
+      if (data.error) {
+        mercariImgGallery.innerHTML = `<p style="color:#e57373;padding:16px 0">${escapeHtml(data.error)}</p>`;
+        return;
+      }
+      if (data.condition) mercariImgMeta.textContent = `状態：${data.condition}`;
+      if (data.images && data.images.length > 0) {
+        data.images.forEach(url => {
+          const img = document.createElement("img");
+          img.src = url;
+          img.loading = "lazy";
+          mercariImgGallery.appendChild(img);
+        });
+      } else {
+        mercariImgGallery.innerHTML = `<p style="color:#aaa;padding:16px 0">画像が見つかりませんでした</p>`;
+      }
+      if (data.description) mercariImgDesc.textContent = data.description;
+    })
+    .catch(() => {
+      mercariImgLoading.style.display = "none";
+      mercariImgGallery.innerHTML = `<p style="color:#e57373;padding:16px 0">取得に失敗しました</p>`;
+    });
+}
+
+function closeMercariImgModal() {
+  mercariImgModal.classList.add("hidden");
+  mercariImgGallery.innerHTML = "";
+}
+
+mercariImgClose.addEventListener("click", closeMercariImgModal);
+mercariImgOverlay.addEventListener("click", closeMercariImgModal);
+
+els.stack.addEventListener("click", e => {
+  const btn = e.target.closest(".link-mercari-img");
+  if (!btn) return;
+  e.stopPropagation();
+  openMercariImgModal(btn.dataset.url);
+});
+
 // ---------- コピー操作 ----------
 
 els.stack.addEventListener("click", async e => {
@@ -469,7 +562,25 @@ function attachSwipe(el, card, source) {
       if (dx < 0) state.swipeBlocked = true; // 左スワイプ確定→理由選択まで次をブロック
       finishSwipe(el, card, dx > 0 ? "right" : "left", source);
     } else if (absY > absX && absY > threshold) {
-      finishVerticalSwipe(el, card, dy < 0 ? "up" : "down", source);
+      const dir = dy < 0 ? "up" : "down";
+      if (dir === "down") {
+        const skipKey = source === "furima" ? "furimaSkipStack" : "skipStack";
+        if (state[skipKey].length === 0) {
+          // 後回しスタックが空 → キューの末尾カードを先頭に循環
+          const cardsKey = source === "furima" ? "furimaCards" : "cards";
+          if (state[cardsKey].length <= 1) {
+            // カードが1枚以下 → バウンスだけ
+            el.style.transform = "";
+            flags.forEach(f => f.style.opacity = 0);
+            el.classList.add("card--bounce");
+            el.addEventListener("animationend", () => el.classList.remove("card--bounce"), { once: true });
+            return;
+          }
+          finishVerticalSwipe(el, card, "down-loop", source);
+          return;
+        }
+      }
+      finishVerticalSwipe(el, card, dir, source);
     } else {
       el.style.transform = "";
       flags.forEach(f => f.style.opacity = 0);
@@ -510,12 +621,12 @@ function finishSwipe(el, card, direction, source) {
   }, 220);
 }
 
-// 上スワイプ＝後回し（末尾に送る）／下スワイプ＝直前に後回しにした1件を呼び戻す
+// 上スワイプ＝後回し（末尾に送る）／下スワイプ＝後回しを呼び戻す or 末尾から循環
 // シートへの書き込みは行わず、画面内の表示順だけを変える
 function finishVerticalSwipe(el, card, direction, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
-  const flyY = direction === "up" ? -window.innerHeight : window.innerHeight;
+  const flyY = (direction === "up" || direction === "down-loop") ? -window.innerHeight : window.innerHeight;
   el.style.transform = `translateY(${flyY}px)`;
   el.style.opacity = "0";
 
@@ -527,6 +638,11 @@ function finishVerticalSwipe(el, card, direction, source) {
       state[cardsKey] = state[cardsKey].filter(c => c.row !== card.row);
       state[cardsKey].push(card);
       state[skipKey].push(card);
+    } else if (direction === "down-loop") {
+      // 末尾カードを先頭に持ってくる（循環）
+      const last = state[cardsKey][state[cardsKey].length - 1];
+      state[cardsKey] = state[cardsKey].slice(0, -1);
+      state[cardsKey].unshift(last);
     } else {
       const prev = state[skipKey].pop();
       if (prev) {
