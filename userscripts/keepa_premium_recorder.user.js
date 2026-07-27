@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.12
+// @version      3.13
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -47,15 +47,20 @@
     let overlayEl   = null;
 
     // ===== Flotチャートから価格を読み取る =====
+    let _debugOnce = true;
     function readFlotPrice() {
         try {
             const $ = unsafeWindow.jQuery || unsafeWindow.$;
-            if (!$) return null;
+            if (_debugOnce) { console.log('[KPR] debug: $=', typeof $, 'jQuery=', typeof unsafeWindow.jQuery); }
+            if (!$) { if (_debugOnce) { _debugOnce = false; console.log('[KPR] debug: jQuery not found'); } return null; }
             const canvas = document.querySelector('.flot-base');
-            if (!canvas) return null;
+            if (_debugOnce) { console.log('[KPR] debug: canvas=', !!canvas); }
+            if (!canvas) { if (_debugOnce) { _debugOnce = false; } return null; }
             const plot = $(canvas.parentElement).data('plot');
-            if (!plot) return null;
+            if (_debugOnce) { console.log('[KPR] debug: plot=', !!plot); }
+            if (!plot) { if (_debugOnce) { _debugOnce = false; } return null; }
             const allSeries = plot.getData();
+            if (_debugOnce) { console.log('[KPR] debug: series.length=', allSeries ? allSeries.length : 'null'); _debugOnce = false; }
             if (!allSeries || !allSeries.length) return null;
 
             const prices = [];
@@ -71,6 +76,7 @@
             console.log('[KPR] Flot価格候補:', prices);
             return prices.length ? Math.max(...prices) : null;
         } catch (e) {
+            console.log('[KPR] readFlotPrice例外:', e);
             return null;
         }
     }
