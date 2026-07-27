@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.15
+// @version      3.16
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -48,7 +48,9 @@
 
     // ===== Flotチャートから価格を読み取る =====
     function keepaTsToDateStr(ts) {
-        const d = new Date((ts + 21564000) * 60000);
+        // Flot X軸はUnix ms。1e10より小さければKeepaミリ分換算
+        const ms = ts > 1e10 ? ts : (ts + 21564000) * 60000;
+        const d = new Date(ms);
         return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
     }
 
