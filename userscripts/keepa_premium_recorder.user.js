@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.17
+// @version      3.18
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -19,8 +19,9 @@
 
     const SERVER    = 'http://localhost:8766';
     const K_QUEUE   = 'kpr_queue';
-    const K_INDEX   = 'kpr_index';
-    const K_RUNNING = 'kpr_running';
+    const K_INDEX     = 'kpr_index';
+    const K_RUNNING   = 'kpr_running';
+    const K_HEARTBEAT = 'kpr_heartbeat';
 
     const gmGet = (k, d) => GM_getValue(k, d);
     const gmSet = (k, v) => GM_setValue(k, v);
@@ -125,6 +126,7 @@
     }
 
     function goToAsin(asin) {
+        gmSet(K_HEARTBEAT, String(Date.now()));
         const url = `https://keepa.com/?r=${Date.now()}#!product/5-${asin}`;
         console.log('[KPR] goToAsin(中継):', url);
         unsafeWindow.location.href = url;
@@ -379,6 +381,29 @@
         console.log('[KPR] DOMContentLoaded URL=', location.href, 'K_RUNNING=', gmGet(K_RUNNING, 'false'));
         addStartButton();
         setInterval(keepAlive, 800);
+
+        // タブ復帰時の停止検知: 自動実行中なのにautoRunningがfalseなら再起動
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' &&
+                gmGet(K_RUNNING, 'false') === 'true' && !autoRunning) {
+                console.log('[KPR] タブ復帰 → 再起動');
+                location.reload();
+            }
+        });
+
+        // 起動時チェック: ハートビートが120秒以上古ければ何らかの理由で止まった
+        if (gmGet(K_RUNNING, 'false') === 'true') {
+            const hb = parseInt(gmGet(K_HEARTBEAT, '0'));
+            if (hb > 0 && Date.now() - hb > 120000 && !unsafeWindow.location.search.includes('r=')) {
+                console.log('[KPR] ハートビート古い → 再起動');
+                const queue = JSON.parse(gmGet(K_QUEUE, '[]'));
+                const index = parseInt(gmGet(K_INDEX, '0'));
+                if (queue.length && index < queue.length) {
+                    goToAsin(queue[index].asin);
+                    return;
+                }
+            }
+        }
 
         if (gmGet(K_RUNNING, 'false') === 'true') {
             // 自動モード: Keepaのチャート描画を待ってから開始
