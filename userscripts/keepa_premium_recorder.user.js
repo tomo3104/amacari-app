@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.13
+// @version      3.14
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @run-at       document-start
@@ -69,6 +69,7 @@
                 // ランク系列（Y軸2本目 or 値が極端に大きい）をスキップ
                 if (series.yaxis && series.yaxis.n === 2) return;
                 for (let j = series.data.length - 1; j >= 0; j--) {
+                    if (!series.data[j]) continue;
                     const p = series.data[j][1];
                     if (p > 0 && p < 5000000) { prices.push(p); break; }
                 }
