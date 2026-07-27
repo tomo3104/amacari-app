@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.19
+// @version      3.20
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -203,6 +203,7 @@
 
         const cand = queue[index];
         autoRunning = true;
+        gmSet(K_HEARTBEAT, String(Date.now()));
         updateStartBtn();
 
         let sec = 15;
@@ -408,6 +409,16 @@
         if (gmGet(K_RUNNING, 'false') === 'true') {
             // 自動モード: Keepaのチャート描画を待ってから開始
             setTimeout(() => resumeAuto(), 1500);
+
+            // マスターウォッチドッグ: 60秒ごとにハートビートを監視
+            setInterval(() => {
+                if (gmGet(K_RUNNING, 'false') !== 'true') return;
+                const hb = parseInt(gmGet(K_HEARTBEAT, '0'));
+                if (hb > 0 && Date.now() - hb > 180000) {
+                    console.log('[KPR] マスターウォッチドッグ発動 → リロード');
+                    location.reload();
+                }
+            }, 60000);
         } else if (unsafeWindow.location.hash.includes('#!product/')) {
             // 手動モード: チャートが描画されたら価格オーバーレイを表示
             let manualAttempts = 0;
