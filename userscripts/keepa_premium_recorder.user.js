@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.20
+// @version      3.21
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -215,8 +215,11 @@
         cdTimer = setInterval(updateCd, 1000);
 
         // 500ms間隔でFlotチャートをポーリングして価格を取得
+        let _pollCount = 0;
         pollTimer = setInterval(() => {
             if (handled) { clearInterval(pollTimer); return; }
+            _pollCount++;
+            if (_pollCount % 10 === 0) gmSet(K_HEARTBEAT, String(Date.now())); // 5秒ごとにハートビート更新
             const result = readFlotPrice();
             if (result !== null) {
                 const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
@@ -383,12 +386,20 @@
         addStartButton();
         setInterval(keepAlive, 800);
 
-        // タブ復帰時の停止検知: 自動実行中なのにautoRunningがfalseなら再起動
+        // タブ復帰時の停止検知: autoRunningがfalse、またはハートビートが30秒以上古ければ再起動
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' &&
-                gmGet(K_RUNNING, 'false') === 'true' && !autoRunning) {
-                console.log('[KPR] タブ復帰 → 再起動');
-                location.reload();
+                gmGet(K_RUNNING, 'false') === 'true') {
+                if (!autoRunning) {
+                    console.log('[KPR] タブ復帰 → autoRunning=false → 再起動');
+                    location.reload();
+                    return;
+                }
+                const hb = parseInt(gmGet(K_HEARTBEAT, '0'));
+                if (hb > 0 && Date.now() - hb > 30000) {
+                    console.log('[KPR] タブ復帰 → ハートビート古い(' + Math.round((Date.now() - hb) / 1000) + '秒) → 再起動');
+                    location.reload();
+                }
             }
         });
 
@@ -410,15 +421,15 @@
             // 自動モード: Keepaのチャート描画を待ってから開始
             setTimeout(() => resumeAuto(), 1500);
 
-            // マスターウォッチドッグ: 60秒ごとにハートビートを監視
+            // マスターウォッチドッグ: 30秒ごとにハートビートを監視（90秒以上古ければリロード）
             setInterval(() => {
                 if (gmGet(K_RUNNING, 'false') !== 'true') return;
                 const hb = parseInt(gmGet(K_HEARTBEAT, '0'));
-                if (hb > 0 && Date.now() - hb > 180000) {
+                if (hb > 0 && Date.now() - hb > 90000) {
                     console.log('[KPR] マスターウォッチドッグ発動 → リロード');
                     location.reload();
                 }
-            }, 60000);
+            }, 30000);
         } else if (unsafeWindow.location.hash.includes('#!product/')) {
             // 手動モード: チャートが描画されたら価格オーバーレイを表示
             let manualAttempts = 0;
