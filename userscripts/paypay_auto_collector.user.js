@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  PayPayフリマ売り切れ商品を全メーカー自動収集 → 型番抽出（8765サーバー連携）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -100,7 +100,7 @@
 
             const pageItems = data.items || [];
             pageItems.forEach(item => {
-                if (item.id && item.title) {
+                if (item.id && item.title && item.condition === 'new') {
                     allItems[item.id] = { name: item.title, price: String(item.price || 0) };
                 }
             });
