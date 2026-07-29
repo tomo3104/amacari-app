@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -56,8 +56,8 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ===== PayPayフリマ API fetch（出品中・新品・1000〜20000円）=====
-    async function fetchPayPayItems(mfrName) {
+    // ===== PayPayフリマ API fetch（出品中・新品・価格帯はmfrURLから取得）=====
+    async function fetchPayPayItems(mfrName, priceMin, priceMax) {
         const allItems = {};
         let offset = 0;
         let totalAvailable = null;
@@ -65,8 +65,8 @@
         for (let page = 0; page < MAX_PAGE; page++) {
             const params = new URLSearchParams({
                 query:    mfrName,
-                minPrice: '1000',
-                maxPrice: '20000',
+                minPrice: String(priceMin),
+                maxPrice: String(priceMax),
                 results:  '100',
                 offset:   String(offset),
             });
@@ -198,10 +198,19 @@
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
             const mfr = filtered[i];
-            updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} fetch中...`);
+            // mfr.urlからprice_min/price_maxを取得（なければデフォルト値）
+            let priceMin = 1000, priceMax = 20000;
+            try {
+                if (mfr.url) {
+                    const sp = new URLSearchParams(new URL(mfr.url).search);
+                    if (sp.get('price_min')) priceMin = Number(sp.get('price_min'));
+                    if (sp.get('price_max')) priceMax = Number(sp.get('price_max'));
+                }
+            } catch(_) {}
+            updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ¥${priceMin}〜¥${priceMax} fetch中...`);
 
             try {
-                const fetched = await fetchPayPayItems(mfr.name);
+                const fetched = await fetchPayPayItems(mfr.name, priceMin, priceMax);
                 errors = 0;
                 const itemList = Object.values(fetched);
                 totalCollected += itemList.length;

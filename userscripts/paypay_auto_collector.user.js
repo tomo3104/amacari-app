@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  PayPayフリマ売り切れ商品を全メーカー自動収集 → 型番抽出（8765サーバー連携）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -72,8 +72,8 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ===== PayPayフリマ API fetch（売り切れ・新品・1000〜20000円）=====
-    async function fetchPayPayItems(mfrName) {
+    // ===== PayPayフリマ API fetch（売り切れ・新品・価格帯はcrawl_urlから取得）=====
+    async function fetchPayPayItems(mfrName, priceMin, priceMax) {
         const allItems = {};
         let offset = 0;
         let totalAvailable = null;
@@ -82,8 +82,8 @@
             const params = new URLSearchParams({
                 query:    mfrName,
                 sold:     '1',
-                minPrice: '1000',
-                maxPrice: '20000',
+                minPrice: String(priceMin),
+                maxPrice: String(priceMax),
                 results:  '100',
                 offset:   String(offset),
             });
@@ -141,10 +141,20 @@
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
             const mfr = filtered[i];
-            updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' 収集中...');
+            // crawl_url（F列）からprice_min/price_maxを取得（なければデフォルト値）
+            let priceMin = 1000, priceMax = 20000;
+            try {
+                const refUrl = mfr.crawl_url || mfr.url || '';
+                if (refUrl) {
+                    const sp = new URLSearchParams(new URL(refUrl).search);
+                    if (sp.get('price_min')) priceMin = Number(sp.get('price_min'));
+                    if (sp.get('price_max')) priceMax = Number(sp.get('price_max'));
+                }
+            } catch(_) {}
+            updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ¥' + priceMin + '〜¥' + priceMax + ' 収集中...');
 
             try {
-                const fetched = await fetchPayPayItems(mfr.name);
+                const fetched = await fetchPayPayItems(mfr.name, priceMin, priceMax);
                 errors = 0;
                 Object.assign(allItems, fetched);
                 const cnt   = Object.keys(fetched).length;
