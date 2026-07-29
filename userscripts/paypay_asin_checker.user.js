@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -84,6 +84,7 @@
             const pageItems = data.items || [];
             pageItems.forEach(item => {
                 if (!item.id || !item.title || item.price == null) return;
+                if (item.itemStatus && item.itemStatus !== 'OPEN') return; // 売り切れ除外（APIフィルタ非機能のためクライアント側で対処）
                 if (item.condition !== 'new') return;
                 if (item.isBulkPurchaseItem) return;
                 if (EXCLUDE_KW.some(kw => item.title.includes(kw))) return;
