@@ -217,7 +217,7 @@ function formatPastJudgment(card) {
 
 function buildCardEl(card) {
   const el = document.createElement("div");
-  const isHot = Number(card.real_margin) >= 30;
+  const isHot = Number(card.real_margin) >= 50;
   el.className = isHot ? "card card--hot" : "card";
 
   const thumb = card.image_url
@@ -265,7 +265,6 @@ function buildCardEl(card) {
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
-        <button class="link-btn link-mercari-img no-swipe" data-url="${escapeAttr(card.mercari_url)}" aria-label="メルカリ画像">🖼</button>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix" data-row="${card.row}">ASIN修正</button>
@@ -430,64 +429,6 @@ els.stack.addEventListener("click", e => {
   img.src = img.src.split("&t=")[0] + "&t=" + Date.now();
 });
 
-// ---------- メルカリ画像プレビュー ----------
-
-const mercariImgModal    = document.getElementById("mercari-img-modal");
-const mercariImgOverlay  = document.getElementById("mercari-img-overlay");
-const mercariImgClose    = document.getElementById("mercari-img-close");
-const mercariImgLoading  = document.getElementById("mercari-img-loading");
-const mercariImgGallery  = document.getElementById("mercari-img-gallery");
-const mercariImgDesc     = document.getElementById("mercari-img-desc");
-const mercariImgMeta     = document.getElementById("mercari-img-meta");
-
-function openMercariImgModal(mercariUrl) {
-  mercariImgModal.classList.remove("hidden");
-  mercariImgLoading.style.display = "block";
-  mercariImgGallery.innerHTML = "";
-  mercariImgDesc.textContent = "";
-  mercariImgMeta.textContent = "";
-
-  fetch(gasUrl("mercariImages", { url: mercariUrl }))
-    .then(r => r.json())
-    .then(data => {
-      mercariImgLoading.style.display = "none";
-      if (data.error) {
-        mercariImgGallery.innerHTML = `<p style="color:#e57373;padding:16px 0">${escapeHtml(data.error)}</p>`;
-        return;
-      }
-      if (data.condition) mercariImgMeta.textContent = `状態：${data.condition}`;
-      if (data.images && data.images.length > 0) {
-        data.images.forEach(url => {
-          const img = document.createElement("img");
-          img.src = url;
-          img.loading = "lazy";
-          mercariImgGallery.appendChild(img);
-        });
-      } else {
-        mercariImgGallery.innerHTML = `<p style="color:#aaa;padding:16px 0">画像が見つかりませんでした</p>`;
-      }
-      if (data.description) mercariImgDesc.textContent = data.description;
-    })
-    .catch(() => {
-      mercariImgLoading.style.display = "none";
-      mercariImgGallery.innerHTML = `<p style="color:#e57373;padding:16px 0">取得に失敗しました</p>`;
-    });
-}
-
-function closeMercariImgModal() {
-  mercariImgModal.classList.add("hidden");
-  mercariImgGallery.innerHTML = "";
-}
-
-mercariImgClose.addEventListener("click", closeMercariImgModal);
-mercariImgOverlay.addEventListener("click", closeMercariImgModal);
-
-els.stack.addEventListener("click", e => {
-  const btn = e.target.closest(".link-mercari-img");
-  if (!btn) return;
-  e.stopPropagation();
-  openMercariImgModal(btn.dataset.url);
-});
 
 // ---------- コピー操作 ----------
 
