@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.8
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバー＆ブラウザ両方にログ表示）
+// @version      5.9
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -205,11 +205,12 @@
                 const total = Object.keys(allItems).length;
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
-                // サーバーに進捗通知
+                // サーバーに進捗通知（新規型番候補カウント用にitemsも送る）
+                const itemsForLog = Object.values(fetched).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
                 GM_xmlhttpRequest({
                     method: 'POST', url: 'http://localhost:8765/log-progress',
                     headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ index: i+1, total_mfr: filtered.length, name: mfr.name, count: cnt, cumulative: total }),
+                    data: JSON.stringify({ index: i+1, total_mfr: filtered.length, name: mfr.name, count: cnt, cumulative: total, items: itemsForLog }),
                 });
                 await sleep(300);
             } catch(e) {
