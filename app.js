@@ -264,7 +264,7 @@ function buildCardEl(card) {
       </div>
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
-        <a class="link-btn link-mercari" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">メルカリ</a>
+        <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix" data-row="${card.row}">ASIN修正</button>
