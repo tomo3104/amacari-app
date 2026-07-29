@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -189,9 +189,10 @@
     // ===== クローラーリサーチ本体 =====
     async function runBatchFetch(mfrs, selected) {
         const targets  = selected.map(s => s.toUpperCase());
-        const filtered = targets.includes('ALL')
+        const filtered = (targets.includes('ALL')
             ? mfrs
-            : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
+            : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()))
+        ).filter(m => !(m.url || '').includes('category_id')); // カテゴリ検索行はPPフリマ非対応のためスキップ
         if (filtered.length === 0) { updateStatus('対象なし'); return; }
 
         running = true;
