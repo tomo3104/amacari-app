@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.6
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・/collect-itemsでインライン処理）
+// @version      5.7
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・メーカーごとログパネル表示）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -34,6 +34,29 @@
         background:rgba(0,0,0,0.78); color:#fff; padding:6px 14px;
         border-radius:6px; font-size:13px; display:none; max-width:280px;
     `;
+
+    // ログパネル（メーカーごとの結果を蓄積表示）
+    const logPanel = document.createElement('div');
+    logPanel.style.cssText = `
+        position:fixed; bottom:120px; right:20px; z-index:99998;
+        width:320px; max-height:320px; overflow-y:auto;
+        background:rgba(0,0,0,0.88); color:#d0d0d0; padding:8px 12px;
+        border-radius:8px; font-size:12px; font-family:monospace;
+        display:none; line-height:1.7; box-shadow:0 2px 10px rgba(0,0,0,0.4);
+    `;
+    document.body.appendChild(logPanel);
+
+    function addLog(msg, color) {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        if (color) line.style.color = color;
+        logPanel.appendChild(line);
+        logPanel.scrollTop = logPanel.scrollHeight;
+        logPanel.style.display = 'block';
+    }
+    function clearLog() {
+        logPanel.innerHTML = '';
+    }
     const startBtn = document.createElement('button');
     startBtn.textContent = 'コレクト';
     startBtn.style.cssText = `
@@ -154,6 +177,9 @@
 
         running = true;
         setRunningUI(true);
+        clearLog();
+        addLog(`▶ クローラーコレクト開始 ${filtered.length}件`, '#88ccff');
+
         let errors = 0;
         const allItems = {};  // 全メーカー分を蓄積
 
@@ -161,16 +187,20 @@
             if (!running) break;
             const mfr = filtered[i];
             const url = mfr.crawl_url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(mfr.name)}&${BATCH_CONDITIONS}`;
-            updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} fetch中...`);
+            updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} 収集中...`);
 
             try {
                 const fetched = await fetchCollectorItems(url);
                 errors = 0;
                 Object.assign(allItems, fetched);
-                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${Object.keys(fetched).length}件（累計${Object.keys(allItems).length}件）`);
+                const cnt = Object.keys(fetched).length;
+                const total = Object.keys(allItems).length;
+                addLog(`[${i+1}/${filtered.length}] ${mfr.name}  ${cnt}件  (累計${total}件)`);
+                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${cnt}件`);
                 await sleep(300);
             } catch(e) {
                 errors++;
+                addLog(`[${i+1}/${filtered.length}] ${mfr.name}  エラー: ${e.message}`, '#ff8888');
                 updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} エラー(${errors}): ${e.message}`);
                 if (errors >= 3 || e.message === 'NO_TEMPLATE') {
                     if (e.message === 'NO_TEMPLATE') {
@@ -192,13 +222,17 @@
         if (!running) {
             setRunningUI(false);
             updateStatus('中止しました');
+            addLog('--- 中止 ---', '#ffaa44');
             return;
         }
 
         // 全メーカー完了後に /collect-items でインライン処理
         items = allItems;
         const grandTotal = Object.keys(items).length;
-        updateStatus(`全${filtered.length}件完了（${grandTotal}件）→ 型番抽出中...`);
+        updateStatus(`型番抽出中... (${grandTotal}件)`);
+        addLog(`─────────────────────────`);
+        addLog(`収集完了: ${grandTotal}件 → 型番抽出中...`, '#88ccff');
+
         const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
         const result = await new Promise(resolve => {
             GM_xmlhttpRequest({
@@ -219,7 +253,8 @@
         setRunningUI(false);
         const newCount = result.new_count || 0;
         const totalModels = result.total || 0;
-        updateStatus(`コレクト完了 全${filtered.length}件(${grandTotal}件) ／ 新規型番${newCount}件（累計${totalModels}件）`);
+        addLog(`新規型番: ${newCount}件  累計型番: ${totalModels}件`, '#88ff88');
+        updateStatus(`完了！ ${grandTotal}件収集 / 新規型番${newCount}件`);
     }
 
     // ========== 商品収集 ==========
