@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,7 @@
     const SERVER_URL = 'http://localhost:8766/check-mercari';
     const MFR_URL    = 'http://localhost:8766/get-manufacturers';
     const MAX_PAGE   = 20; // 最大20ページ = 2000件/メーカー
+    const EXCLUDE_KW = ['開封済み', '破れ', 'ダメージ', '傷あり', '汚れあり', '水没', 'ジャンク'];
 
     // ===== UI =====
     const container = document.createElement('div');
@@ -84,6 +85,8 @@
             pageItems.forEach(item => {
                 if (!item.id || !item.title || item.price == null) return;
                 if (item.condition !== 'new') return;
+                if (item.isBulkPurchaseItem) return;
+                if (EXCLUDE_KW.some(kw => item.title.includes(kw))) return;
                 allItems[item.id] = {
                     name:  item.title,
                     price: String(item.price),

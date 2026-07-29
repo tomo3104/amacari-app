@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  PayPayフリマ売り切れ商品を全メーカー自動収集 → 型番抽出（8765サーバー連携）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -13,8 +13,9 @@
 (function () {
     'use strict';
 
-    const SERVER   = 'http://localhost:8765';
-    const MAX_PAGE = 20; // 最大20ページ = 2000件/メーカー
+    const SERVER     = 'http://localhost:8765';
+    const MAX_PAGE   = 20; // 最大20ページ = 2000件/メーカー
+    const EXCLUDE_KW = ['開封済み', '破れ', 'ダメージ', '傷あり', '汚れあり', '水没', 'ジャンク'];
 
     // ===== UI =====
     const container = document.createElement('div');
@@ -100,9 +101,10 @@
 
             const pageItems = data.items || [];
             pageItems.forEach(item => {
-                if (item.id && item.title && item.condition === 'new') {
-                    allItems[item.id] = { name: item.title, price: String(item.price || 0) };
-                }
+                if (!item.id || !item.title || item.condition !== 'new') return;
+                if (item.isBulkPurchaseItem) return;
+                if (EXCLUDE_KW.some(kw => item.title.includes(kw))) return;
+                allItems[item.id] = { name: item.title, price: String(item.price || 0) };
             });
 
             const returned = data.totalResultsReturned || pageItems.length;
