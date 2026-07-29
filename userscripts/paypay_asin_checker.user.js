@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -56,7 +56,7 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ===== PayPayフリマ API fetch（出品中・売り切れなし）=====
+    // ===== PayPayフリマ API fetch（出品中・新品・1000〜20000円）=====
     async function fetchPayPayItems(mfrName) {
         const allItems = {};
         let offset = 0;
@@ -64,9 +64,12 @@
 
         for (let page = 0; page < MAX_PAGE; page++) {
             const params = new URLSearchParams({
-                query:   mfrName,
-                results: '100',
-                offset:  String(offset),
+                query:      mfrName,
+                conditions: 'NEW',
+                minPrice:   '1000',
+                maxPrice:   '20000',
+                results:    '100',
+                offset:     String(offset),
             });
             const url = `https://paypayfleamarket.yahoo.co.jp/api/v1/search?${params}`;
 

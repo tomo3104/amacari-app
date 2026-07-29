@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  PayPayフリマ売り切れ商品を全メーカー自動収集 → 型番抽出（8765サーバー連携）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -72,7 +72,7 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    // ===== PayPayフリマ API fetch =====
+    // ===== PayPayフリマ API fetch（売り切れ・新品・1000〜20000円）=====
     async function fetchPayPayItems(mfrName) {
         const allItems = {};
         let offset = 0;
@@ -80,10 +80,13 @@
 
         for (let page = 0; page < MAX_PAGE; page++) {
             const params = new URLSearchParams({
-                query:   mfrName,
-                sold:    '1',
-                results: '100',
-                offset:  String(offset),
+                query:      mfrName,
+                sold:       '1',
+                conditions: 'NEW',
+                minPrice:   '1000',
+                maxPrice:   '20000',
+                results:    '100',
+                offset:     String(offset),
             });
             const url = `https://paypayfleamarket.yahoo.co.jp/api/v1/search?${params}`;
 
