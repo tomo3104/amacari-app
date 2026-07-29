@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.7
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・メーカーごとログパネル表示）
+// @version      5.8
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバー＆ブラウザ両方にログ表示）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -181,6 +181,13 @@
         clearLog();
         addLog('▶ クローラーコレクト開始 ' + filtered.length + '件', '#88ccff');
 
+        // サーバーに開始通知
+        GM_xmlhttpRequest({
+            method: 'POST', url: 'http://localhost:8765/log-start',
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ total_mfr: filtered.length, group: selected.join(',') }),
+        });
+
         let errors = 0;
         const allItems = {};
 
@@ -198,6 +205,12 @@
                 const total = Object.keys(allItems).length;
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
+                // サーバーに進捗通知
+                GM_xmlhttpRequest({
+                    method: 'POST', url: 'http://localhost:8765/log-progress',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ index: i+1, total_mfr: filtered.length, name: mfr.name, count: cnt, cumulative: total }),
+                });
                 await sleep(300);
             } catch(e) {
                 errors++;
