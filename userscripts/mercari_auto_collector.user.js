@@ -34,29 +34,6 @@
         background:rgba(0,0,0,0.78); color:#fff; padding:6px 14px;
         border-radius:6px; font-size:13px; display:none; max-width:280px;
     `;
-
-    // ログパネル（メーカーごとの結果を蓄積表示）
-    const logPanel = document.createElement('div');
-    logPanel.style.cssText = `
-        position:fixed; bottom:120px; right:20px; z-index:99998;
-        width:320px; max-height:320px; overflow-y:auto;
-        background:rgba(0,0,0,0.88); color:#d0d0d0; padding:8px 12px;
-        border-radius:8px; font-size:12px; font-family:monospace;
-        display:none; line-height:1.7; box-shadow:0 2px 10px rgba(0,0,0,0.4);
-    `;
-    document.body.appendChild(logPanel);
-
-    function addLog(msg, color) {
-        const line = document.createElement('div');
-        line.textContent = msg;
-        if (color) line.style.color = color;
-        logPanel.appendChild(line);
-        logPanel.scrollTop = logPanel.scrollHeight;
-        logPanel.style.display = 'block';
-    }
-    function clearLog() {
-        logPanel.innerHTML = '';
-    }
     const startBtn = document.createElement('button');
     startBtn.textContent = 'コレクト';
     startBtn.style.cssText = `
@@ -83,6 +60,30 @@
     container.appendChild(crawlerBtn);
     container.appendChild(stopBtn);
     document.body.appendChild(container);
+
+    // ログパネル（メーカーごとの結果を蓄積表示）
+    const logPanel = document.createElement('div');
+    logPanel.style.cssText = `
+        position:fixed; bottom:120px; right:20px; z-index:99998;
+        width:320px; max-height:320px; overflow-y:auto;
+        background:rgba(0,0,0,0.88); color:#d0d0d0; padding:8px 12px;
+        border-radius:8px; font-size:12px; font-family:monospace;
+        display:none; line-height:1.7; box-shadow:0 2px 10px rgba(0,0,0,0.4);
+    `;
+    document.body.appendChild(logPanel);
+
+    function addLog(msg, color) {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        if (color) line.style.color = color;
+        logPanel.appendChild(line);
+        logPanel.scrollTop = logPanel.scrollHeight;
+        logPanel.style.display = 'block';
+    }
+    function clearLog() {
+        logPanel.innerHTML = '';
+        logPanel.style.display = 'none';
+    }
 
     // ========== 状態 ==========
     let running = false;
@@ -178,30 +179,30 @@
         running = true;
         setRunningUI(true);
         clearLog();
-        addLog(`▶ クローラーコレクト開始 ${filtered.length}件`, '#88ccff');
+        addLog('▶ クローラーコレクト開始 ' + filtered.length + '件', '#88ccff');
 
         let errors = 0;
-        const allItems = {};  // 全メーカー分を蓄積
+        const allItems = {};
 
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
             const mfr = filtered[i];
-            const url = mfr.crawl_url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(mfr.name)}&${BATCH_CONDITIONS}`;
-            updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} 収集中...`);
+            const url = mfr.crawl_url || 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(mfr.name) + '&' + BATCH_CONDITIONS;
+            updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' 収集中...');
 
             try {
                 const fetched = await fetchCollectorItems(url);
                 errors = 0;
                 Object.assign(allItems, fetched);
-                const cnt = Object.keys(fetched).length;
+                const cnt   = Object.keys(fetched).length;
                 const total = Object.keys(allItems).length;
-                addLog(`[${i+1}/${filtered.length}] ${mfr.name}  ${cnt}件  (累計${total}件)`);
-                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${cnt}件`);
+                addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
+                updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
                 await sleep(300);
             } catch(e) {
                 errors++;
-                addLog(`[${i+1}/${filtered.length}] ${mfr.name}  エラー: ${e.message}`, '#ff8888');
-                updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} エラー(${errors}): ${e.message}`);
+                addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  エラー: ' + e.message, '#ff8888');
+                updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' エラー(' + errors + '): ' + e.message);
                 if (errors >= 3 || e.message === 'NO_TEMPLATE') {
                     if (e.message === 'NO_TEMPLATE') {
                         updateStatus('テンプレートなし → 検索1回後に再試行してください');
@@ -209,7 +210,7 @@
                         _uw.localStorage.removeItem(_SHARED_TPL_KEY);
                         updateStatus('セッション切れ → ページ再読み込み後に再試行してください');
                     } else {
-                        updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
+                        updateStatus('エラー連続' + errors + '回 → 再試行してください: ' + e.message);
                     }
                     running = false;
                     setRunningUI(false);
@@ -226,12 +227,11 @@
             return;
         }
 
-        // 全メーカー完了後に /collect-items でインライン処理
         items = allItems;
         const grandTotal = Object.keys(items).length;
-        updateStatus(`型番抽出中... (${grandTotal}件)`);
-        addLog(`─────────────────────────`);
-        addLog(`収集完了: ${grandTotal}件 → 型番抽出中...`, '#88ccff');
+        updateStatus('型番抽出中... (' + grandTotal + '件)');
+        addLog('-------------------------');
+        addLog('収集完了: ' + grandTotal + '件 → 型番抽出中...', '#88ccff');
 
         const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
         const result = await new Promise(resolve => {
@@ -251,10 +251,10 @@
 
         running = false;
         setRunningUI(false);
-        const newCount = result.new_count || 0;
+        const newCount    = result.new_count || 0;
         const totalModels = result.total || 0;
-        addLog(`新規型番: ${newCount}件  累計型番: ${totalModels}件`, '#88ff88');
-        updateStatus(`完了！ ${grandTotal}件収集 / 新規型番${newCount}件`);
+        addLog('新規型番: ' + newCount + '件  累計型番: ' + totalModels + '件', '#88ff88');
+        updateStatus('完了！ ' + grandTotal + '件収集 / 新規型番' + newCount + '件');
     }
 
     // ========== 商品収集 ==========
@@ -335,7 +335,6 @@
 
     function finish(message, autoRun = false) {
         const total = Object.keys(items).length;
-        // クローラーモード中は専用処理
         if (localStorage.getItem('crawlerMode') === 'true' && window.crawlerFinishOverride) {
             window.crawlerFinishOverride(message);
             return;
@@ -367,7 +366,7 @@
             const nextBtn = document.querySelector(NEXT_SEL);
 
             if (!nextBtn) {
-                finish(`完了！ ${pageCount}ページ`, true);  // 自動でStep1起動
+                finish(`完了！ ${pageCount}ページ`, true);
                 return;
             }
 
@@ -382,7 +381,6 @@
     }
 
     // ========== クローラーコレクト ==========
-    // 型番収集は「売り切れ（販売済み）」商品から行う方針のため、crawl_url（F列・status=sold_out）を使用する
     const MFR_URL      = 'http://localhost:8765/get-manufacturers';
     const BATCH_CONDITIONS = 'status=sold_out&item_condition_id=1&shipping_payer_id=2';
 
@@ -427,10 +425,10 @@
             return wrap;
         }
 
-        const allCheckEl = makeOption('ALL', `ALL（全件・${mfrs.length}件）`, true);
+        const allCheckEl = makeOption('ALL', 'ALL（全件・' + mfrs.length + '件）', true);
         list.appendChild(allCheckEl);
         const groupEls = groups.map(g => {
-            const el = makeOption(g, `${g}（${groupCounts[g]}件）`, false);
+            const el = makeOption(g, g + '（' + groupCounts[g] + '件）', false);
             list.appendChild(el);
             return el;
         });
@@ -489,13 +487,13 @@
         const label = targets.includes('ALL') ? 'ALL' : selected.join(',');
 
         if (filtered.length === 0) {
-            updateStatus(`グループ「${label}」は見つかりません`);
+            updateStatus('グループ「' + label + '」は見つかりません');
             return;
         }
         localStorage.setItem('crawlerMode',  'true');
         localStorage.setItem('crawlerList',  JSON.stringify(filtered.map(m => ({name: m.name, url: m.crawl_url || ''}))));
         localStorage.setItem('crawlerIndex', '0');
-        updateStatus(`クローラーコレクト開始 ${filtered.length}件（グループ:${label}・売り切れ条件）`);
+        updateStatus('クローラーコレクト開始 ' + filtered.length + '件（グループ:' + label + '・売り切れ条件）');
         setTimeout(goNextCrawler, 1000);
     }
 
@@ -527,7 +525,7 @@
             localStorage.removeItem('crawlerMode');
             localStorage.removeItem('crawlerList');
             localStorage.removeItem('crawlerIndex');
-            updateStatus(`クローラーコレクト完了！ 全${list.length}件`);
+            updateStatus('クローラーコレクト完了！ 全' + list.length + '件');
             setRunningUI(false);
             if (localStorage.getItem('autoPipeline') === 'true') {
                 localStorage.removeItem('autoPipeline');
@@ -536,18 +534,17 @@
             return;
         }
         const item = list[index];
-        const url  = item.url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(item.name)}&${BATCH_CONDITIONS}`;
-        updateStatus(`[${index+1}/${list.length}] ${item.name} へ移動中...`);
+        const url  = item.url || 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(item.name) + '&' + BATCH_CONDITIONS;
+        updateStatus('[' + (index+1) + '/' + list.length + '] ' + item.name + ' へ移動中...');
         location.href = url;
     }
 
-    // クローラーモード中のページロード時に自動収集開始
     if (localStorage.getItem('crawlerMode') === 'true') {
         window.addEventListener('load', () => {
             setTimeout(() => {
                 const list  = JSON.parse(localStorage.getItem('crawlerList') || '[]');
                 const index = parseInt(localStorage.getItem('crawlerIndex') || '0');
-                updateStatus(`[${index+1}/${list.length}] ${list[index]?.name} 収集中...`);
+                updateStatus('[' + (index+1) + '/' + list.length + '] ' + (list[index] && list[index].name) + ' 収集中...');
                 running = true;
                 items   = {};
                 setRunningUI(true);
@@ -565,7 +562,6 @@
     }
 
     // ========== 自動起動（タスクスケジューラ用） ==========
-    // URLに ?auto_crawl=ALL をつけてChromeを起動するとクローラーコレクトが自動開始する
     if (localStorage.getItem('crawlerMode') !== 'true') {
         const autoGroup = new URLSearchParams(location.search).get('auto_crawl');
         if (autoGroup) {
