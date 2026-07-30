@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
