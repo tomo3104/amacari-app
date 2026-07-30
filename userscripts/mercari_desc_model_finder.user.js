@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -144,21 +144,25 @@
         return allItems;
     }
 
-    // Mercari APIで商品説明を取得して型番を探す
+    // 商品ページの__NEXT_DATA__JSONから説明文を取得して型番を探す
     async function findModelInItemPage(itemId, tpl) {
         try {
-            const res = await fetch(`https://api.mercari.jp/items/get?id=${itemId}`, {
-                method: 'GET',
-                headers: tpl.headers,
+            const res = await fetch(`https://jp.mercari.com/item/${itemId}`, {
                 credentials: 'include',
             });
             if (!res.ok) return null;
-            const data = await res.json();
-            const description = data?.data?.description
-                             || data?.item?.description
-                             || data?.description
-                             || '';
-            return extractModelFromDesc(description);
+            const html = await res.text();
+
+            // __NEXT_DATA__にはJSONが入っており、Unicodeエスケープも自動展開される
+            const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/);
+            if (!m) return null;
+
+            const data = JSON.parse(m[1]);
+            const desc = data?.props?.pageProps?.item?.description
+                      || data?.props?.pageProps?.itemDetails?.description
+                      || data?.props?.pageProps?.initialState?.item?.description
+                      || '';
+            return desc ? extractModelFromDesc(desc) : null;
         } catch(e) {
             return null;
         }
