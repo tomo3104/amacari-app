@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.23
+// @version      2.24
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -424,8 +424,9 @@
     //  エレコム商品収集（Search API）
     // ========================================================
     async function fetchItems(tpl) {
-        const allItems = {};
-        let pageToken  = '';
+        const allItems     = {};
+        const processedSet = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
+        let pageToken      = '';
 
         for (let page = 0; page < MAX_PAGES; page++) {
             const bodyObj = JSON.parse(tpl.body);
@@ -452,10 +453,15 @@
                 throw e;
             }
 
-            (data.items || []).forEach(item => {
+            const pageItems = (data.items || []).filter(item => {
                 const id = item.id || item.itemId;
-                if (!id || !item.name || item.price == null) return;
-                if (item.auction && item.auction.bidDeadline) return;
+                return id && item.name && item.price != null && !(item.auction && item.auction.bidDeadline);
+            });
+
+            let allProcessed = pageItems.length > 0;
+            pageItems.forEach(item => {
+                const id = item.id || item.itemId;
+                if (!processedSet.has(id)) allProcessed = false;
                 allItems[id] = {
                     id,
                     name:  item.name,
@@ -465,8 +471,14 @@
                 };
             });
 
+            // このページの全件が処理済みなら以降のページは不要
+            if (allProcessed) {
+                showStatus(`${page + 1}ページ目で全件スキャン済み → 収集を終了`);
+                break;
+            }
+
             const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
-            if (!nextToken || (data.items || []).length === 0) break;
+            if (!nextToken || pageItems.length === 0) break;
             pageToken = nextToken;
             await sleep(300);
         }
