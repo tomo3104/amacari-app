@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -309,6 +309,8 @@
                         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
                     `;
                     resumeBtn.onclick = () => {
+                        existingQueue.pendingIdx = resumeIdx;
+                        localStorage.setItem(QUEUE_KEY, JSON.stringify(existingQueue));
                         showStatus(`再開: ${resumeIdx + 1}件目から...`);
                         window.location.href = existingQueue.items[resumeIdx].url;
                     };
@@ -356,9 +358,10 @@
 
             // キューを保存して最初の商品ページへ遷移
             localStorage.setItem(QUEUE_KEY, JSON.stringify({
-                items:     noModelItems,
-                running:   true,
-                startedAt: Date.now(),
+                items:      noModelItems,
+                running:    true,
+                startedAt:  Date.now(),
+                pendingIdx: 0,
             }));
             localStorage.setItem(RESULT_KEY, JSON.stringify([]));
 
