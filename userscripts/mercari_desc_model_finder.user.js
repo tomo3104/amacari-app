@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -74,6 +74,25 @@
         // ============ 商品ページモード ============
         runItemPageMode(itemMatch[1]);
     } else {
+        // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
+        const _qStr = localStorage.getItem(QUEUE_KEY);
+        if (_qStr) {
+            try {
+                const _q = JSON.parse(_qStr);
+                if (_q.running && _q.items && _q.pendingIdx != null) {
+                    const skipTo = _q.pendingIdx + 1;
+                    delete _q.pendingIdx;
+                    localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
+                    if (skipTo < _q.items.length) {
+                        showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
+                        setTimeout(() => { window.location.href = _q.items[skipTo].url; }, 1000);
+                    } else {
+                        finishAndSend(null);
+                    }
+                    return;
+                }
+            } catch(e) {}
+        }
         // ============ 起動ページモード ============
         runLaunchMode();
     }
@@ -95,7 +114,8 @@
 
         const total = items.length;
 
-        // currentIdx を保存（クラッシュ時の再開位置として使う）
+        // 正常到達：pendingIdx をクリアして currentIdx を更新
+        delete queue.pendingIdx;
         queue.currentIdx = idx;
         localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
 
@@ -124,6 +144,9 @@
             if (!localStorage.getItem(QUEUE_KEY)) return; // 中止済み
             const nextIdx = idx + 1;
             if (nextIdx < total) {
+                // 遷移先をQUEUEに記録（リダイレクト時に自動スキップするため）
+                queue.pendingIdx = nextIdx;
+                localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
                 window.location.href = items[nextIdx].url;
             } else {
                 finishAndSend(stopBtn);
