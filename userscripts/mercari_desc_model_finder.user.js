@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.8
+// @version      2.9
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -161,7 +161,7 @@
             if (!localStorage.getItem(QUEUE_KEY)) { stopBtn.remove(); return; } // 中止済み
 
             const el = document.querySelector(DESC_SEL);
-            if (el) {
+            if (el && (el.innerText || '').trim().length > 5) {
                 const desc  = el.innerText || '';
                 const model = extractModelFromDesc(desc);
 
@@ -208,16 +208,17 @@
                    bodyText.includes('404');
         }
 
-        // Reactのレンダリングが完了するまで2秒待つ
+        // Reactのレンダリングが完了するまで待つ
         setTimeout(() => {
             if (isErrorPage()) {
                 const gotSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                 showStatus(`[${idx + 1}/${total}] 商品削除済み → スキップ（取得済: ${gotSoFar}件）`);
                 setTimeout(goNext, 800);
             } else {
-                waitForDesc(20);
+                window.scrollTo(0, 400); // 説明文が画面内に入るようスクロール（遅延読み込み対策）
+                waitForDesc(30);
             }
-        }, 2000);
+        }, 3500);
     }
 
     // ========================================================
