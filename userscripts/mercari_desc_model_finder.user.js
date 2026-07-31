@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      2.8
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -81,12 +81,15 @@
                 const _q = JSON.parse(_qStr);
                 if (_q.running && _q.items && _q.pendingIdx != null) {
                     const skipTo = _q.pendingIdx + 1;
-                    delete _q.pendingIdx;
-                    localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
                     if (skipTo < _q.items.length) {
+                        // 次の遷移先も pendingIdx にセット（連続削除済み対応）
+                        _q.pendingIdx = skipTo;
+                        localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
                         showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
                         setTimeout(() => { window.location.href = _q.items[skipTo].url; }, 1000);
                     } else {
+                        delete _q.pendingIdx;
+                        localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
                         finishAndSend(null);
                     }
                     return;
