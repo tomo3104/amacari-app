@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.13
+// @version      2.14
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -132,6 +132,21 @@
         queue.currentIdx = idx;
         localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
 
+        // 今すぐ照合ボタン
+        const matchBtn = document.createElement('button');
+        matchBtn.textContent = '今すぐ照合';
+        matchBtn.style.cssText = `
+            position:fixed; bottom:110px; left:20px; z-index:99999;
+            padding:8px 16px; background:#1976D2; color:#fff;
+            border:none; border-radius:6px; font-size:13px; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        matchBtn.onclick = () => {
+            matchBtn.remove();
+            finishAndSend(stopBtn);
+        };
+        document.body.appendChild(matchBtn);
+
         // 中止ボタン
         const stopBtn = document.createElement('button');
         stopBtn.textContent = '収集中止';
@@ -144,6 +159,7 @@
         stopBtn.onclick = () => {
             localStorage.removeItem(QUEUE_KEY);
             localStorage.removeItem(RESULT_KEY);
+            matchBtn.remove();
             stopBtn.remove();
             showStatus('中止しました', 'rgba(160,0,0,0.88)');
             setTimeout(hideStatus, 3000);
