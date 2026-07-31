@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.32
+// @version      2.33
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -20,7 +20,9 @@
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const QUEUE_KEY       = 'desc_model_queue';
     const RESULT_KEY      = 'desc_model_results';
-    const PROCESSED_KEY   = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
+    const PROCESSED_KEY     = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
+    const CRAWLER_KEY       = 'desc_crawler_state';   // 発掘クローラーの進行状態
+    const MAX_PAGES_CRAWLER = 3;                       // クローラーモードの1メーカーあたり最大ページ数
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     // タイトルに型番が含まれるか判定
@@ -126,7 +128,6 @@
                 if (_q.running && _q.items && _q.pendingIdx != null) {
                     const skipTo = _q.pendingIdx + 1;
                     if (skipTo < _q.items.length) {
-                        // 次の遷移先も pendingIdx にセット（連続削除済み対応）
                         _q.pendingIdx = skipTo;
                         localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
                         showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
@@ -134,12 +135,29 @@
                     } else {
                         delete _q.pendingIdx;
                         localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
-                        finishAndSend(null);
+                        if (_q.crawlerMode) {
+                            finishMakerAndContinue();
+                        } else {
+                            finishAndSend(null);
+                        }
                     }
                     return;
                 }
             } catch(e) {}
         }
+
+        // 発掘クローラーモード：検索ページに来たら次のメーカーを収集
+        const _crawlerStr = localStorage.getItem(CRAWLER_KEY);
+        if (_crawlerStr && !(_qStr && JSON.parse(_qStr || '{}').running)) {
+            try {
+                const _cs = JSON.parse(_crawlerStr);
+                if (_cs.running) {
+                    runCrawlerSearchMode(_cs);
+                    return;
+                }
+            } catch(e) {}
+        }
+
         // ============ 起動ページモード ============
         runLaunchMode();
     }
@@ -179,6 +197,7 @@
             box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
         stopBtn.onclick = () => {
+            localStorage.removeItem(CRAWLER_KEY); // クローラーモードも停止
             localStorage.removeItem(QUEUE_KEY);
             stopBtn.remove();
             finishAndSend(null);
@@ -197,7 +216,11 @@
                 localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
                 window.location.replace(items[nextIdx].url);
             } else {
-                finishAndSend(stopBtn);
+                if (queue.crawlerMode) {
+                    finishMakerAndContinue();
+                } else {
+                    finishAndSend(stopBtn);
+                }
             }
         }
 
@@ -333,6 +356,161 @@
     }
 
     // ========================================================
+    //  発掘クローラー：メーカーリスト取得 → 巡回開始
+    // ========================================================
+    function startCrawler(group) {
+        showStatus('メーカーリストを取得中...');
+        GM_xmlhttpRequest({
+            method:  'GET',
+            url:     'http://localhost:8766/get-manufacturers',
+            timeout: 30000,
+            onload: res => {
+                let makers;
+                try {
+                    const data = JSON.parse(res.responseText);
+                    makers = (data.manufacturers || []).filter(m => {
+                        if (!m.url) return false;
+                        if (group === 'ALL') return true;
+                        const gs = group.split(',').map(g => g.trim());
+                        return gs.some(g => m.group === g);
+                    });
+                } catch(e) {
+                    showStatus('メーカーリスト取得エラー', 'rgba(160,0,0,0.88)');
+                    return;
+                }
+                if (makers.length === 0) {
+                    showStatus(`グループ「${group}」のメーカーが見つかりません`, 'rgba(160,80,0,0.88)');
+                    return;
+                }
+                const crawlerState = {
+                    makers:     makers,
+                    currentIdx: 0,
+                    group:      group,
+                    running:    true,
+                    startedAt:  Date.now(),
+                };
+                localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
+                localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+                showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
+                // テンプレートをクリアして次ページで確実に新しい検索条件を取得する
+                localStorage.removeItem(_SHARED_TPL_KEY);
+                setTimeout(() => { window.location.href = makers[0].url; }, 1500);
+            },
+            onerror:    () => showStatus('サーバー未起動（localhost:8766）', 'rgba(160,0,0,0.88)'),
+            ontimeout:  () => showStatus('タイムアウト', 'rgba(160,0,0,0.88)'),
+        });
+    }
+
+    // 発掘クローラー：検索ページで商品を収集して説明文ページへ遷移
+    async function runCrawlerSearchMode(crawlerState) {
+        const makerIdx    = crawlerState.currentIdx;
+        const maker       = crawlerState.makers[makerIdx];
+        const makersTotal = crawlerState.makers.length;
+
+        // 中止ボタン
+        const abortBtn = document.createElement('button');
+        abortBtn.textContent = 'クローラー中止';
+        abortBtn.style.cssText = `
+            position:fixed; bottom:80px; left:20px; z-index:99999;
+            padding:8px 14px; background:#B71C1C; color:#fff;
+            border:none; border-radius:6px; font-size:12px; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        abortBtn.onclick = () => {
+            localStorage.removeItem(CRAWLER_KEY);
+            localStorage.removeItem(QUEUE_KEY);
+            abortBtn.remove();
+            finishAndSend(null);
+        };
+        document.body.appendChild(abortBtn);
+
+        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — テンプレート待機中...`);
+
+        // collector scriptがテンプレートを更新するまで最大8秒待つ
+        let tpl = null;
+        for (let i = 0; i < 16; i++) {
+            tpl = _getSharedTpl();
+            if (tpl) break;
+            await sleep(500);
+        }
+
+        if (!tpl) {
+            showStatus(`テンプレート取得できず → スキップ: ${maker.name}`, 'rgba(160,80,0,0.88)');
+            await sleep(2000);
+            abortBtn.remove();
+            finishMakerAndContinue();
+            return;
+        }
+
+        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${MAX_PAGES_CRAWLER}ページ収集中...`);
+
+        let allItems;
+        try {
+            allItems = await fetchItems(tpl, MAX_PAGES_CRAWLER);
+        } catch(e) {
+            showStatus(`収集エラー: ${e.message} → スキップ`, 'rgba(160,0,0,0.88)');
+            await sleep(2000);
+            abortBtn.remove();
+            finishMakerAndContinue();
+            return;
+        }
+
+        const itemList     = Object.values(allItems);
+        const processedSet = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
+        const noModelItems = itemList.filter(i => !hasModelInTitle(i.name) && !processedSet.has(i.id));
+
+        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${itemList.length}件収集 / 未処理型番なし: ${noModelItems.length}件`);
+
+        if (noModelItems.length === 0) {
+            await sleep(1000);
+            abortBtn.remove();
+            finishMakerAndContinue();
+            return;
+        }
+
+        localStorage.setItem(QUEUE_KEY, JSON.stringify({
+            items:       noModelItems,
+            running:     true,
+            crawlerMode: true,
+            startedAt:   Date.now(),
+            pendingIdx:  0,
+        }));
+
+        await sleep(600);
+        abortBtn.remove();
+        window.location.replace(noModelItems[0].url);
+    }
+
+    // 発掘クローラー：1メーカー完了 → 次のメーカーへ or 全完了
+    function finishMakerAndContinue() {
+        const crawlerStr = localStorage.getItem(CRAWLER_KEY);
+        if (!crawlerStr) { finishAndSend(null); return; }
+
+        let crawlerState;
+        try { crawlerState = JSON.parse(crawlerStr); } catch(e) { finishAndSend(null); return; }
+
+        localStorage.removeItem(QUEUE_KEY);
+
+        crawlerState.currentIdx++;
+        const done  = crawlerState.currentIdx;
+        const total = crawlerState.makers.length;
+
+        if (done >= total) {
+            localStorage.removeItem(CRAWLER_KEY);
+            showStatus(`発掘クローラー全完了 (${total}メーカー) → list.jsonと照合中...`, 'rgba(0,70,160,0.88)');
+            finishAndSend(null);
+            return;
+        }
+
+        localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
+        const next = crawlerState.makers[done];
+        showStatus(`[${done}/${total}完了] 次: ${next.name}`, 'rgba(0,70,120,0.88)');
+        // テンプレートをクリアして次ページで確実に新しい検索条件を取得する
+        localStorage.removeItem(_SHARED_TPL_KEY);
+        setTimeout(() => { window.location.href = next.url; }, 1500);
+    }
+
+    // ========================================================
     //  起動ページモード：ボタン表示 → 収集開始
     // ========================================================
     function runLaunchMode() {
@@ -392,7 +570,44 @@
             btnContainer.appendChild(retryBtn);
         }
 
+        const crawlerBtn = document.createElement('button');
+        crawlerBtn.textContent = '発掘クローラー（全メーカー巡回）';
+        crawlerBtn.style.cssText = `
+            padding:12px 18px; background:#6A1B9A; color:#fff;
+            border:none; border-radius:6px; font-size:14px;
+            cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        crawlerBtn.addEventListener('click', () => {
+            const group = prompt('グループを入力（例: A / A,B / ALL）', 'ALL');
+            if (!group) return;
+            crawlerBtn.disabled = true;
+            startCrawler(group.trim().toUpperCase());
+        });
+
+        // クローラーが途中で停止した場合の再開ボタン
+        const existingCrawlerStr = localStorage.getItem(CRAWLER_KEY);
+        if (existingCrawlerStr) {
+            try {
+                const ec = JSON.parse(existingCrawlerStr);
+                if (ec.running && ec.makers) {
+                    const resumeCrawlerBtn = document.createElement('button');
+                    resumeCrawlerBtn.textContent = `クローラー再開 (${ec.currentIdx + 1}/${ec.makers.length}件目: ${ec.makers[ec.currentIdx].name})`;
+                    resumeCrawlerBtn.style.cssText = `
+                        padding:10px 16px; background:#4A148C; color:#fff;
+                        border:none; border-radius:6px; font-size:13px;
+                        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+                    `;
+                    resumeCrawlerBtn.onclick = () => {
+                        localStorage.removeItem(_SHARED_TPL_KEY);
+                        window.location.href = ec.makers[ec.currentIdx].url;
+                    };
+                    btnContainer.appendChild(resumeCrawlerBtn);
+                }
+            } catch(e) {}
+        }
+
         btnContainer.appendChild(searchBtn);
+        btnContainer.appendChild(crawlerBtn);
         document.body.appendChild(btnContainer);
 
         searchBtn.addEventListener('click', async () => {
@@ -458,7 +673,7 @@
     // ========================================================
     //  エレコム商品収集（Search API）
     // ========================================================
-    async function fetchItems(tpl) {
+    async function fetchItems(tpl, maxPages = MAX_PAGES) {
         const allItems = {};
 
         // 日次運用：前回実行時刻（メーカー単位で記録）
@@ -471,7 +686,7 @@
 
         let pageToken = '';
 
-        for (let page = 0; page < MAX_PAGES; page++) {
+        for (let page = 0; page < maxPages; page++) {
             const bodyObj = JSON.parse(tpl.body);
             bodyObj.pageToken = pageToken;
             bodyObj.pageSize  = 120;
