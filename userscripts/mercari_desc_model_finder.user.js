@@ -453,6 +453,12 @@
                 throw e;
             }
 
+            // [DEBUG] 1ページ目だけ最初のアイテムのキーを出力
+            if (page === 0 && (data.items || []).length > 0) {
+                console.log('[desc-finder DEBUG] item keys:', Object.keys(data.items[0]));
+                console.log('[desc-finder DEBUG] first item:', JSON.stringify(data.items[0]));
+            }
+
             const pageItems = (data.items || []).filter(item => {
                 const id = item.id || item.itemId;
                 return id && item.name && item.price != null && !(item.auction && item.auction.bidDeadline);
