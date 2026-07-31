@@ -31,6 +31,12 @@ const state = {
   furimaLastRejected: null,
   furimaSkipStack: [],
   furimaTotalCount: 0,
+
+  // 発掘（説明文リサーチ）タブ用
+  descCards: [],
+  descLastRejected: null,
+  descSkipStack: [],
+  descTotalCount: 0,
 };
 
 const els = {
@@ -55,6 +61,11 @@ const els = {
   furimaEmpty: document.getElementById("furima-empty-message"),
   furimaProgressLabel: document.getElementById("furima-progress-label"),
   furimaUndoBtn: document.getElementById("furima-undo-btn"),
+  descView: document.getElementById("desc-view"),
+  descStack: document.getElementById("desc-card-stack"),
+  descEmpty: document.getElementById("desc-empty-message"),
+  descProgressLabel: document.getElementById("desc-progress-label"),
+  descUndoBtn: document.getElementById("desc-undo-btn"),
   asinFixModal: document.getElementById("asin-fix-modal"),
   asinFixOld: document.getElementById("asin-fix-old"),
   asinFixNew: document.getElementById("asin-fix-new"),
@@ -172,6 +183,42 @@ async function loadFurimaCards() {
   } catch (e) {
     els.furimaEmpty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
   }
+}
+
+async function loadDescCards() {
+  els.descEmpty.textContent = "読み込み中…";
+  els.descEmpty.style.display = "block";
+  try {
+    const res = await fetch(gasUrl("descCards"));
+    const data = await res.json();
+    state.descCards = data.cards || [];
+    state.descSkipStack = [];
+    state.descTotalCount = state.descCards.length;
+    renderDescStack();
+  } catch (e) {
+    els.descEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+function renderDescStack() {
+  els.descStack.querySelectorAll(".card").forEach(c => c.remove());
+  const done = Math.max(state.descTotalCount - state.descCards.length, 0);
+  els.descProgressLabel.textContent = `${done} / ${state.descTotalCount}`;
+  if (state.descCards.length === 0) {
+    els.descEmpty.textContent = "判定待ちの商品はありません。";
+    els.descEmpty.style.display = "block";
+    return;
+  }
+  els.descEmpty.style.display = "none";
+  const visible = state.descCards.slice(0, 3).reverse();
+  visible.forEach((card, i) => {
+    const el = buildCardEl(card);
+    const depthFromTop = visible.length - 1 - i;
+    el.style.zIndex = String(100 - depthFromTop);
+    el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
+    if (depthFromTop === 0) attachSwipe(el, card, "desc");
+    els.descStack.appendChild(el);
+  });
 }
 
 // ---------- カードのレンダリング ----------
@@ -506,10 +553,10 @@ function attachSwipe(el, card, source) {
     } else if (absY > absX && absY > threshold) {
       const dir = dy < 0 ? "up" : "down";
       if (dir === "down") {
-        const skipKey = source === "furima" ? "furimaSkipStack" : "skipStack";
+        const skipKey = source === "furima" ? "furimaSkipStack" : source === "desc" ? "descSkipStack" : "skipStack";
         if (state[skipKey].length === 0) {
           // 後回しスタックが空 → キューの末尾カードを先頭に循環
-          const cardsKey = source === "furima" ? "furimaCards" : "cards";
+          const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : "cards";
           if (state[cardsKey].length <= 1) {
             // カードが1枚以下 → バウンスだけ
             el.style.transform = "";
@@ -543,6 +590,7 @@ function attachSwipe(el, card, source) {
 function finishSwipe(el, card, direction, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
+  const isDesc   = source === "desc";
   const flyX = direction === "right" ? window.innerWidth : -window.innerWidth;
   el.style.transform = `translateX(${flyX}px)`;
   el.style.opacity = "0";
@@ -551,6 +599,8 @@ function finishSwipe(el, card, direction, source) {
     el.remove();
     if (isFurima) {
       state.furimaCards = state.furimaCards.filter(c => c.row !== card.row);
+    } else if (isDesc) {
+      state.descCards = state.descCards.filter(c => c.row !== card.row);
     } else {
       state.cards = state.cards.filter(c => c.row !== card.row);
     }
@@ -559,7 +609,7 @@ function finishSwipe(el, card, direction, source) {
     } else {
       openReasonModal(card, source);
     }
-    isFurima ? renderFurimaStack() : renderStack();
+    isFurima ? renderFurimaStack() : isDesc ? renderDescStack() : renderStack();
   }, 220);
 }
 
@@ -568,20 +618,20 @@ function finishSwipe(el, card, direction, source) {
 function finishVerticalSwipe(el, card, direction, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
+  const isDesc   = source === "desc";
   const flyY = (direction === "up" || direction === "down-loop") ? -window.innerHeight : window.innerHeight;
   el.style.transform = `translateY(${flyY}px)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
     el.remove();
-    const cardsKey = isFurima ? "furimaCards" : "cards";
-    const skipKey = isFurima ? "furimaSkipStack" : "skipStack";
+    const cardsKey = isFurima ? "furimaCards" : isDesc ? "descCards" : "cards";
+    const skipKey  = isFurima ? "furimaSkipStack" : isDesc ? "descSkipStack" : "skipStack";
     if (direction === "up") {
       state[cardsKey] = state[cardsKey].filter(c => c.row !== card.row);
       state[cardsKey].push(card);
       state[skipKey].push(card);
     } else if (direction === "down-loop") {
-      // 末尾カードを先頭に持ってくる（循環）
       const last = state[cardsKey][state[cardsKey].length - 1];
       state[cardsKey] = state[cardsKey].slice(0, -1);
       state[cardsKey].unshift(last);
@@ -592,7 +642,7 @@ function finishVerticalSwipe(el, card, direction, source) {
         state[cardsKey].unshift(prev);
       }
     }
-    isFurima ? renderFurimaStack() : renderStack();
+    isFurima ? renderFurimaStack() : isDesc ? renderDescStack() : renderStack();
   }, 220);
 }
 
@@ -649,12 +699,17 @@ document.getElementById("asin-fix-cancel").addEventListener("click", () => {
 async function judge(card, judgment, reason, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
+  const isDesc   = source === "desc";
+  const action = isFurima ? "furimaJudge" : isDesc ? "descJudge" : "judge";
   try {
-    await gasPost(isFurima ? "furimaJudge" : "judge", { row: card.row, judgment, reason });
+    await gasPost(action, { row: card.row, judgment, reason });
     if (judgment === "却下") {
       if (isFurima) {
         state.furimaLastRejected = card;
         els.furimaUndoBtn.disabled = false;
+      } else if (isDesc) {
+        state.descLastRejected = card;
+        els.descUndoBtn.disabled = false;
       } else {
         state.lastRejected = card;
         els.undoBtn.disabled = false;
@@ -668,16 +723,22 @@ async function judge(card, judgment, reason, source) {
 async function undoLastReject(source) {
   source = source || "amacari";
   const isFurima = source === "furima";
-  const card = isFurima ? state.furimaLastRejected : state.lastRejected;
+  const isDesc   = source === "desc";
+  const card = isFurima ? state.furimaLastRejected : isDesc ? state.descLastRejected : state.lastRejected;
   if (!card) return;
-  const btn = isFurima ? els.furimaUndoBtn : els.undoBtn;
+  const btn    = isFurima ? els.furimaUndoBtn : isDesc ? els.descUndoBtn : els.undoBtn;
+  const action = isFurima ? "furimaUndo" : isDesc ? "descUndo" : "undo";
   btn.disabled = true;
   try {
-    await gasPost(isFurima ? "furimaUndo" : "undo", { row: card.row });
+    await gasPost(action, { row: card.row });
     if (isFurima) {
       state.furimaLastRejected = null;
       state.furimaCards.unshift(card);
       renderFurimaStack();
+    } else if (isDesc) {
+      state.descLastRejected = null;
+      state.descCards.unshift(card);
+      renderDescStack();
     } else {
       state.lastRejected = null;
       state.cards.unshift(card);
@@ -893,6 +954,7 @@ const VIEWS = {
   review:  { el: els.reviewView,  load: loadCards },
   archive: { el: els.archiveView, load: loadArchive },
   stats:   { el: els.statsView,   load: loadStats },
+  desc:    { el: els.descView,    load: loadDescCards },
   furima:  { el: els.furimaView,  load: loadFurimaCards },
   log:     { el: document.getElementById("log-view"), load: loadLog },
 };
@@ -916,11 +978,12 @@ els.sortSelect.addEventListener("change", () => {
 
 els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
 els.furimaUndoBtn.addEventListener("click", () => undoLastReject("furima"));
+els.descUndoBtn.addEventListener("click", () => undoLastReject("desc"));
 
 document.getElementById("reason-cancel-btn").addEventListener("click", () => {
-  const isFurima = state.pendingRejectSource === "furima";
+  const src = state.pendingRejectSource;
   closeReasonModal();
-  isFurima ? renderFurimaStack() : renderStack();
+  src === "furima" ? renderFurimaStack() : src === "desc" ? renderDescStack() : renderStack();
 });
 
 // ---------- ユーティリティ ----------
