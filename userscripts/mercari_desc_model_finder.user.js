@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.29
+// @version      2.30
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -442,8 +442,11 @@
     async function fetchItems(tpl) {
         const allItems = {};
 
-        // 日次運用：前回実行時刻（メーカーURL単位で記録）
-        const runKey      = 'desc_last_run_' + window.location.href.replace(/[^a-zA-Z0-9]/g, '').slice(-80);
+        // 日次運用：前回実行時刻（メーカー単位で記録）
+        // brand_idがあればそれを、なければURL全体の簡易ハッシュを使う
+        const _brandMatch = window.location.href.match(/brand_id=(\d+)/);
+        const _urlHash    = window.location.href.split('').reduce((a, c) => (Math.imul(31, a) + c.charCodeAt(0)) | 0, 0);
+        const runKey      = 'desc_last_run_' + (_brandMatch ? _brandMatch[1] : Math.abs(_urlHash).toString(36));
         const lastRunTime = parseInt(localStorage.getItem(runKey) || '0', 10);
         const isFirstRun  = lastRunTime === 0;
 
