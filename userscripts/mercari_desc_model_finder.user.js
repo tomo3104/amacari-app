@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.24
+// @version      2.25
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -424,13 +424,17 @@
     //  エレコム商品収集（Search API）
     // ========================================================
     async function fetchItems(tpl) {
-        const allItems     = {};
-        const processedSet = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
-        let pageToken      = '';
+        const allItems = {};
+
+        // 日次運用：前回実行時刻（メーカーURL単位で記録）
+        const runKey      = 'desc_last_run_' + window.location.href.replace(/[^a-zA-Z0-9]/g, '').slice(-80);
+        const lastRunTime = parseInt(localStorage.getItem(runKey) || '0', 10);
+        const isFirstRun  = lastRunTime === 0;
+
+        let pageToken = '';
 
         for (let page = 0; page < MAX_PAGES; page++) {
             const bodyObj = JSON.parse(tpl.body);
-            // 現在の検索条件をそのまま使用（キーワード・ブランドIDなどを上書きしない）
             bodyObj.pageToken = pageToken;
             bodyObj.pageSize  = 120;
 
@@ -453,21 +457,18 @@
                 throw e;
             }
 
-            // [DEBUG] 1ページ目だけ最初のアイテムのキーを出力
-            if (page === 0 && (data.items || []).length > 0) {
-                console.log('[desc-finder DEBUG] item keys:', Object.keys(data.items[0]));
-                console.log('[desc-finder DEBUG] first item:', JSON.stringify(data.items[0]));
-            }
-
             const pageItems = (data.items || []).filter(item => {
                 const id = item.id || item.itemId;
                 return id && item.name && item.price != null && !(item.auction && item.auction.bidDeadline);
             });
 
-            let allProcessed = pageItems.length > 0;
+            let newCount = 0;
             pageItems.forEach(item => {
-                const id = item.id || item.itemId;
-                if (!processedSet.has(id)) allProcessed = false;
+                const id        = item.id || item.itemId;
+                const createdAt = parseInt(item.created || '0', 10);
+                // 2回目以降：前回実行より古い出品はスキップ
+                if (!isFirstRun && createdAt <= lastRunTime) return;
+                newCount++;
                 allItems[id] = {
                     id,
                     name:  item.name,
@@ -477,9 +478,9 @@
                 };
             });
 
-            // このページの全件が処理済みなら以降のページは不要
-            if (allProcessed) {
-                showStatus(`${page + 1}ページ目で全件スキャン済み → 収集を終了`);
+            // このページに前回以降の新着がゼロ → 以降のページも不要
+            if (!isFirstRun && pageItems.length > 0 && newCount === 0) {
+                showStatus(`前回実行以降の新着なし（${page + 1}ページで収集終了）`);
                 break;
             }
 
@@ -488,6 +489,10 @@
             pageToken = nextToken;
             await sleep(300);
         }
+
+        // 収集完了：今回の実行時刻を保存（次回のカットオフになる）
+        localStorage.setItem(runKey, Math.floor(Date.now() / 1000));
+
         return allItems;
     }
 
