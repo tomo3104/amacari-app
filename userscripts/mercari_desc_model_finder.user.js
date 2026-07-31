@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.16
+// @version      2.17
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -158,11 +158,9 @@
         `;
         stopBtn.onclick = () => {
             localStorage.removeItem(QUEUE_KEY);
-            localStorage.removeItem(RESULT_KEY);
             matchBtn.remove();
             stopBtn.remove();
-            showStatus('中止しました', 'rgba(160,0,0,0.88)');
-            setTimeout(hideStatus, 3000);
+            finishAndSend(null);
         };
         document.body.appendChild(stopBtn);
 
