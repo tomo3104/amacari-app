@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.12
+// @version      2.13
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -33,8 +33,7 @@
     // 説明文DOMセレクター（メルカリのPREタグ）
     const DESC_SEL      = 'pre[class*="merText"]';
 
-    const TARGET_KEYWORD = 'エレコム';
-    const MAX_PAGES      = 20;
+    const MAX_PAGES = 20;
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -299,7 +298,7 @@
         `;
 
         const searchBtn = document.createElement('button');
-        searchBtn.textContent = '説明文リサーチ（ELECOM）';
+        searchBtn.textContent = '説明文リサーチ（現在の検索）';
         searchBtn.style.cssText = `
             padding:12px 18px; background:#C49A00; color:#fff;
             border:none; border-radius:6px; font-size:14px;
@@ -347,15 +346,14 @@
             searchBtn.disabled = true;
             searchBtn.textContent = '収集中...';
 
-            // エレコム販売中・新品・送料込み商品を収集
-            showStatus(`${TARGET_KEYWORD} 検索中...`);
+            showStatus(`現在の検索条件で収集中...`);
             let allItems;
             try {
                 allItems = await fetchItems(tpl);
             } catch(e) {
                 showStatus(`収集エラー: ${e.message}`, 'rgba(160,0,0,0.88)');
                 searchBtn.disabled = false;
-                searchBtn.textContent = '説明文リサーチ（ELECOM）';
+                searchBtn.textContent = '説明文リサーチ（現在の検索）';
                 return;
             }
 
@@ -367,7 +365,7 @@
             if (noModelItems.length === 0) {
                 showStatus('型番なしの商品が見つかりませんでした', 'rgba(100,80,0,0.88)');
                 searchBtn.disabled = false;
-                searchBtn.textContent = '説明文リサーチ（ELECOM）';
+                searchBtn.textContent = '説明文リサーチ（現在の検索）';
                 return;
             }
 
@@ -395,15 +393,7 @@
 
         for (let page = 0; page < MAX_PAGES; page++) {
             const bodyObj = JSON.parse(tpl.body);
-            const sc      = bodyObj.searchCondition = bodyObj.searchCondition || {};
-            sc.keyword         = TARGET_KEYWORD;
-            sc.status          = ['STATUS_ON_SALE'];
-            sc.itemConditionId = [1];  // 新品
-            sc.shippingPayerId = [2];  // 送料込み
-            delete sc.categoryId;
-            delete sc.brandId;
-            delete sc.priceMin;
-            delete sc.priceMax;
+            // 現在の検索条件をそのまま使用（キーワード・ブランドIDなどを上書きしない）
             bodyObj.pageToken = pageToken;
             bodyObj.pageSize  = 120;
 
