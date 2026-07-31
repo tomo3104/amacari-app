@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.25
+// @version      2.27
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -186,18 +186,25 @@
                 const desc  = el.innerText || '';
                 const model = extractModelFromDesc(desc);
 
+                // タイトルor説明文にセット・まとめ系ワードがあれば名前にフラグを付けてヒットに含める
+                const SET_WORDS = ['セット', 'まとめ', 'まとめ売', 'セット売', '個セット', '台セット', '点セット', '本セット'];
+                const itemName  = items[idx].name;
+                const isBundle  = SET_WORDS.some(w => itemName.includes(w) || desc.includes(w));
+
                 if (model) {
                     const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
                     const item    = items[idx];
+                    const label   = isBundle ? `【セット】${item.name} ${model}` : `${item.name} ${model}`;
                     results.push({
-                        name:  `${item.name} ${model}`,
+                        name:  label,
                         model: model,
                         price: item.price,
                         url:   item.url,
                         image: item.image,
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
-                    showStatus(`[${idx + 1}/${total}] 型番取得: ${model}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
+                    const tag = isBundle ? '【セット】' : '';
+                    showStatus(`[${idx + 1}/${total}] ${tag}型番取得: ${model}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
 
                     // 30件ごとにサーバーへ中間保存（クラッシュ対策）
                     if (results.length % SAVE_INTERVAL === 0) {
