@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -278,14 +278,14 @@
     function runLaunchMode() {
         const btnContainer = document.createElement('div');
         btnContainer.style.cssText = `
-            position:fixed; bottom:20px; left:20px; z-index:99999;
+            position:fixed; bottom:130px; left:20px; z-index:99999;
             display:flex; flex-direction:column; align-items:flex-start; gap:8px;
         `;
 
         const searchBtn = document.createElement('button');
         searchBtn.textContent = '説明文リサーチ（ELECOM）';
         searchBtn.style.cssText = `
-            padding:12px 18px; background:#F57C00; color:#fff;
+            padding:12px 18px; background:#C49A00; color:#fff;
             border:none; border-radius:6px; font-size:14px;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
@@ -447,13 +447,13 @@
         panel.id = 'desc-model-panel';
         panel.style.cssText = `
             position:fixed; top:20px; right:20px; z-index:99998;
-            background:#fff; border:2px solid #F57C00; border-radius:10px;
+            background:#fff; border:2px solid #C49A00; border-radius:10px;
             padding:16px; width:420px; max-height:80vh; overflow-y:auto;
             box-shadow:0 4px 20px rgba(0,0,0,0.25); font-size:13px; font-family:sans-serif;
         `;
 
         const header = document.createElement('div');
-        header.style.cssText = 'font-weight:bold; font-size:16px; margin-bottom:12px; color:#F57C00;';
+        header.style.cssText = 'font-weight:bold; font-size:16px; margin-bottom:12px; color:#C49A00;';
         header.textContent = `★ 仕入れ候補（説明文型番） ${matches.length}件`;
         panel.appendChild(header);
 
@@ -468,7 +468,7 @@
                     <span style="color:#999;">→ Amazon ¥${m.amazon_price?Number(m.amazon_price).toLocaleString():'?'}</span>
                     <span style="color:#4CAF50;font-weight:bold;">pmax ¥${Number(m.pmax).toLocaleString()}</span>
                 </div>
-                <div style="color:#F57C00;font-size:12px;margin-top:3px;">
+                <div style="color:#C49A00;font-size:12px;margin-top:3px;">
                     差益 ¥${Number(m.diff).toLocaleString()} ／ ASIN: ${m.asin}
                 </div>
                 <a href="${m.mercari_url}" target="_blank" style="color:#FF6600;font-size:11px;">メルカリで見る →</a>
