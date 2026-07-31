@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.19
+// @version      2.21
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -20,6 +20,7 @@
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const QUEUE_KEY       = 'desc_model_queue';
     const RESULT_KEY      = 'desc_model_results';
+    const PROCESSED_KEY   = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     // タイトルに型番が含まれるか判定
@@ -36,6 +37,15 @@
     const MAX_PAGES = 20;
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    function markProcessed(id) {
+        const arr = JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]');
+        if (!arr.includes(id)) {
+            arr.push(id);
+            if (arr.length > 10000) arr.splice(0, arr.length - 10000);
+            localStorage.setItem(PROCESSED_KEY, JSON.stringify(arr));
+        }
+    }
 
     function _getSharedTpl() {
         try {
@@ -131,6 +141,9 @@
         delete queue.pendingIdx;
         queue.currentIdx = idx;
         localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+
+        // この商品を処理済みとして記録（次回同じメーカーを調査する際にスキップ）
+        markProcessed(currentId);
 
         // 照合して終了ボタン（収集停止＋即時照合）
         const stopBtn = document.createElement('button');
@@ -355,10 +368,14 @@
                 return;
             }
 
-            const itemList     = Object.values(allItems);
-            const noModelItems = itemList.filter(item => !hasModelInTitle(item.name));
+            const itemList      = Object.values(allItems);
+            const processedSet  = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
+            const allNoModelItems = itemList.filter(item => !hasModelInTitle(item.name));
+            const noModelItems  = allNoModelItems.filter(item => !processedSet.has(item.id));
+            const skippedCount  = allNoModelItems.length - noModelItems.length;
 
-            showStatus(`${itemList.length}件収集 → 型番なし: ${noModelItems.length}件`);
+            const skipMsg = skippedCount > 0 ? ` (${skippedCount}件スキップ済み)` : '';
+            showStatus(`${itemList.length}件収集 → 型番なし: ${allNoModelItems.length}件${skipMsg} → 未処理: ${noModelItems.length}件`);
 
             if (noModelItems.length === 0) {
                 showStatus('型番なしの商品が見つかりませんでした', 'rgba(100,80,0,0.88)');
