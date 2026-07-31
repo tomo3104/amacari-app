@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.21
+// @version      2.22
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -268,10 +268,10 @@
     function finishAndSend(stopBtn) {
         const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
         localStorage.removeItem(QUEUE_KEY);
-        localStorage.removeItem(RESULT_KEY);
         if (stopBtn) stopBtn.remove();
 
         if (results.length === 0) {
+            localStorage.removeItem(RESULT_KEY);
             showStatus('説明文から型番を取得できた商品はありませんでした', 'rgba(100,80,0,0.88)');
             setTimeout(hideStatus, 6000);
             return;
@@ -286,6 +286,7 @@
             data:    JSON.stringify({ items: results, source: 'desc' }),
             timeout: 120000,
             onload: res => {
+                localStorage.removeItem(RESULT_KEY);
                 try {
                     const result = JSON.parse(res.responseText);
                     showResults(result.matches || []);
@@ -293,8 +294,14 @@
                     showStatus('サーバー応答エラー', 'rgba(160,0,0,0.88)');
                 }
             },
-            ontimeout: () => showStatus('タイムアウト — ヒットはシートに保存済み', 'rgba(100,80,0,0.88)'),
-            onerror:   () => showStatus('サーバー未起動（ASINリサーチ_1_サーバー起動.bat を実行してください）', 'rgba(160,0,0,0.88)'),
+            ontimeout: () => {
+                localStorage.removeItem(RESULT_KEY);
+                showStatus('タイムアウト — ヒットはシートに保存済み', 'rgba(100,80,0,0.88)');
+            },
+            onerror: () => showStatus(
+                `サーバー未起動 — ${results.length}件のデータは保持中。サーバー起動後にメルカリ検索ページを開いて「照合して送信」を押してください`,
+                'rgba(160,0,0,0.88)'
+            ),
         });
     }
 
@@ -342,6 +349,20 @@
                     btnContainer.appendChild(resumeBtn);
                 }
             } catch(e) {}
+        }
+
+        // サーバー未起動で終了した場合に残った結果データを送信するボタン
+        const savedResults = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+        if (savedResults.length > 0 && !existingQueueStr) {
+            const retryBtn = document.createElement('button');
+            retryBtn.textContent = `照合して送信（保存済み${savedResults.length}件）`;
+            retryBtn.style.cssText = `
+                padding:10px 16px; background:#B71C1C; color:#fff;
+                border:none; border-radius:6px; font-size:13px;
+                cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            `;
+            retryBtn.onclick = () => { retryBtn.remove(); finishAndSend(null); };
+            btnContainer.appendChild(retryBtn);
         }
 
         btnContainer.appendChild(searchBtn);
