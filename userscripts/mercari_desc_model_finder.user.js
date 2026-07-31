@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.15
+// @version      2.16
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -255,7 +255,7 @@
             method:  'POST',
             url:     PROGRESS_URL,
             headers: { 'Content-Type': 'application/json' },
-            data:    JSON.stringify({ items, keyword: TARGET_KEYWORD }),
+            data:    JSON.stringify({ items, keyword: '' }),
             timeout: 30000,
             onload:  res => {
                 try {
