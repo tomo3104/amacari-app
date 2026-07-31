@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.11
+// @version      2.12
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -97,7 +97,7 @@
                         _q.pendingIdx = skipTo;
                         localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
                         showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
-                        setTimeout(() => { window.location.href = _q.items[skipTo].url; }, 1000);
+                        setTimeout(() => { window.location.replace = _q.items[skipTo].url; }, 1000);
                     } else {
                         delete _q.pendingIdx;
                         localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
@@ -161,7 +161,7 @@
                 // 遷移先をQUEUEに記録（リダイレクト時に自動スキップするため）
                 queue.pendingIdx = nextIdx;
                 localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-                window.location.href = items[nextIdx].url;
+                window.location.replace = items[nextIdx].url;
             } else {
                 finishAndSend(stopBtn);
             }
@@ -327,7 +327,7 @@
                         existingQueue.pendingIdx = resumeIdx;
                         localStorage.setItem(QUEUE_KEY, JSON.stringify(existingQueue));
                         showStatus(`再開: ${resumeIdx + 1}件目から...`);
-                        window.location.href = existingQueue.items[resumeIdx].url;
+                        window.location.replace = existingQueue.items[resumeIdx].url;
                     };
                     btnContainer.appendChild(resumeBtn);
                 }
@@ -382,7 +382,7 @@
 
             showStatus(`${noModelItems.length}件の説明文を順番に収集します。ページが自動的に移動します...`);
             await sleep(1500);
-            window.location.href = noModelItems[0].url;
+            window.location.replace = noModelItems[0].url;
         });
     }
 
