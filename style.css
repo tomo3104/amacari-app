@@ -286,12 +286,17 @@ body {
 }
 
 .link-btn {
+  display: block;
+  width: 100%;
   text-align: center;
   padding: 7px 4px;
   border-radius: 8px;
   font-size: 11px;
   font-weight: 700;
   text-decoration: none;
+  border: none;
+  cursor: pointer;
+  box-sizing: border-box;
 }
 
 .link-amazon      { background: var(--orange); color: var(--navy); }
@@ -299,7 +304,8 @@ body {
 .link-paypay      { background: #e60012; color: white; }
 .link-monotracer  { background: #1976d2; color: white; }
 .link-keepa       { background: #333; color: white; }
-.link-reload      { background: #2e7d32; color: white; border: none; cursor: pointer; }
+.link-asin-fix    { background: #5c6bc0; color: white; }
+.link-reload      { background: #2e7d32; color: white; }
 
 .swipe-flag {
   position: absolute;
