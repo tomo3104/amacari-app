@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.27
+// @version      2.28
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -406,7 +406,15 @@
             showStatus(`${itemList.length}件収集 → 型番なし: ${allNoModelItems.length}件${skipMsg} → 未処理: ${noModelItems.length}件`);
 
             if (noModelItems.length === 0) {
-                showStatus('型番なしの商品が見つかりませんでした', 'rgba(100,80,0,0.88)');
+                let msg;
+                if (itemList.length === 0) {
+                    msg = '前回実行以降の新着なし（スキャン対象ゼロ）';
+                } else if (allNoModelItems.length === 0) {
+                    msg = `収集した${itemList.length}件 全商品のタイトルに型番あり → 説明文スキャン不要`;
+                } else {
+                    msg = `型番なし${allNoModelItems.length}件はすべてスキャン済み（スキップ${skippedCount}件）`;
+                }
+                showStatus(msg, 'rgba(100,80,0,0.88)');
                 searchBtn.disabled = false;
                 searchBtn.textContent = '説明文リサーチ（現在の検索）';
                 return;
