@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      2.10
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -24,8 +24,12 @@
 
     // タイトルに型番が含まれるか判定
     const HAS_MODEL_RE  = /\b(?:[A-Z]{2,}-[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
-    // 説明文から「型番: XXXXX」形式を抽出
-    const DESC_MODEL_RE = /(?:型番|品番|モデル(?:番号)?)[：:]\s*([A-Za-z0-9][A-Za-z0-9\-\/\.]{3,})/;
+    // 説明文から型番を抽出（ラベルあり）
+    // 対応: 型番/品番/型式/型名/モデル/モデル番号/モデル名/製品番号/商品番号
+    // セパレータ: ：/ : / 【】 / 空白 / 改行
+    const DESC_MODEL_RE = /(?:【)?(?:型番|品番|型式|型名|モデル(?:番号|名)?|製品番号|商品番号)(?:】)?[：:\s]*([A-Za-z][A-Za-z0-9\-\/\.]{3,})/;
+    // ラベルなしフォールバック: 英字2〜5文字-英数字3文字以上（例: SP-P10CUSBBK）
+    const DESC_FALLBACK_RE = /\b([A-Z]{2,5}-[A-Z0-9]{3,}[A-Z0-9]*)\b/g;
     // 説明文DOMセレクター（メルカリのPREタグ）
     const DESC_SEL      = 'pre[class*="merText"]';
 
@@ -44,8 +48,15 @@
     function hasModelInTitle(title) { return HAS_MODEL_RE.test(title); }
 
     function extractModelFromDesc(text) {
+        // ラベルあり優先
         const m = DESC_MODEL_RE.exec(text);
-        return m ? m[1].toUpperCase() : null;
+        if (m) return m[1].toUpperCase();
+        // ラベルなしフォールバック（最長一致）
+        const hits = [...text.matchAll(DESC_FALLBACK_RE)];
+        if (hits.length > 0) {
+            return hits.reduce((a, b) => a[1].length >= b[1].length ? a : b)[1].toUpperCase();
+        }
+        return null;
     }
 
     // ===== ステータスUI（全ページ共通） =====
