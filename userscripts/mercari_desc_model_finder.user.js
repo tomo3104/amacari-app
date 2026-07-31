@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.6
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -167,6 +167,7 @@
                     const item    = items[idx];
                     results.push({
                         name:  `${item.name} ${model}`,
+                        model: model,
                         price: item.price,
                         url:   item.url,
                         image: item.image,
