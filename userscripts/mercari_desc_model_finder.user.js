@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.31
+// @version      2.32
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -25,15 +25,27 @@
 
     // タイトルに型番が含まれるか判定
     // ダッシュ後は英字＋数字の両方を含む必要あり（Wi-Fi / PC-12台 などの誤検知を防ぐ）
-    const HAS_MODEL_RE  = /\b(?:[A-Z]{2,}-(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
-    // 説明文から型番を抽出（ラベルあり）
-    // 対応: 型番/品番/型式/型名/モデル/モデル番号/モデル名/製品番号/商品番号
-    // セパレータ: ：/ : / 【】 / 空白 / 改行
-    const DESC_MODEL_RE = /(?:【)?(?:型番|品番|型式|型名|モデル(?:番号|名)?|製品番号|商品番号)(?:】)?[：:\s]*([A-Za-z][A-Za-z0-9\-\/\.]{3,})/;
-    // ラベルなしフォールバック: 英字2〜5文字-英数字3文字以上（例: SP-P10CUSBBK）大文字小文字不問
-    const DESC_FALLBACK_RE = /\b([A-Za-z]{2,5}-[A-Za-z0-9]{3,}[A-Za-z0-9]*)\b/gi;
+    const HAS_MODEL_RE = /\b(?:[A-Z]{2,}-(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
+
+    // 説明文から型番を抽出（ラベルあり・全件取得）
+    const DESC_LABEL_RE = /(?:【)?(?:型番|品番|型式|型名|モデル(?:番号|名)?|製品番号|商品番号)(?:】)?[：:\s]+([A-Za-z][A-Za-z0-9\-\/\.]{3,24})/gi;
+    // フォールバック: ダッシュ後に英字と数字の両方を含む（Wi-Fi / USB-C 等を排除）
+    const DESC_FALLBACK_RE = /\b([A-Za-z]{2,5}-(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{3,20})\b/gi;
+
+    // 型番候補の除外セット・パターン
+    const _NON_MODEL = new Set(['WI-FI','USB-A','USB-B','USB-C','TYPE-A','TYPE-B','TYPE-C','HDMI','AC-DC','DC-AC']);
+    const _NON_MODEL_RE = /^(?:AC-\d|DC-\d|USB-\d|WI-FI\d|TV-\d|LAN-\d|PC-\d{1,2}$)/i;
+    function _isValidModel(s) {
+        if (s.length < 4 || s.length > 25) return false;
+        if (_NON_MODEL.has(s)) return false;
+        if (_NON_MODEL_RE.test(s)) return false;
+        // 5文字以上で数字ゼロは型番として不自然
+        if (s.length >= 5 && !/\d/.test(s)) return false;
+        return true;
+    }
+
     // 説明文DOMセレクター（メルカリのPREタグ）
-    const DESC_SEL      = 'pre[class*="merText"]';
+    const DESC_SEL = 'pre[class*="merText"]';
 
     const MAX_PAGES = 20;
 
@@ -57,16 +69,27 @@
 
     function hasModelInTitle(title) { return HAS_MODEL_RE.test(title); }
 
-    function extractModelFromDesc(text) {
-        // ラベルあり優先
-        const m = DESC_MODEL_RE.exec(text);
-        if (m) return m[1].toUpperCase();
-        // ラベルなしフォールバック（数字を含むもの・最長一致）
-        const hits = [...text.matchAll(DESC_FALLBACK_RE)].filter(h => /\d/.test(h[1]));
-        if (hits.length > 0) {
-            return hits.reduce((a, b) => a[1].length >= b[1].length ? a : b)[1].toUpperCase();
+    // 複数の型番候補を返す（ラベルあり：最大3件、フォールバック：最長1件）
+    function extractModelsFromDesc(text) {
+        const labeled = [];
+        let m;
+        const re = new RegExp(DESC_LABEL_RE.source, 'gi');
+        while ((m = re.exec(text)) !== null) {
+            const c = m[1].toUpperCase();
+            if (_isValidModel(c) && !labeled.includes(c)) labeled.push(c);
+            if (labeled.length >= 3) break;
         }
-        return null;
+        if (labeled.length > 0) return labeled;
+
+        // フォールバック（最長一致1件のみ）
+        const fbRe = new RegExp(DESC_FALLBACK_RE.source, 'gi');
+        const fallback = [];
+        while ((m = fbRe.exec(text)) !== null) {
+            const c = m[1].toUpperCase();
+            if (_isValidModel(c) && !fallback.includes(c)) fallback.push(c);
+        }
+        if (fallback.length === 0) return [];
+        return [fallback.reduce((a, b) => a.length >= b.length ? a : b)];
     }
 
     // ===== ステータスUI（全ページ共通） =====
@@ -184,28 +207,24 @@
 
             const el = document.querySelector(DESC_SEL);
             if (el && (el.innerText || '').trim().length > 5) {
-                const desc  = el.innerText || '';
-                const model = extractModelFromDesc(desc);
+                const desc    = el.innerText || '';
+                const models  = extractModelsFromDesc(desc);
 
                 // タイトルor説明文にセット・まとめ系ワードがあれば名前にフラグを付けてヒットに含める
                 const SET_WORDS = ['セット', 'まとめ', 'まとめ売', 'セット売', '個セット', '台セット', '点セット', '本セット'];
                 const itemName  = items[idx].name;
                 const isBundle  = SET_WORDS.some(w => itemName.includes(w) || desc.includes(w));
 
-                if (model) {
+                if (models.length > 0) {
                     const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
                     const item    = items[idx];
-                    const label   = isBundle ? `【セット】${item.name} ${model}` : `${item.name} ${model}`;
-                    results.push({
-                        name:  label,
-                        model: model,
-                        price: item.price,
-                        url:   item.url,
-                        image: item.image,
+                    const tag     = isBundle ? '【セット】' : '';
+                    models.forEach(model => {
+                        const label = isBundle ? `【セット】${item.name} ${model}` : `${item.name} ${model}`;
+                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
-                    const tag = isBundle ? '【セット】' : '';
-                    showStatus(`[${idx + 1}/${total}] ${tag}型番取得: ${model}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
+                    showStatus(`[${idx + 1}/${total}] ${tag}型番取得: ${models.join(', ')}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
 
                     // 30件ごとにサーバーへ中間保存（クラッシュ対策）
                     if (results.length % SAVE_INTERVAL === 0) {
