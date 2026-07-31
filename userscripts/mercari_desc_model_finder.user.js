@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.28
+// @version      2.29
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -24,7 +24,8 @@
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     // タイトルに型番が含まれるか判定
-    const HAS_MODEL_RE  = /\b(?:[A-Z]{2,}-[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
+    // ダッシュ後は英字＋数字の両方を含む必要あり（Wi-Fi / PC-12台 などの誤検知を防ぐ）
+    const HAS_MODEL_RE  = /\b(?:[A-Z]{2,}-(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
     // 説明文から型番を抽出（ラベルあり）
     // 対応: 型番/品番/型式/型名/モデル/モデル番号/モデル名/製品番号/商品番号
     // セパレータ: ：/ : / 【】 / 空白 / 改行
