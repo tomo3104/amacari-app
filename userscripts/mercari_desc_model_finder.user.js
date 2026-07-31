@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -15,6 +15,8 @@
     'use strict';
 
     const SERVER_URL      = 'http://localhost:8766/check-mercari';
+    const PROGRESS_URL    = 'http://localhost:8766/save-progress';
+    const SAVE_INTERVAL   = 30; // 何件ごとにサーバー中間送信するか
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const QUEUE_KEY       = 'desc_model_queue';
     const RESULT_KEY      = 'desc_model_results';
@@ -93,6 +95,10 @@
 
         const total = items.length;
 
+        // currentIdx を保存（クラッシュ時の再開位置として使う）
+        queue.currentIdx = idx;
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+
         // 中止ボタン
         const stopBtn = document.createElement('button');
         stopBtn.textContent = '収集中止';
@@ -144,6 +150,11 @@
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     showStatus(`[${idx + 1}/${total}] 型番取得: ${model}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
+
+                    // 30件ごとにサーバーへ中間保存（クラッシュ対策）
+                    if (results.length % SAVE_INTERVAL === 0) {
+                        sendProgress(results.slice(-SAVE_INTERVAL));
+                    }
                 } else {
                     const gotSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                     showStatus(`[${idx + 1}/${total}] 型番なし → スキップ（取得済: ${gotSoFar}件）`);
@@ -180,6 +191,26 @@
                 waitForDesc(20);
             }
         }, 2000);
+    }
+
+    // ========================================================
+    //  中間保存（30件ごと）→ サーバーへ送信してシートに記録
+    // ========================================================
+    function sendProgress(items) {
+        GM_xmlhttpRequest({
+            method:  'POST',
+            url:     PROGRESS_URL,
+            headers: { 'Content-Type': 'application/json' },
+            data:    JSON.stringify({ items, keyword: TARGET_KEYWORD }),
+            timeout: 30000,
+            onload:  res => {
+                try {
+                    const r = JSON.parse(res.responseText);
+                    if (r.ok) console.log(`[desc-finder] 中間保存: ${items.length}件`);
+                } catch(e) {}
+            },
+            onerror: () => console.warn('[desc-finder] 中間保存失敗（サーバー未起動?）'),
+        });
     }
 
     // ========================================================
@@ -235,6 +266,32 @@
             border:none; border-radius:6px; font-size:14px;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
+
+        // 前回の途中データが残っていれば「再開」ボタンを追加
+        const existingQueueStr = localStorage.getItem(QUEUE_KEY);
+        if (existingQueueStr) {
+            try {
+                const existingQueue = JSON.parse(existingQueueStr);
+                if (existingQueue.running && existingQueue.items && existingQueue.items.length > 0) {
+                    const resumeIdx   = existingQueue.currentIdx || 0;
+                    const totalItems  = existingQueue.items.length;
+                    const savedResults = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+
+                    const resumeBtn = document.createElement('button');
+                    resumeBtn.textContent = `途中から再開 (${resumeIdx + 1}/${totalItems}件目 取得済:${savedResults}件)`;
+                    resumeBtn.style.cssText = `
+                        padding:10px 16px; background:#1565C0; color:#fff;
+                        border:none; border-radius:6px; font-size:13px;
+                        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+                    `;
+                    resumeBtn.onclick = () => {
+                        showStatus(`再開: ${resumeIdx + 1}件目から...`);
+                        window.location.href = existingQueue.items[resumeIdx].url;
+                    };
+                    btnContainer.appendChild(resumeBtn);
+                }
+            } catch(e) {}
+        }
 
         btnContainer.appendChild(searchBtn);
         document.body.appendChild(btnContainer);
