@@ -299,6 +299,7 @@ body {
 .link-paypay      { background: #e60012; color: white; }
 .link-monotracer  { background: #1976d2; color: white; }
 .link-keepa       { background: #333; color: white; }
+.link-reload      { background: #2e7d32; color: white; border: none; cursor: pointer; }
 
 .swipe-flag {
   position: absolute;

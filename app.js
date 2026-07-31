@@ -267,7 +267,8 @@ function buildCardEl(card) {
         <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
-        <button class="link-btn link-asin-fix" data-row="${card.row}">ASIN修正</button>
+        <button class="link-btn link-asin-fix no-swipe" data-row="${card.row}">ASIN修正</button>
+        <button class="link-btn link-reload no-swipe">リロード</button>
       </div>
     </div>
   `;
@@ -594,6 +595,14 @@ function finishVerticalSwipe(el, card, direction, source) {
     isFurima ? renderFurimaStack() : renderStack();
   }, 220);
 }
+
+// ---------- リロード ----------
+
+els.stack.addEventListener("click", e => {
+  if (!e.target.closest(".link-reload")) return;
+  e.stopPropagation();
+  loadCards();
+});
 
 // ---------- ASIN修正 ----------
 
