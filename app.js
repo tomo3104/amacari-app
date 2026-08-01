@@ -37,6 +37,12 @@ const state = {
   descLastRejected: null,
   descSkipStack: [],
   descTotalCount: 0,
+
+  // リアルタイムリサーチタブ用
+  rtCards: [],
+  rtLastRejected: null,
+  rtSkipStack: [],
+  rtTotalCount: 0,
 };
 
 const els = {
@@ -52,7 +58,6 @@ const els = {
   archiveEmpty: document.getElementById("archive-empty"),
   archiveModeSelect: document.getElementById("archive-mode-select"),
   autoRejectedList: document.getElementById("auto-rejected-list"),
-  statsView: document.getElementById("stats-view"),
   statsMonthlyList: document.getElementById("stats-monthly-list"),
   statsDailyList: document.getElementById("stats-daily-list"),
   statsEmpty: document.getElementById("stats-empty"),
@@ -66,6 +71,11 @@ const els = {
   descEmpty: document.getElementById("desc-empty-message"),
   descProgressLabel: document.getElementById("desc-progress-label"),
   descUndoBtn: document.getElementById("desc-undo-btn"),
+  rtView: document.getElementById("rt-view"),
+  rtStack: document.getElementById("rt-card-stack"),
+  rtEmpty: document.getElementById("rt-empty-message"),
+  rtProgressLabel: document.getElementById("rt-progress-label"),
+  rtUndoBtn: document.getElementById("rt-undo-btn"),
   asinFixModal: document.getElementById("asin-fix-modal"),
   asinFixOld: document.getElementById("asin-fix-old"),
   asinFixNew: document.getElementById("asin-fix-new"),
@@ -200,6 +210,21 @@ async function loadDescCards() {
   }
 }
 
+async function loadRtCards() {
+  els.rtEmpty.textContent = "読み込み中…";
+  els.rtEmpty.style.display = "block";
+  try {
+    const res = await fetch(gasUrl("rtCards"));
+    const data = await res.json();
+    state.rtCards = data.cards || [];
+    state.rtSkipStack = [];
+    state.rtTotalCount = state.rtCards.length;
+    renderRtStack();
+  } catch (e) {
+    els.rtEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
 function renderDescStack() {
   els.descStack.querySelectorAll(".card").forEach(c => c.remove());
   const done = Math.max(state.descTotalCount - state.descCards.length, 0);
@@ -218,6 +243,27 @@ function renderDescStack() {
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
     if (depthFromTop === 0) attachSwipe(el, card, "desc");
     els.descStack.appendChild(el);
+  });
+}
+
+function renderRtStack() {
+  els.rtStack.querySelectorAll(".card").forEach(c => c.remove());
+  const done = Math.max(state.rtTotalCount - state.rtCards.length, 0);
+  els.rtProgressLabel.textContent = `${done} / ${state.rtTotalCount}`;
+  if (state.rtCards.length === 0) {
+    els.rtEmpty.textContent = "判定待ちの商品はありません。";
+    els.rtEmpty.style.display = "block";
+    return;
+  }
+  els.rtEmpty.style.display = "none";
+  const visible = state.rtCards.slice(0, 3).reverse();
+  visible.forEach((card, i) => {
+    const el = buildCardEl(card);
+    const depthFromTop = visible.length - 1 - i;
+    el.style.zIndex = String(100 - depthFromTop);
+    el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
+    if (depthFromTop === 0) attachSwipe(el, card, "rt");
+    els.rtStack.appendChild(el);
   });
 }
 
@@ -553,10 +599,10 @@ function attachSwipe(el, card, source) {
     } else if (absY > absX && absY > threshold) {
       const dir = dy < 0 ? "up" : "down";
       if (dir === "down") {
-        const skipKey = source === "furima" ? "furimaSkipStack" : source === "desc" ? "descSkipStack" : "skipStack";
+        const skipKey = source === "furima" ? "furimaSkipStack" : source === "desc" ? "descSkipStack" : source === "rt" ? "rtSkipStack" : "skipStack";
         if (state[skipKey].length === 0) {
           // 後回しスタックが空 → キューの末尾カードを先頭に循環
-          const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : "cards";
+          const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : "cards";
           if (state[cardsKey].length <= 1) {
             // カードが1枚以下 → バウンスだけ
             el.style.transform = "";
@@ -591,6 +637,7 @@ function finishSwipe(el, card, direction, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
+  const isRt     = source === "rt";
   const flyX = direction === "right" ? window.innerWidth : -window.innerWidth;
   el.style.transform = `translateX(${flyX}px)`;
   el.style.opacity = "0";
@@ -601,6 +648,8 @@ function finishSwipe(el, card, direction, source) {
       state.furimaCards = state.furimaCards.filter(c => c.row !== card.row);
     } else if (isDesc) {
       state.descCards = state.descCards.filter(c => c.row !== card.row);
+    } else if (isRt) {
+      state.rtCards = state.rtCards.filter(c => c.row !== card.row);
     } else {
       state.cards = state.cards.filter(c => c.row !== card.row);
     }
@@ -609,7 +658,10 @@ function finishSwipe(el, card, direction, source) {
     } else {
       openReasonModal(card, source);
     }
-    isFurima ? renderFurimaStack() : isDesc ? renderDescStack() : renderStack();
+    if (isFurima) renderFurimaStack();
+    else if (isDesc) renderDescStack();
+    else if (isRt) renderRtStack();
+    else renderStack();
   }, 220);
 }
 
@@ -619,14 +671,15 @@ function finishVerticalSwipe(el, card, direction, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
+  const isRt     = source === "rt";
   const flyY = (direction === "up" || direction === "down-loop") ? -window.innerHeight : window.innerHeight;
   el.style.transform = `translateY(${flyY}px)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
     el.remove();
-    const cardsKey = isFurima ? "furimaCards" : isDesc ? "descCards" : "cards";
-    const skipKey  = isFurima ? "furimaSkipStack" : isDesc ? "descSkipStack" : "skipStack";
+    const cardsKey = isFurima ? "furimaCards" : isDesc ? "descCards" : isRt ? "rtCards" : "cards";
+    const skipKey  = isFurima ? "furimaSkipStack" : isDesc ? "descSkipStack" : isRt ? "rtSkipStack" : "skipStack";
     if (direction === "up") {
       state[cardsKey] = state[cardsKey].filter(c => c.row !== card.row);
       state[cardsKey].push(card);
@@ -642,7 +695,10 @@ function finishVerticalSwipe(el, card, direction, source) {
         state[cardsKey].unshift(prev);
       }
     }
-    isFurima ? renderFurimaStack() : isDesc ? renderDescStack() : renderStack();
+    if (isFurima) renderFurimaStack();
+    else if (isDesc) renderDescStack();
+    else if (isRt) renderRtStack();
+    else renderStack();
   }, 220);
 }
 
@@ -700,6 +756,7 @@ async function judge(card, judgment, reason, source) {
   source = source || "amacari";
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
+  const isRt     = source === "rt";
   const action = isFurima ? "furimaJudge" : isDesc ? "descJudge" : "judge";
   try {
     await gasPost(action, { row: card.row, judgment, reason });
@@ -710,6 +767,9 @@ async function judge(card, judgment, reason, source) {
       } else if (isDesc) {
         state.descLastRejected = card;
         els.descUndoBtn.disabled = false;
+      } else if (isRt) {
+        state.rtLastRejected = card;
+        els.rtUndoBtn.disabled = false;
       } else {
         state.lastRejected = card;
         els.undoBtn.disabled = false;
@@ -724,9 +784,10 @@ async function undoLastReject(source) {
   source = source || "amacari";
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
-  const card = isFurima ? state.furimaLastRejected : isDesc ? state.descLastRejected : state.lastRejected;
+  const isRt     = source === "rt";
+  const card   = isFurima ? state.furimaLastRejected : isDesc ? state.descLastRejected : isRt ? state.rtLastRejected : state.lastRejected;
   if (!card) return;
-  const btn    = isFurima ? els.furimaUndoBtn : isDesc ? els.descUndoBtn : els.undoBtn;
+  const btn    = isFurima ? els.furimaUndoBtn : isDesc ? els.descUndoBtn : isRt ? els.rtUndoBtn : els.undoBtn;
   const action = isFurima ? "furimaUndo" : isDesc ? "descUndo" : "undo";
   btn.disabled = true;
   try {
@@ -739,6 +800,10 @@ async function undoLastReject(source) {
       state.descLastRejected = null;
       state.descCards.unshift(card);
       renderDescStack();
+    } else if (isRt) {
+      state.rtLastRejected = null;
+      state.rtCards.unshift(card);
+      renderRtStack();
     } else {
       state.lastRejected = null;
       state.cards.unshift(card);
@@ -948,12 +1013,21 @@ els.autoRejectedList.addEventListener("click", async e => {
 
 els.archiveModeSelect.addEventListener("change", loadArchive);
 
+document.getElementById("log-stats-toggle").addEventListener("click", () => {
+  const section = document.getElementById("log-stats-section");
+  const btn = document.getElementById("log-stats-toggle");
+  const isHidden = section.classList.contains("hidden");
+  section.classList.toggle("hidden");
+  btn.textContent = isHidden ? "▲ 実績を閉じる" : "📊 実績を見る";
+  if (isHidden) loadStats();
+});
+
 // ---------- タブ切り替え ----------
 
 const VIEWS = {
   review:  { el: els.reviewView,  load: loadCards },
   archive: { el: els.archiveView, load: loadArchive },
-  stats:   { el: els.statsView,   load: loadStats },
+  rt:      { el: els.rtView,      load: loadRtCards },
   desc:    { el: els.descView,    load: loadDescCards },
   furima:  { el: els.furimaView,  load: loadFurimaCards },
   log:     { el: document.getElementById("log-view"), load: loadLog },
@@ -979,11 +1053,15 @@ els.sortSelect.addEventListener("change", () => {
 els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
 els.furimaUndoBtn.addEventListener("click", () => undoLastReject("furima"));
 els.descUndoBtn.addEventListener("click", () => undoLastReject("desc"));
+els.rtUndoBtn.addEventListener("click", () => undoLastReject("rt"));
 
 document.getElementById("reason-cancel-btn").addEventListener("click", () => {
   const src = state.pendingRejectSource;
   closeReasonModal();
-  src === "furima" ? renderFurimaStack() : src === "desc" ? renderDescStack() : renderStack();
+  if (src === "furima") renderFurimaStack();
+  else if (src === "desc") renderDescStack();
+  else if (src === "rt") renderRtStack();
+  else renderStack();
 });
 
 // ---------- ユーティリティ ----------

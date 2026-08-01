@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  リアルタイムリサーチ：page1高速ループ・ナビなし安定版
+// @version      3.0
+// @description  リアルタイムリサーチ：メーカー101社動的ロード・page1高速ループ
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -26,7 +26,13 @@
     const P1_CAPTURES  = 'p1r_captures'; // localStorage に保存するキャプチャデータ
     const WD_TIMEOUT   = 300000;         // ウォッチドッグ5分
 
-    const SEARCH_URLS = [
+    const MAKERS_URL = 'http://localhost:8766/get-manufacturers';
+    const MAKERS_KEY = 'p1r_makers';
+    const MAKERS_TS  = 'p1r_makers_ts';
+    const MAKERS_TTL = 24 * 60 * 60 * 1000;
+
+    // サーバー未起動時のフォールバック（3カテゴリ）
+    const FALLBACK_URLS = [
         {
             name: '生活家電・空調',
             url: 'https://jp.mercari.com/search?category_id=1244%2C1245%2C1246%2C1248%2C1250%2C1251%2C1252%2C1253%2C4142%2C4143%2C4150%2C4158%2C4184%2C4188%2C4193%2C4198%2C4231%2C4232%2C4246%2C4290%2C4293%2C865%2C866%2C867%2C869%2C870%2C871%2C873%2C874%2C875%2C878&price_min=1000&price_max=20000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari',
@@ -40,6 +46,56 @@
             url: 'https://jp.mercari.com/search?category_id=10792%2C10793%2C1106%2C1156%2C1209%2C1262%2C1689%2C3660%2C3662%2C3663%2C3666%2C3673%2C3674%2C3690%2C3691%2C3692%2C3693%2C3703%2C3705%2C3707%2C3709%2C3710%2C3716%2C3728%2C3733%2C3756%2C3770%2C3779%2C3811%2C3820%2C3829%2C3830%2C3831%2C3832%2C3834%2C3839%2C3844%2C3848%2C3875%2C983%2C984%2C986&price_min=1000&price_max=20000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari',
         },
     ];
+
+    let _searchUrls = [];  // loadMakers() で動的ロード
+
+    function normalizeRtUrl(url) {
+        try {
+            const u = new URL(url);
+            u.searchParams.set('price_min', '1000');
+            u.searchParams.set('price_max', '20000');
+            u.searchParams.set('sort', 'created_time');
+            u.searchParams.set('order', 'desc');
+            if (!u.searchParams.has('item_types')) u.searchParams.set('item_types', 'mercari');
+            return u.toString();
+        } catch (e) {
+            return url;
+        }
+    }
+
+    async function loadMakers() {
+        const cached = ls.get(MAKERS_KEY);
+        const ts = parseInt(ls.get(MAKERS_TS) || '0', 10);
+        if (cached && Date.now() - ts < MAKERS_TTL) {
+            try {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    _searchUrls = parsed;
+                    p1Log(`makers cache: ${_searchUrls.length}件`);
+                    return;
+                }
+            } catch (e) {}
+        }
+        try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 10000);
+            const res = await fetch(MAKERS_URL, { signal: ctrl.signal });
+            clearTimeout(timer);
+            const data = await res.json();
+            const makers = (data.manufacturers || []).filter(m => m.url);
+            _searchUrls = makers.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
+            if (_searchUrls.length > 0) {
+                ls.set(MAKERS_KEY, JSON.stringify(_searchUrls));
+                ls.set(MAKERS_TS, String(Date.now()));
+                p1Log(`makers取得: ${_searchUrls.length}件`);
+            } else {
+                throw new Error('0件');
+            }
+        } catch (e) {
+            p1Log(`makers取得失敗: ${e.message} → フォールバック`);
+            _searchUrls = FALLBACK_URLS.map(u => ({ name: u.name, url: u.url }));
+        }
+    }
 
     // ── キャプチャデータ（ページ遷移を超えてlocalStorageで保持） ──────────────
 
@@ -57,7 +113,7 @@
     }
 
     function allCaptured() {
-        return SEARCH_URLS.every((_, i) => _captures[i]);
+        return _searchUrls.length > 0 && _searchUrls.every((_, i) => _captures[i]);
     }
 
     function clearCaptures() {
@@ -217,7 +273,7 @@
             return;
         }
 
-        showStatus(`[準備 ${cursor + 1}/3] ${SEARCH_URLS[cursor].name} 待機…`, '#5d4037');
+        showStatus(`[準備 ${cursor + 1}/${_searchUrls.length}] ${_searchUrls[cursor].name} 待機…`, '#5d4037');
         p1Log(`capture cat${cursor} 待機`);
 
         let data;
@@ -225,7 +281,7 @@
             data = await waitForXhr(20000);
         } catch (e) {
             p1Log(`capture cat${cursor} タイムアウト → リトライ`);
-            window.location.href = SEARCH_URLS[cursor].url;
+            window.location.href = _searchUrls[cursor].url;
             return;
         }
 
@@ -235,14 +291,14 @@
 
     function advanceCapture(cursor) {
         const next = cursor + 1;
-        if (next >= SEARCH_URLS.length) {
-            p1Log('全カテゴリ準備完了 → ループ開始');
+        if (next >= _searchUrls.length) {
+            p1Log(`全${_searchUrls.length}件準備完了 → ループ開始`);
             ls.set(P1_PHASE, 'loop');
             ls.set(P1_CURSOR, '0');
             startLoopPhase();
         } else {
             ls.set(P1_CURSOR, String(next));
-            window.location.href = SEARCH_URLS[next].url;
+            window.location.href = _searchUrls[next].url;
         }
     }
 
@@ -253,7 +309,7 @@
             p1Log('キャプチャデータなし → 再準備');
             ls.set(P1_PHASE, 'capture');
             ls.set(P1_CURSOR, '0');
-            window.location.href = SEARCH_URLS[0].url;
+            window.location.href = _searchUrls[0].url;
             return;
         }
 
@@ -261,10 +317,10 @@
         let _fetchErrors = 0;  // 連続エラーカウンター
 
         while (ls.get(P1_MODE) === 'search') {
-            for (let i = 0; i < SEARCH_URLS.length; i++) {
+            for (let i = 0; i < _searchUrls.length; i++) {
                 if (ls.get(P1_MODE) !== 'search') return;
 
-                showStatus(`[R] ${SEARCH_URLS[i].name} 照合中…`, '#0d47a1');
+                showStatus(`[R] ${_searchUrls[i].name} 照合中…`, '#0d47a1');
                 p1Log(`fetch cat${i}`);
 
                 let items = [];
@@ -280,7 +336,7 @@
                         clearCaptures();
                         ls.set(P1_PHASE, 'capture');
                         ls.set(P1_CURSOR, '0');
-                        window.location.href = SEARCH_URLS[0].url;
+                        window.location.href = _searchUrls[0].url;
                         return;
                     }
                     await sleep(FETCH_DELAY);
@@ -294,11 +350,11 @@
                 const total = parseInt(ls.get(P1_FOUND) || '0', 10) + found;
                 ls.set(P1_FOUND, String(total));
                 showStatus(
-                    `[R] ${SEARCH_URLS[i].name}: ヒット${found}（累計${total}）`,
+                    `[R] ${_searchUrls[i].name}: ヒット${found}（累計${total}）`,
                     found > 0 ? '#1b5e20' : '#0d47a1'
                 );
 
-                if (i < SEARCH_URLS.length - 1) await sleep(FETCH_DELAY);
+                if (i < _searchUrls.length - 1) await sleep(FETCH_DELAY);
             }
 
             const total = ls.get(P1_FOUND) || '0';
@@ -320,7 +376,7 @@
                 clearCaptures();
                 ls.set(P1_PHASE, 'capture');
                 ls.set(P1_CURSOR, '0');
-                window.location.href = SEARCH_URLS[0].url;
+                if (_searchUrls.length > 0) window.location.href = _searchUrls[0].url;
             }
         }, 30000);
     }
@@ -347,8 +403,11 @@
     restoreCaptures();  // ページロード時にキャプチャを復元
 
     window.addEventListener('DOMContentLoaded', () => {
+        // makers を非同期ロード（キャッシュがあればほぼ即完了）
+        loadMakers().catch(e => p1Log(`makers load err: ${e.message}`));
+
         startWatchdog();
-        setTimeout(() => {
+        setTimeout(async () => {
             if (document.getElementById('p1r-btn')) return;
 
             $status = document.createElement('div');
@@ -374,7 +433,7 @@
             const active = ls.get(P1_MODE) === 'search';
             updateBtn(active);
 
-            btn.onclick = () => {
+            btn.onclick = async () => {
                 if (ls.get(P1_MODE) === 'search') {
                     clearState();
                     updateBtn(false);
@@ -386,11 +445,16 @@
                     ls.set(P1_FOUND,  '0');
                     ls.set(P1_PHASE,  'capture');
                     updateBtn(true);
-                    window.location.href = SEARCH_URLS[0].url;
+                    if (_searchUrls.length === 0) {
+                        showStatus('メーカーリスト読み込み中…', '#424242');
+                        await loadMakers();
+                    }
+                    window.location.href = _searchUrls[0].url;
                 }
             };
 
             if (active) {
+                if (_searchUrls.length === 0) await loadMakers();
                 const phase = ls.get(P1_PHASE);
                 if (phase === 'loop') {
                     startLoopPhase();
@@ -399,7 +463,8 @@
                         runCapturePhase();
                     } else {
                         const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
-                        window.location.href = SEARCH_URLS[cursor].url;
+                        const url = (_searchUrls[cursor] || _searchUrls[0] || FALLBACK_URLS[0]).url;
+                        window.location.href = url;
                     }
                 }
             } else if (new URLSearchParams(location.search).get('auto_realtime') === '1') {
@@ -409,7 +474,8 @@
                 ls.set(P1_FOUND,  '0');
                 ls.set(P1_PHASE,  'capture');
                 updateBtn(true);
-                window.location.href = SEARCH_URLS[0].url;
+                if (_searchUrls.length === 0) await loadMakers();
+                window.location.href = _searchUrls[0].url;
             }
         }, 900);
     });
