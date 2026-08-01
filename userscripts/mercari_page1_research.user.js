@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.13
+// @version      3.14
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -376,71 +376,78 @@
 
     // ── キャプチャフェーズ（初回のみ3カテゴリを1回ずつ遷移して記録） ─────────
 
-    async function runCapturePhase() {
-        const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
-
-        if (_captures[cursor]) {
-            advanceCapture(cursor);
-            return;
-        }
-
-        setTitle(`📡 準備中 ${cursor + 1}/${_searchUrls.length} ${_searchUrls[cursor].name}`);
-        showStatus(`[準備 ${cursor + 1}/${_searchUrls.length}] ${_searchUrls[cursor].name} 待機…`, '#5d4037');
-        p1Log(`capture cat${cursor} 待機`);
-
-        let data;
+    function buildBodyFromUrl(templateBody, makerUrl) {
         try {
-            data = await waitForXhr(15000);
-        } catch (e) {
-            p1Log(`capture cat${cursor} タイムアウト → スキップ`);
-            reportStatus(`${_searchUrls[cursor].name} タイムアウト スキップ`, 'capture', cursor + 1, _searchUrls.length);
-            advanceCapture(cursor);
-            return;
-        }
+            const body = JSON.parse(templateBody);
+            const u = new URL(makerUrl);
+            const sc = body.searchCondition || {};
 
-        p1Log(`capture cat${cursor} OK items=${data.items.length}`);
-        reportStatus(`${_searchUrls[cursor].name} キャプチャ完了`, 'capture', cursor + 1, _searchUrls.length);
-        advanceCapture(cursor);
+            const brandId    = u.searchParams.get('brand_id');
+            const categoryId = u.searchParams.get('category_id');
+
+            ['brandId', 'brandIds'].forEach(k => { if (k in sc) sc[k] = []; });
+            ['categoryId', 'categoryIds'].forEach(k => { if (k in sc) sc[k] = []; });
+
+            if (brandId) {
+                if ('brandId'  in sc) sc.brandId  = [brandId];
+                if ('brandIds' in sc) sc.brandIds = [brandId];
+            } else if (categoryId) {
+                const cats = categoryId.split(',');
+                if ('categoryId'  in sc) sc.categoryId  = cats;
+                if ('categoryIds' in sc) sc.categoryIds = cats;
+            }
+
+            body.searchCondition = sc;
+            body.pageToken = '';
+            return JSON.stringify(body);
+        } catch (e) {
+            return templateBody;
+        }
     }
 
-    function advanceCapture(cursor) {
-        const next = cursor + 1;
-        if (next >= _searchUrls.length) {
-            p1Log(`全${_searchUrls.length}件準備完了 → ループ開始`);
+    async function runCapturePhase() {
+        if (ls.get('mercari_api_shared_tpl')) {
+            p1Log('テンプレート取得済み → ループ開始');
             ls.set(P1_PHASE, 'loop');
             ls.set(P1_CURSOR, '0');
             startLoopPhase();
-        } else {
-            ls.set(P1_CURSOR, String(next));
-            const cooldown = (next % 25 === 0) ? 60000 : 5000;
-            if (cooldown > 5000) {
-                showStatus(`[準備 ${next + 1}/${_searchUrls.length}] 25件ごとの休憩中（1分）…`, '#5d4037');
-                setTitle(`⏸ 休憩中 ${next + 1}/${_searchUrls.length}`);
-                reportStatus(`25件ごとの休憩（1分）`, 'capture', next + 1, _searchUrls.length);
-            } else {
-                showStatus(`[準備 ${next + 1}/${_searchUrls.length}] 次: ${_searchUrls[next].name}（停止はEscキー）`, '#5d4037');
-            }
-            setTimeout(() => {
-                if (ls.get(P1_MODE) === 'search') {
-                    window.location.href = _searchUrls[next].url;
-                }
-            }, cooldown);
+            return;
         }
+
+        setTitle(`📡 準備中 ${_searchUrls[0].name}`);
+        showStatus(`[準備] ${_searchUrls[0].name} 認証取得中…（1ページのみ）`, '#5d4037');
+        p1Log('capture: 認証テンプレート取得中');
+
+        try {
+            await waitForXhr(15000);
+        } catch (e) {
+            p1Log('capture タイムアウト → リトライ');
+            reportStatus('タイムアウト リトライ', 'capture');
+            window.location.href = _searchUrls[0].url;
+            return;
+        }
+
+        p1Log('capture OK → ループ開始');
+        reportStatus('認証取得完了 → ループ開始', 'capture');
+        ls.set(P1_PHASE, 'loop');
+        ls.set(P1_CURSOR, '0');
+        startLoopPhase();
     }
 
     // ── ループフェーズ（ページ遷移なし・fetch直接） ───────────────────────────
 
     async function startLoopPhase() {
-        if (!allCaptured()) {
-            p1Log('キャプチャデータなし → 再準備');
+        const tplStr = ls.get('mercari_api_shared_tpl');
+        if (!tplStr) {
+            p1Log('テンプレートなし → 再キャプチャ');
             ls.set(P1_PHASE, 'capture');
-            ls.set(P1_CURSOR, '0');
             window.location.href = _searchUrls[0].url;
             return;
         }
 
+        const tpl = JSON.parse(tplStr);
         p1Log('=== ループ開始（ナビなし）===');
-        let _fetchErrors = 0;  // 連続エラーカウンター
+        let _fetchErrors = 0;
 
         while (ls.get(P1_MODE) === 'search') {
             for (let i = 0; i < _searchUrls.length; i++) {
@@ -450,24 +457,21 @@
                 showStatus(`[R] ${_searchUrls[i].name} 照合中…`, '#0d47a1');
                 p1Log(`fetch cat${i}`);
 
-                if (!_captures[i]) {
-                    p1Log(`cat${i} キャプチャなし スキップ`);
-                    continue;
-                }
+                const body = buildBodyFromUrl(tpl.body, _searchUrls[i].url);
+                const cap = { ...tpl, body };
 
                 let items = [];
                 try {
-                    const data = await fetchCategory(_captures[i]);
+                    const data = await fetchCategory(cap);
                     items = data.items || [];
-                    _fetchErrors = 0;  // 成功したらリセット
+                    _fetchErrors = 0;
                 } catch (e) {
                     _fetchErrors++;
                     p1Log(`fetch cat${i} エラー(${_fetchErrors}回): ${e.message}`);
-                    if (_fetchErrors >= 3 || /HTTP 4|no items/.test(e.message)) {
-                        p1Log('エラー → キャプチャ破棄・再準備');
-                        clearCaptures();
+                    if (_fetchErrors >= 5 || /HTTP 4/.test(e.message)) {
+                        p1Log('認証切れ → テンプレート破棄・再キャプチャ');
+                        ls.del('mercari_api_shared_tpl');
                         ls.set(P1_PHASE, 'capture');
-                        ls.set(P1_CURSOR, '0');
                         window.location.href = _searchUrls[0].url;
                         return;
                     }
@@ -508,6 +512,7 @@
             if (lastHb > 0 && Date.now() - lastHb > WD_TIMEOUT) {
                 p1Log('watchdog: 停止検知 → 再準備');
                 clearCaptures();
+                ls.del('mercari_api_shared_tpl');
                 ls.set(P1_PHASE, 'capture');
                 ls.set(P1_CURSOR, '0');
                 if (_searchUrls.length > 0) window.location.href = _searchUrls[0].url;
