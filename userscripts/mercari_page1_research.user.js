@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  リアルタイムリサーチ：メーカー動的ロード・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -249,6 +249,14 @@
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+    function reportStatus(msg, phase, cursor, total) {
+        _origFetch.call(window, 'http://localhost:8766/rt-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ msg, phase: phase || '', cursor: cursor || '', total: total || '' }),
+        }).catch(() => {});
+    }
+
     // ── アイテム処理・サーバー送信 ────────────────────────────────────────────
 
     async function processItems(items) {
@@ -331,6 +339,7 @@
         }
 
         p1Log(`capture cat${cursor} OK items=${data.items.length}`);
+        reportStatus(`${_searchUrls[cursor].name} キャプチャ完了`, 'capture', cursor + 1, _searchUrls.length);
         advanceCapture(cursor);
     }
 
@@ -393,6 +402,7 @@
                 }
 
                 p1Log(`cat${i} items=${items.length}`);
+                reportStatus(`${_searchUrls[i].name} ${items.length}件照合中`, 'loop');
                 let found = 0;
                 try { found = await processItems(items); } catch (e) { p1Log(`processItems error: ${e.message}`); }
 
