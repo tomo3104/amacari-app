@@ -25,8 +25,9 @@ from googleapiclient.discovery import build
 
 PORT             = 8766
 BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
-LIST_FILE        = os.path.join(BASE_DIR, "list.json")
-CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
+LIST_FILE            = os.path.join(BASE_DIR, "list.json")
+CANDIDATES_SEEN_FILE = os.path.join(BASE_DIR, "candidates_seen.json")
+CREDENTIALS_FILE     = os.path.join(BASE_DIR, "credentials.json")
 SPREADSHEET_ID        = "1ZzfoZ93b6Tqop6ncXrljR3JEoIesZ6kh4nqLWnVQUtI"
 SHEET_HITS             = "hits"
 SHEET_RESEARCH_TIMING  = "research_timing"
@@ -233,7 +234,26 @@ def save_hits(matches):
 _item_list_cache:    dict = {}   # list.jsonのキャッシュ（サーバー起動時に一度だけ読み込む）
 _pattern_cache:      dict = {}   # 型番→コンパイル済み正規表現のキャッシュ
 _seen_hit_asins:     set  = set()  # ヒット済みASIN（サーバー起動中は重複記録しない）
-_seen_candidates:    set  = set()  # 候補記録済み型番（セッション内重複防止）
+_seen_candidates:    set  = set()  # 候補記録済み型番（ファイルに永続化）
+
+def _load_seen_candidates():
+    global _seen_candidates
+    if os.path.exists(CANDIDATES_SEEN_FILE):
+        try:
+            with open(CANDIDATES_SEEN_FILE, 'r', encoding='utf-8') as f:
+                _seen_candidates = set(json.load(f))
+            print(f'[起動] candidates_seen.json 読み込み: {len(_seen_candidates)}件')
+        except Exception as e:
+            print(f'[起動] candidates_seen.json 読み込み失敗: {e}')
+
+def _save_seen_candidates():
+    try:
+        with open(CANDIDATES_SEEN_FILE, 'w', encoding='utf-8') as f:
+            json.dump(list(_seen_candidates), f, ensure_ascii=False)
+    except Exception as e:
+        print(f'candidates_seen.json 保存失敗: {e}')
+
+_load_seen_candidates()
 
 # 新型番候補収集用
 SHEET_CANDIDATES  = '新型番候補'
@@ -513,6 +533,7 @@ class Handler(BaseHTTPRequestHandler):
                     print(f"  ★ {m['model']}  メルカリ¥{m['mercari_price']:,}  差益¥{m['diff']:,}  pmax¥{m['pmax']:,}")
 
             if new_cands:
+                _save_seen_candidates()
                 import threading
                 threading.Thread(target=save_candidates, args=(new_cands,), daemon=True).start()
                 print(f'  → 新型番候補: {len(new_cands)}件')
