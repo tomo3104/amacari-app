@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.6
 // @description  リアルタイムリサーチ：メーカー動的ロード・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -249,6 +249,10 @@
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+    function setTitle(msg) {
+        try { document.title = msg; } catch (e) {}
+    }
+
     function reportStatus(msg, phase, cursor, total) {
         _origFetch.call(window, 'http://localhost:8766/rt-status', {
             method: 'POST',
@@ -326,6 +330,7 @@
             return;
         }
 
+        setTitle(`📡 準備中 ${cursor + 1}/${_searchUrls.length} ${_searchUrls[cursor].name}`);
         showStatus(`[準備 ${cursor + 1}/${_searchUrls.length}] ${_searchUrls[cursor].name} 待機…`, '#5d4037');
         p1Log(`capture cat${cursor} 待機`);
 
@@ -379,6 +384,7 @@
             for (let i = 0; i < _searchUrls.length; i++) {
                 if (ls.get(P1_MODE) !== 'search') return;
 
+                setTitle(`🔄 RT ${i + 1}/${_searchUrls.length} ${_searchUrls[i].name}`);
                 showStatus(`[R] ${_searchUrls[i].name} 照合中…`, '#0d47a1');
                 p1Log(`fetch cat${i}`);
 
@@ -419,6 +425,7 @@
 
             const total = ls.get(P1_FOUND) || '0';
             p1Log(`cycle完了 累計${total}件 ${WAIT_MS / 1000}秒待機`);
+            setTitle(`✅ RT完了 累計${total}件 | ${WAIT_MS / 1000}秒待機中`);
             showStatus(`1周完了 累計${total}件 | ${WAIT_MS / 1000}秒後に再スキャン`, '#0d47a1');
             await sleep(WAIT_MS);
         }
