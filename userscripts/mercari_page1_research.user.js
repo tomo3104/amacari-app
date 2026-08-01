@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.14
+// @version      3.15
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -126,9 +126,53 @@
         { name: 'マキタ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=9916' },
         { name: 'タミヤ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=36300' },
         { name: 'バンダイ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=958' },
-        { name: '家電カテゴリ', url: 'https://jp.mercari.com/search?category_id=1244%2C1245%2C1246%2C1248%2C1250%2C1251%2C1252%2C1253%2C4142%2C4143%2C4150%2C4158%2C4184%2C4188%2C4193%2C4198%2C4231%2C4232%2C4246%2C4290%2C4293%2C865%2C866%2C867%2C869%2C870%2C871%2C873%2C874%2C875%2C878&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&47295d80-5839-4237-bbfc-deb44b4e7999=B38F1DC9286E0B80812D9B19DB14298C1FF1116CA8332D9EE9061026635C9088&d664efe3-ae5a-4824-b729-e789bf93aba9=B38F1DC9286E0B80812D9B19DB14298C1FF1116CA8332D9EE9061026635C9088' },
-        { name: 'カメラカテゴリ', url: 'https://jp.mercari.com/search?category_id=1255%2C4021%2C4074%2C4081%2C4096%2C4121%2C4122%2C4124%2C843%2C845%2C846%2C847%2C98%2C99&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&d664efe3-ae5a-4824-b729-e789bf93aba9=B38F1DC9286E0B80812D9B19DB14298C1FF1116CA8332D9EE9061026635C9088' },
-        { name: 'スマホカテゴリ', url: 'https://jp.mercari.com/search?category_id=10792%2C10793%2C1106%2C1156%2C1209%2C1262%2C1689%2C3660%2C3662%2C3663%2C3666%2C3673%2C3674%2C3690%2C3691%2C3692%2C3693%2C3703%2C3705%2C3707%2C3709%2C3710%2C3716%2C3728%2C3733%2C3756%2C3770%2C3779%2C3811%2C3820%2C3829%2C3830%2C3831%2C3832%2C3834%2C3839%2C3844%2C3848%2C3875%2C983%2C984%2C986&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&88ddea4d-0c5e-4117-81e9-02c0848cbab4=B38F1DC9286E0B80812D9B19DB14298C1FF1116CA8332D9EE9061026635C9088&d664efe3-ae5a-4824-b729-e789bf93aba9=B38F1DC9286E0B80812D9B19DB14298C1FF1116CA8332D9EE9061026635C9088' }
+        { name: 'ライト・照明', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=65' },
+        { name: 'テレビ・映像機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=98' },
+        { name: 'オーディオ機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=99' },
+        { name: '生活家電', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=101' },
+        { name: 'ノートPC', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=840' },
+        { name: 'PC周辺機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=841' },
+        { name: 'テレビ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=848' },
+        { name: '旅行用品', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=935' },
+        { name: 'カーナビ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1113' },
+        { name: 'カーオーディオ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1114' },
+        { name: 'ETC車載器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1117' },
+        { name: 'PCパーツ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1156' },
+        { name: 'アウトドア', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1164' },
+        { name: 'ラウンド用品・アクセサリー', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1190' },
+        { name: '美容家電', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1237' },
+        { name: '冷暖房・空調', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1243' },
+        { name: 'ディスプレイ・モニター', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1262' },
+        { name: 'アウトドア・釣り・旅行用品', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=2634' },
+        { name: '旅行用家電', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3117' },
+        { name: 'キーボード', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3710' },
+        { name: 'マウス・トラックボール', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3716' },
+        { name: 'PC用ゲームコントローラー・コンバーター', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3728' },
+        { name: 'プリンター・複合機本体', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3733' },
+        { name: '外付けハードディスク・ドライブ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3756' },
+        { name: 'ルーター・ネットワーク機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3770' },
+        { name: 'PCケーブル・コネクタ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3779' },
+        { name: 'スキャナー', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3811' },
+        { name: '分配器・切替器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3820' },
+        { name: 'Webカメラ の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3829' },
+        { name: 'PCスピーカー の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3831' },
+        { name: 'PC周辺機器 その他 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3832' },
+        { name: 'メモリーカード', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3875' },
+        { name: '望遠鏡・光学機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=4124' },
+        { name: '生活家電・空調', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=4136' },
+        { name: '電池・充電池アクセサリー の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=4290' },
+        { name: '電卓 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5457' },
+        { name: '防犯・セーフティ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5497' },
+        { name: '電動工具・エア工具', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5598' },
+        { name: '住宅設備 屋外照明 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5865' },
+        { name: '住宅設備 キッチン の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5873' },
+        { name: '住宅設備 空調設備 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5874' },
+        { name: '住宅設備 水回り・配管 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5875' },
+        { name: '住宅設備 トイレ の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5877' },
+        { name: '計測・検査', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5907' },
+        { name: '電設資材 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5961' },
+        { name: 'ゴルフ GPSナビ の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=8096' },
+        { name: 'ゴルフ用距離計 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=8097' }
     ];
 
     let _searchUrls = [];  // STATIC_MAKERS から初期化
