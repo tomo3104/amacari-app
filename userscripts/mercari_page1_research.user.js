@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  リアルタイムリサーチ：メーカー動的ロード・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -352,11 +352,12 @@
             startLoopPhase();
         } else {
             ls.set(P1_CURSOR, String(next));
+            showStatus(`[準備 ${next + 1}/${_searchUrls.length}] 次: ${_searchUrls[next].name}（停止はEscキー）`, '#5d4037');
             setTimeout(() => {
                 if (ls.get(P1_MODE) === 'search') {
                     window.location.href = _searchUrls[next].url;
                 }
-            }, 1200);
+            }, 2500);
         }
     }
 
@@ -460,6 +461,15 @@
     // ── エントリポイント ──────────────────────────────────────────────────────
 
     restoreCaptures();  // ページロード時にキャプチャを復元
+
+    // Escapeキーで即停止（ページ遷移中でも有効）
+    window.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && ls.get(P1_MODE) === 'search') {
+            clearState();
+            console.log('[RT] Escapeキーで停止しました');
+            reportStatus('Escapeキーで停止', 'stop');
+        }
+    });
 
     window.addEventListener('DOMContentLoaded', () => {
         // makers を非同期ロード（キャッシュがあればほぼ即完了）
