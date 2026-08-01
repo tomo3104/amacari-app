@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Category Fetcher
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  メルカリの大カテゴリ一覧をローカルサーバーに送信（1回実行用）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -91,9 +91,7 @@
         });
     }
 
-    window.addEventListener('DOMContentLoaded', async () => {
-        // ボタンを追加
-        await new Promise(r => setTimeout(r, 1500));
+    setTimeout(async () => {
 
         const btn = document.createElement('button');
         btn.textContent = '📦 カテゴリ取得';
