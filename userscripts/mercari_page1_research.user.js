@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.11
+// @version      3.12
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -390,7 +390,7 @@
 
         let data;
         try {
-            data = await waitForXhr(30000);
+            data = await waitForXhr(15000);
         } catch (e) {
             p1Log(`capture cat${cursor} タイムアウト → スキップ`);
             reportStatus(`${_searchUrls[cursor].name} タイムアウト スキップ`, 'capture', cursor + 1, _searchUrls.length);
@@ -417,7 +417,7 @@
                 if (ls.get(P1_MODE) === 'search') {
                     window.location.href = _searchUrls[next].url;
                 }
-            }, 10000);
+            }, 5000);
         }
     }
 
@@ -442,6 +442,11 @@
                 setTitle(`🔄 RT ${i + 1}/${_searchUrls.length} ${_searchUrls[i].name}`);
                 showStatus(`[R] ${_searchUrls[i].name} 照合中…`, '#0d47a1');
                 p1Log(`fetch cat${i}`);
+
+                if (!_captures[i]) {
+                    p1Log(`cat${i} キャプチャなし スキップ`);
+                    continue;
+                }
 
                 let items = [];
                 try {
