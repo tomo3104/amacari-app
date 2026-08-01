@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.33
+// @version      2.34
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -22,7 +22,7 @@
     const RESULT_KEY      = 'desc_model_results';
     const PROCESSED_KEY     = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
     const CRAWLER_KEY       = 'desc_crawler_state';   // 発掘クローラーの進行状態
-    const MAX_PAGES_CRAWLER = 3;                       // クローラーモードの1メーカーあたり最大ページ数
+    const MAX_PAGES_CRAWLER = 1;                       // クローラーモードの1メーカーあたり最大ページ数
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     // タイトルに型番が含まれるか判定
