@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  リアルタイムリサーチ：メーカー101社動的ロード・page1高速ループ
+// @version      3.3
+// @description  リアルタイムリサーチ：メーカー動的ロード・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -26,10 +26,11 @@
     const P1_CAPTURES  = 'p1r_captures'; // localStorage に保存するキャプチャデータ
     const WD_TIMEOUT   = 300000;         // ウォッチドッグ5分
 
-    const MAKERS_URL = 'http://localhost:8766/get-manufacturers';
-    const MAKERS_KEY = 'p1r_makers';
-    const MAKERS_TS  = 'p1r_makers_ts';
-    const MAKERS_TTL = 24 * 60 * 60 * 1000;
+    const MAKERS_URL   = 'http://localhost:8766/get-manufacturers';
+    const MAKERS_KEY   = 'p1r_makers';
+    const MAKERS_TS    = 'p1r_makers_ts';
+    const MAKERS_TTL   = 24 * 60 * 60 * 1000;
+    const MAKERS_LIMIT = 101;
 
     // サーバー未起動時のフォールバック（3カテゴリ）
     const FALLBACK_URLS = [
@@ -48,6 +49,7 @@
     ];
 
     let _searchUrls = [];  // loadMakers() で動的ロード
+    let _fetchInternal = false; // 自前のfetchCategory呼び出しを区別するフラグ
 
     function normalizeRtUrl(url) {
         try {
@@ -83,7 +85,7 @@
             clearTimeout(timer);
             const data = await res.json();
             const makers = (data.manufacturers || []).filter(m => m.url);
-            _searchUrls = makers.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
+            _searchUrls = makers.slice(0, MAKERS_LIMIT).map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
             if (_searchUrls.length > 0) {
                 ls.set(MAKERS_KEY, JSON.stringify(_searchUrls));
                 ls.set(MAKERS_TS, String(Date.now()));
@@ -121,6 +123,46 @@
         ls.del('mercari_api_shared_tpl');
         Object.keys(_captures).forEach(k => delete _captures[k]);
     }
+
+    // ── fetch インターセプト（Mercari が fetch を使う場合の対応） ───────────────
+
+    const _origFetch = window.fetch;
+    window.fetch = async function (...args) {
+        const url = typeof args[0] === 'string' ? args[0]
+                  : (args[0] instanceof Request ? args[0].url : '');
+        // 自前の fetchCategory 呼び出し、または対象外のURLはスルー
+        if (_fetchInternal || !url.includes('entities:search')) {
+            return _origFetch.apply(this, args);
+        }
+        const res = await _origFetch.apply(this, args);
+        try {
+            const clone = res.clone();
+            const data = await clone.json();
+            if (data && Array.isArray(data.items)) {
+                const cursor = parseInt(ls.get(P1_CURSOR) || '0', 10);
+                const init = args[1] || {};
+                const method = (init.method) || (args[0] instanceof Request ? args[0].method : 'POST');
+                const headers = {};
+                const rawHeaders = init.headers || (args[0] instanceof Request ? args[0].headers : null);
+                if (rawHeaders) {
+                    if (rawHeaders instanceof Headers) rawHeaders.forEach((v, k) => { headers[k] = v; });
+                    else Object.assign(headers, rawHeaders);
+                }
+                const body = typeof init.body === 'string' ? init.body
+                           : (args[0] instanceof Request ? null : null);
+                if (!_captures[cursor] && body !== null) {
+                    _captures[cursor] = { url, method, headers, body };
+                    saveCaptures();
+                }
+                if (body !== null) {
+                    ls.set('mercari_api_shared_tpl', JSON.stringify({ url, method, headers, body }));
+                }
+                if (_resolve) { _resolve(data); _resolve = null; }
+                else if (!_buffered) { _buffered = data; }
+            }
+        } catch (e) {}
+        return res;
+    };
 
     // ── XHR インターセプト（リクエスト内容も記録） ───────────────────────────
 
@@ -244,8 +286,9 @@
     async function fetchCategory(cap) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 15000);
+        _fetchInternal = true;
         try {
-            const res = await fetch(cap.url, {
+            const res = await _origFetch.call(window, cap.url, {
                 method:      cap.method,
                 headers:     cap.headers,
                 credentials: 'include',
@@ -253,12 +296,14 @@
                 signal:      controller.signal,
             });
             clearTimeout(timer);
+            _fetchInternal = false;
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (!Array.isArray(data.items)) throw new Error('no items');
             return data;
         } catch (e) {
             clearTimeout(timer);
+            _fetchInternal = false;
             throw e;
         }
     }
@@ -298,7 +343,11 @@
             startLoopPhase();
         } else {
             ls.set(P1_CURSOR, String(next));
-            window.location.href = _searchUrls[next].url;
+            setTimeout(() => {
+                if (ls.get(P1_MODE) === 'search') {
+                    window.location.href = _searchUrls[next].url;
+                }
+            }, 1200);
         }
     }
 
@@ -477,7 +526,7 @@
                 if (_searchUrls.length === 0) await loadMakers();
                 window.location.href = _searchUrls[0].url;
             }
-        }, 900);
+        }, 100);
     });
 
 })();
