@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.34
+// @version      2.35
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -362,7 +362,7 @@
         showStatus('メーカーリストを取得中...');
         GM_xmlhttpRequest({
             method:  'GET',
-            url:     'http://localhost:8766/get-manufacturers',
+            url:     'http://localhost:8766/get-manufacturers?mode=desc',
             timeout: 30000,
             onload: res => {
                 let makers;
