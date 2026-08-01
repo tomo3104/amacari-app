@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      3.10
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -388,12 +388,24 @@
         showStatus(`[準備 ${cursor + 1}/${_searchUrls.length}] ${_searchUrls[cursor].name} 待機…`, '#5d4037');
         p1Log(`capture cat${cursor} 待機`);
 
+        const retryKey = `p1r_retry_${cursor}`;
         let data;
         try {
-            data = await waitForXhr(20000);
+            data = await waitForXhr(30000);
+            ls.set(retryKey, '0');
         } catch (e) {
-            p1Log(`capture cat${cursor} タイムアウト → リトライ`);
-            window.location.href = _searchUrls[cursor].url;
+            const retries = parseInt(ls.get(retryKey) || '0', 10);
+            if (retries < 2) {
+                ls.set(retryKey, String(retries + 1));
+                p1Log(`capture cat${cursor} タイムアウト → リトライ${retries + 1}`);
+                reportStatus(`${_searchUrls[cursor].name} タイムアウト リトライ${retries + 1}/2`, 'capture', cursor + 1, _searchUrls.length);
+                window.location.href = _searchUrls[cursor].url;
+            } else {
+                ls.set(retryKey, '0');
+                p1Log(`capture cat${cursor} スキップ`);
+                reportStatus(`${_searchUrls[cursor].name} スキップ`, 'capture', cursor + 1, _searchUrls.length);
+                advanceCapture(cursor);
+            }
             return;
         }
 
