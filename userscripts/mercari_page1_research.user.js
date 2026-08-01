@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.12
+// @version      3.13
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -412,12 +412,19 @@
             startLoopPhase();
         } else {
             ls.set(P1_CURSOR, String(next));
-            showStatus(`[準備 ${next + 1}/${_searchUrls.length}] 次: ${_searchUrls[next].name}（停止はEscキー）`, '#5d4037');
+            const cooldown = (next % 25 === 0) ? 60000 : 5000;
+            if (cooldown > 5000) {
+                showStatus(`[準備 ${next + 1}/${_searchUrls.length}] 25件ごとの休憩中（1分）…`, '#5d4037');
+                setTitle(`⏸ 休憩中 ${next + 1}/${_searchUrls.length}`);
+                reportStatus(`25件ごとの休憩（1分）`, 'capture', next + 1, _searchUrls.length);
+            } else {
+                showStatus(`[準備 ${next + 1}/${_searchUrls.length}] 次: ${_searchUrls[next].name}（停止はEscキー）`, '#5d4037');
+            }
             setTimeout(() => {
                 if (ls.get(P1_MODE) === 'search') {
                     window.location.href = _searchUrls[next].url;
                 }
-            }, 5000);
+            }, cooldown);
         }
     }
 
