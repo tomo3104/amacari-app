@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  リアルタイムリサーチ：メーカー動的ロード・fetch+XHRインターセプト
 // @match        https://jp.mercari.com/*
-// @grant        GM_xmlhttpRequest
-// @connect      localhost
+// @grant        none
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_page1_research.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_page1_research.user.js
@@ -255,17 +254,11 @@
     }
 
     function reportStatus(msg, phase, cursor, total) {
-        try {
-            GM_xmlhttpRequest({
-                method:  'POST',
-                url:     'http://localhost:8766/rt-status',
-                headers: { 'Content-Type': 'application/json' },
-                data:    JSON.stringify({ msg, phase: phase || '', cursor: cursor || '', total: total || '' }),
-                timeout: 3000,
-                onerror: () => {},
-                ontimeout: () => {},
-            });
-        } catch (e) {}
+        _origFetch.call(window, 'http://localhost:8766/rt-status', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ msg, phase: phase || '', cursor: cursor || '', total: total || '' }),
+        }).catch(() => {});
     }
 
     // ── アイテム処理・サーバー送信 ────────────────────────────────────────────
