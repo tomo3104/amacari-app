@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Mercari Category Fetcher
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  メルカリの大カテゴリ一覧をローカルサーバーに送信（1回実行用）
+// @version      1.2
+// @description  メルカリの大カテゴリ一覧をローカルサーバーに送信（fetch intercept方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      localhost
+// @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_category_fetcher.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_category_fetcher.user.js
 // ==/UserScript==
@@ -14,10 +15,59 @@
 (function () {
     'use strict';
 
-    const SERVER = 'http://localhost:8766/save-categories';
-    const DONE_KEY = 'mcf_done';
+    const SERVER  = 'http://localhost:8766/save-categories';
+    const _uw     = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    let _captured = null;
 
-    // 大カテゴリのみ（parentId が空 or "0" のもの）に絞る
+    // ── fetch インターセプト ──────────────────────────────────────────────────
+    const _origFetch = _uw.fetch;
+    _uw.fetch = async function (...args) {
+        const res = await _origFetch.apply(this, args);
+        const url = (typeof args[0] === 'string') ? args[0] : (args[0] && args[0].url) || '';
+        if (!_captured && url.includes('categor')) {
+            try {
+                const clone = res.clone();
+                const data  = await clone.json();
+                const cats  = findCatList(data);
+                if (cats && cats.length > 0) {
+                    const top = filterTopLevel(cats).map(normalize).filter(c => c.id && c.name);
+                    if (top.length > 0) {
+                        _captured = { endpoint: url, categories: top };
+                        updateBtn();
+                    }
+                }
+            } catch (e) {}
+        }
+        return res;
+    };
+
+    // ── XHR インターセプト ───────────────────────────────────────────────────
+    const _origOpen = XMLHttpRequest.prototype.open;
+    const _origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, url, ...rest) {
+        this._mcfUrl = url;
+        return _origOpen.apply(this, [m, url, ...rest]);
+    };
+    XMLHttpRequest.prototype.send = function (...args) {
+        if (!_captured && this._mcfUrl && String(this._mcfUrl).includes('categor')) {
+            this.addEventListener('load', () => {
+                try {
+                    const data = JSON.parse(this.responseText);
+                    const cats = findCatList(data);
+                    if (cats && cats.length > 0) {
+                        const top = filterTopLevel(cats).map(normalize).filter(c => c.id && c.name);
+                        if (top.length > 0) {
+                            _captured = { endpoint: this._mcfUrl, categories: top };
+                            updateBtn();
+                        }
+                    }
+                } catch (e) {}
+            });
+        }
+        return _origSend.apply(this, args);
+    };
+
+    // ── ユーティリティ ────────────────────────────────────────────────────────
     function filterTopLevel(cats) {
         return cats.filter(c => {
             const parent = String(c.parentId || c.parent_id || c.parentCategoryId || '');
@@ -30,30 +80,6 @@
             id:   String(cat.id || cat.categoryId || cat.category_id || ''),
             name: String(cat.name || cat.displayName || cat.label || ''),
         };
-    }
-
-    async function fetchCategories() {
-        const endpoints = [
-            'https://api.mercari.jp/master/v1/categories',
-            'https://api.mercari.jp/v2/master:getCategories',
-        ];
-        for (const ep of endpoints) {
-            try {
-                const res = await fetch(ep, {
-                    credentials: 'include',
-                    headers: { 'x-platform': 'web', 'Accept': 'application/json' },
-                });
-                if (!res.ok) continue;
-                const data = await res.json();
-                // カテゴリリストを再帰的に探す
-                const cats = findCatList(data);
-                if (cats && cats.length > 0) {
-                    const top = filterTopLevel(cats).map(normalize).filter(c => c.id && c.name);
-                    if (top.length > 0) return { endpoint: ep, categories: top, all_count: cats.length };
-                }
-            } catch (e) {}
-        }
-        return null;
     }
 
     function findCatList(obj, depth) {
@@ -91,37 +117,45 @@
         });
     }
 
-    setTimeout(async () => {
+    // ── UI ───────────────────────────────────────────────────────────────────
+    let $btn = null;
 
-        const btn = document.createElement('button');
-        btn.textContent = '📦 カテゴリ取得';
-        btn.style.cssText = [
+    function updateBtn() {
+        if (!$btn) return;
+        if (_captured) {
+            $btn.textContent = `📦 カテゴリ送信（${_captured.categories.length}件）`;
+            $btn.style.background = '#1565c0';
+            $btn.disabled = false;
+        }
+    }
+
+    setTimeout(() => {
+        $btn = document.createElement('button');
+        $btn.textContent = '📦 待機中…';
+        $btn.style.cssText = [
             'position:fixed', 'bottom:280px', 'left:8px', 'z-index:99999',
             'padding:7px 12px', 'border:none', 'border-radius:6px',
             'cursor:pointer', 'font-size:12px', 'font-weight:bold',
-            'color:#fff', 'background:#6A1B9A', 'box-shadow:0 2px 6px rgba(0,0,0,.4)',
+            'color:#fff', 'background:#616161', 'box-shadow:0 2px 6px rgba(0,0,0,.4)',
         ].join(';');
+        $btn.disabled = true;
 
-        btn.onclick = async () => {
-            btn.textContent = '取得中…';
-            btn.disabled = true;
+        $btn.onclick = async () => {
+            if (!_captured) return;
+            $btn.textContent = '送信中…';
+            $btn.disabled = true;
             try {
-                const result = await fetchCategories();
-                if (!result) {
-                    btn.textContent = '❌ 取得失敗';
-                    btn.style.background = '#c62828';
-                    return;
-                }
-                await sendToServer(result);
-                btn.textContent = `✅ ${result.categories.length}件送信完了`;
-                btn.style.background = '#1b5e20';
+                await sendToServer(_captured);
+                $btn.textContent = `✅ ${_captured.categories.length}件完了`;
+                $btn.style.background = '#1b5e20';
             } catch (e) {
-                btn.textContent = `❌ ${e.message}`;
-                btn.style.background = '#c62828';
-                btn.disabled = false;
+                $btn.textContent = `❌ ${e.message}`;
+                $btn.style.background = '#c62828';
+                $btn.disabled = false;
             }
         };
 
-        document.body.appendChild(btn);
-    });
+        document.body.appendChild($btn);
+        if (_captured) updateBtn();
+    }, 1500);
 })();
