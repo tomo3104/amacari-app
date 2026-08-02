@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.37
+// @version      2.38
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -391,8 +391,9 @@
                 };
                 localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
                 localStorage.setItem(RESULT_KEY, JSON.stringify([]));
-                localStorage.removeItem(QUEUE_KEY);      // 旧バージョンの残存データをクリア
-                localStorage.removeItem(_SHARED_TPL_KEY); // テンプレートリセット
+                localStorage.removeItem(QUEUE_KEY);
+                localStorage.removeItem(_SHARED_TPL_KEY);
+                localStorage.removeItem(PROCESSED_KEY); // クローラー開始時は処理済みリストをリセット
                 showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
                 setTimeout(() => { window.location.href = makers[0].url; }, 1500);
             },
