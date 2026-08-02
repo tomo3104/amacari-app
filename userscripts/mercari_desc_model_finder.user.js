@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.36
+// @version      2.37
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -707,7 +707,7 @@
                 signal:      ctrl.signal,
             });
             if (!res.ok) {
-                if (_fetchDiag) showStatus(`[診断] HTTP ${res.status} → 取得失敗`, '#5d4037');
+                if (_fetchDiag) { showStatus(`[診断] HTTP ${res.status} → 取得失敗`, '#5d4037'); await sleep(5000); _fetchDiag = false; }
                 return null;
             }
             const html = await res.text();
@@ -719,15 +719,15 @@
                     const nd   = JSON.parse(ndMatch[1]);
                     const desc = _findDesc(nd, itemId, 0);
                     if (desc) {
-                        _fetchDiag = false;
+                        if (_fetchDiag) { showStatus(`[診断OK] NEXT_DATA取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
                         return desc;
                     }
-                    if (_fetchDiag) showStatus(`[診断] __NEXT_DATA__あり・description未発見（${html.length}chars）`, '#5d4037');
+                    if (_fetchDiag) { showStatus(`[診断] NEXT_DATAあり・description未発見（HTML:${html.length}chars）`, '#5d4037'); await sleep(5000); }
                 } catch(e) {
-                    if (_fetchDiag) showStatus(`[診断] __NEXT_DATA__ パース失敗`, '#5d4037');
+                    if (_fetchDiag) { showStatus(`[診断] NEXT_DATAパース失敗`, '#5d4037'); await sleep(5000); }
                 }
             } else {
-                if (_fetchDiag) showStatus(`[診断] __NEXT_DATA__タグなし（${html.length}chars）`, '#5d4037');
+                if (_fetchDiag) { showStatus(`[診断] NEXT_DATAタグなし（HTML:${html.length}chars）`, '#5d4037'); await sleep(5000); }
             }
 
             // 方法2: SSR HTML の merText pre タグを直接抽出
@@ -735,16 +735,15 @@
             if (preMatch) {
                 const desc = _decodeHtml(preMatch[1]).trim();
                 if (desc.length > 10) {
-                    _fetchDiag = false;
+                    if (_fetchDiag) { showStatus(`[診断OK] merText取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
                     return desc;
                 }
             }
 
-            if (_fetchDiag) showStatus(`[診断] merTextタグも未発見。CSR専用の可能性あり`, '#b71c1c');
-            _fetchDiag = false;
+            if (_fetchDiag) { showStatus(`[診断] merTextも未発見 → CSR専用の可能性あり`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
             return null;
         } catch(e) {
-            if (_fetchDiag) { showStatus(`[診断] fetch例外: ${e.message}`, '#b71c1c'); _fetchDiag = false; }
+            if (_fetchDiag) { showStatus(`[診断] fetch例外: ${e.message}`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
             return null;
         } finally {
             clearTimeout(timer);
