@@ -146,9 +146,9 @@
             } catch(e) {}
         }
 
-        // 発掘クローラーモード：検索ページに来たら次のメーカーを収集
+        // 発掘クローラーモード：検索ページに来たら次のメーカーを収集（QUEUE_KEYに依存しない）
         const _crawlerStr = localStorage.getItem(CRAWLER_KEY);
-        if (_crawlerStr && !(_qStr && JSON.parse(_qStr || '{}').running)) {
+        if (_crawlerStr) {
             try {
                 const _cs = JSON.parse(_crawlerStr);
                 if (_cs.running) {
@@ -391,9 +391,9 @@
                 };
                 localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
                 localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+                localStorage.removeItem(QUEUE_KEY);      // 旧バージョンの残存データをクリア
+                localStorage.removeItem(_SHARED_TPL_KEY); // テンプレートリセット
                 showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
-                // テンプレートをクリアして次ページで確実に新しい検索条件を取得する
-                localStorage.removeItem(_SHARED_TPL_KEY);
                 setTimeout(() => { window.location.href = makers[0].url; }, 1500);
             },
             onerror:    () => showStatus('サーバー未起動（localhost:8766）', 'rgba(160,0,0,0.88)'),
