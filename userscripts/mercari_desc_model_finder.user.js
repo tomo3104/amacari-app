@@ -659,17 +659,16 @@
     let _abortFetch = false;
 
     async function fetchItemDesc(url) {
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 10000);
         try {
-            const ctrl  = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 10000);
-            const res   = await fetch(url, {
+            const res  = await fetch(url, {
                 credentials: 'include',
                 headers:     { 'Accept': 'text/html,application/xhtml+xml' },
                 signal:      ctrl.signal,
             });
-            clearTimeout(timer);
             if (!res.ok) return null;
-            const html = await res.text();
+            const html = await res.text(); // abort signal はここでも有効（finally で clearTimeout）
 
             const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
             if (!m) return null;
@@ -677,7 +676,6 @@
             let nd;
             try { nd = JSON.parse(m[1]); } catch(e) { return null; }
 
-            // 複数パスを試行
             const item = nd?.props?.pageProps?.item
                       || nd?.props?.pageProps?.data?.item
                       || nd?.props?.pageProps?.initialData?.item
@@ -685,6 +683,8 @@
             return (item && item.description) || null;
         } catch(e) {
             return null;
+        } finally {
+            clearTimeout(timer); // fetch・res.text() どちらが終わっても必ず解除
         }
     }
 
