@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.35
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（DOMアクセス方式）
+// @version      2.36
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
@@ -468,17 +468,8 @@
             return;
         }
 
-        localStorage.setItem(QUEUE_KEY, JSON.stringify({
-            items:       noModelItems,
-            running:     true,
-            crawlerMode: true,
-            startedAt:   Date.now(),
-            pendingIdx:  0,
-        }));
-
-        await sleep(600);
         abortBtn.remove();
-        window.location.replace(noModelItems[0].url);
+        await processItemsWithFetch(noModelItems, true, maker.name);
     }
 
     // 発掘クローラー：1メーカー完了 → 次のメーカーへ or 全完了
@@ -655,23 +646,120 @@
                 return;
             }
 
-            // キューを保存して最初の商品ページへ遷移
-            localStorage.setItem(QUEUE_KEY, JSON.stringify({
-                items:      noModelItems,
-                running:    true,
-                startedAt:  Date.now(),
-                pendingIdx: 0,
-            }));
             localStorage.setItem(RESULT_KEY, JSON.stringify([]));
-
-            showStatus(`${noModelItems.length}件の説明文を順番に収集します。ページが自動的に移動します...`);
-            await sleep(1500);
-            window.location.replace(noModelItems[0].url);
+            showStatus(`${noModelItems.length}件の説明文をバックグラウンドで取得します（ページ移動なし）...`);
+            await sleep(500);
+            await processItemsWithFetch(noModelItems, false);
         });
     }
 
     // ========================================================
-    //  エレコム商品収集（Search API）
+    //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
+    // ========================================================
+    let _abortFetch = false;
+
+    async function fetchItemDesc(url) {
+        try {
+            const ctrl  = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 10000);
+            const res   = await fetch(url, {
+                credentials: 'include',
+                headers:     { 'Accept': 'text/html,application/xhtml+xml' },
+                signal:      ctrl.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) return null;
+            const html = await res.text();
+
+            const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
+            if (!m) return null;
+
+            let nd;
+            try { nd = JSON.parse(m[1]); } catch(e) { return null; }
+
+            // 複数パスを試行
+            const item = nd?.props?.pageProps?.item
+                      || nd?.props?.pageProps?.data?.item
+                      || nd?.props?.pageProps?.initialData?.item
+                      || nd?.props?.pageProps?.itemDetail?.item;
+            return (item && item.description) || null;
+        } catch(e) {
+            return null;
+        }
+    }
+
+    async function processItemsWithFetch(noModelItems, isCrawlerMode, makerName) {
+        _abortFetch = false;
+        const total  = noModelItems.length;
+        const prefix = makerName ? `[${makerName}] ` : '';
+
+        const stopBtn = document.createElement('button');
+        stopBtn.textContent = '中止';
+        stopBtn.style.cssText = `
+            position:fixed; bottom:80px; left:20px; z-index:99999;
+            padding:8px 14px; background:#B71C1C; color:#fff;
+            border:none; border-radius:6px; font-size:12px; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        stopBtn.onclick = () => { _abortFetch = true; stopBtn.remove(); };
+        document.body.appendChild(stopBtn);
+
+        let nullCount = 0;
+
+        for (let i = 0; i < total; i++) {
+            if (_abortFetch) break;
+
+            const item = noModelItems[i];
+            showStatus(`${prefix}[${i + 1}/${total}] 説明文フェッチ中...`);
+            markProcessed(item.id);
+
+            const desc = await fetchItemDesc(item.url);
+
+            if (desc) {
+                nullCount = 0;
+                const models    = extractModelsFromDesc(desc);
+                const SET_WORDS = ['セット', 'まとめ', 'まとめ売', 'セット売', '個セット', '台セット', '点セット', '本セット'];
+                const isBundle  = SET_WORDS.some(w => item.name.includes(w) || desc.includes(w));
+
+                if (models.length > 0) {
+                    const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+                    models.forEach(model => {
+                        const label = isBundle ? `【セット】${item.name} ${model}` : `${item.name} ${model}`;
+                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image });
+                    });
+                    localStorage.setItem(RESULT_KEY, JSON.stringify(results));
+                    const tag = isBundle ? '【セット】' : '';
+                    showStatus(`${prefix}[${i + 1}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
+                    if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL));
+                } else {
+                    const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+                    showStatus(`${prefix}[${i + 1}/${total}] 型番なし（累計: ${cnt}件）`);
+                }
+            } else {
+                nullCount++;
+                const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+                showStatus(`${prefix}[${i + 1}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
+                // 5件連続でnullなら __NEXT_DATA__ 非対応の可能性あり → コンソールに警告
+                if (nullCount === 5) {
+                    console.warn('[desc-finder] __NEXT_DATA__ から説明文が取得できていません。JSONパスが変わった可能性があります。');
+                }
+            }
+
+            await sleep(300);
+        }
+
+        stopBtn.remove();
+
+        if (isCrawlerMode) {
+            if (_abortFetch) localStorage.removeItem(CRAWLER_KEY); // 中止時はクローラー全体も停止
+            finishMakerAndContinue();
+        } else {
+            finishAndSend(null);
+        }
+    }
+
+    // ========================================================
+    //  商品収集（Search API）
     // ========================================================
     async function fetchItems(tpl, maxPages = MAX_PAGES) {
         const allItems = {};
