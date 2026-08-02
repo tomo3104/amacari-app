@@ -659,10 +659,16 @@
     let _abortFetch = false;
 
     // __NEXT_DATA__ JSON を再帰探索して description フィールドを探す
-    // itemId と一致する id を持つオブジェクトを優先（なければ最初に見つかった長い文字列）
     function _findDesc(obj, itemId, depth) {
         if (depth > 10 || !obj || typeof obj !== 'object') return null;
-        if (obj.id === itemId && typeof obj.description === 'string' && obj.description.length > 10) {
+        // ID一致 + description あり → 確実にヒット
+        if ((obj.id === itemId || obj.itemId === itemId) &&
+            typeof obj.description === 'string' && obj.description.length > 10) {
+            return obj.description;
+        }
+        // ID不問: description が十分長くURLでも空でもない → 候補
+        if (typeof obj.description === 'string' && obj.description.length > 50 &&
+            !obj.description.startsWith('http') && !/^[\w\s-]{1,30}$/.test(obj.description)) {
             return obj.description;
         }
         for (const k of Object.keys(obj)) {
@@ -680,27 +686,65 @@
         return null;
     }
 
+    // HTML デコード（SSRパース用）
+    function _decodeHtml(s) {
+        return s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+                .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+                .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    }
+
+    let _fetchDiag = true; // 最初の1件だけステータスに診断結果を表示
+
     async function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
         const ctrl   = new AbortController();
         const timer  = setTimeout(() => ctrl.abort(), 10000);
         try {
-            const res  = await fetch(url, {
+            const res = await fetch(url, {
                 credentials: 'include',
                 headers:     { 'Accept': 'text/html,application/xhtml+xml' },
                 signal:      ctrl.signal,
             });
-            if (!res.ok) return null;
+            if (!res.ok) {
+                if (_fetchDiag) showStatus(`[診断] HTTP ${res.status} → 取得失敗`, '#5d4037');
+                return null;
+            }
             const html = await res.text();
 
-            const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
-            if (!m) return null;
+            // 方法1: __NEXT_DATA__ 再帰探索
+            const ndMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
+            if (ndMatch) {
+                try {
+                    const nd   = JSON.parse(ndMatch[1]);
+                    const desc = _findDesc(nd, itemId, 0);
+                    if (desc) {
+                        _fetchDiag = false;
+                        return desc;
+                    }
+                    if (_fetchDiag) showStatus(`[診断] __NEXT_DATA__あり・description未発見（${html.length}chars）`, '#5d4037');
+                } catch(e) {
+                    if (_fetchDiag) showStatus(`[診断] __NEXT_DATA__ パース失敗`, '#5d4037');
+                }
+            } else {
+                if (_fetchDiag) showStatus(`[診断] __NEXT_DATA__タグなし（${html.length}chars）`, '#5d4037');
+            }
 
-            let nd;
-            try { nd = JSON.parse(m[1]); } catch(e) { return null; }
+            // 方法2: SSR HTML の merText pre タグを直接抽出
+            const preMatch = html.match(/<pre[^>]+class="[^"]*[Mm]er[Tt]ext[^"]*"[^>]*>([\s\S]*?)<\/pre>/i);
+            if (preMatch) {
+                const desc = _decodeHtml(preMatch[1]).trim();
+                if (desc.length > 10) {
+                    _fetchDiag = false;
+                    return desc;
+                }
+            }
 
-            return _findDesc(nd, itemId, 0);
+            if (_fetchDiag) showStatus(`[診断] merTextタグも未発見。CSR専用の可能性あり`, '#b71c1c');
+            _fetchDiag = false;
+            return null;
         } catch(e) {
+            if (_fetchDiag) { showStatus(`[診断] fetch例外: ${e.message}`, '#b71c1c'); _fetchDiag = false; }
             return null;
         } finally {
             clearTimeout(timer);
