@@ -658,9 +658,32 @@
     // ========================================================
     let _abortFetch = false;
 
+    // __NEXT_DATA__ JSON を再帰探索して description フィールドを探す
+    // itemId と一致する id を持つオブジェクトを優先（なければ最初に見つかった長い文字列）
+    function _findDesc(obj, itemId, depth) {
+        if (depth > 10 || !obj || typeof obj !== 'object') return null;
+        if (obj.id === itemId && typeof obj.description === 'string' && obj.description.length > 10) {
+            return obj.description;
+        }
+        for (const k of Object.keys(obj)) {
+            const v = obj[k];
+            if (Array.isArray(v)) {
+                for (const el of v) {
+                    const r = _findDesc(el, itemId, depth + 1);
+                    if (r) return r;
+                }
+            } else if (v && typeof v === 'object') {
+                const r = _findDesc(v, itemId, depth + 1);
+                if (r) return r;
+            }
+        }
+        return null;
+    }
+
     async function fetchItemDesc(url) {
-        const ctrl  = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 10000);
+        const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
+        const ctrl   = new AbortController();
+        const timer  = setTimeout(() => ctrl.abort(), 10000);
         try {
             const res  = await fetch(url, {
                 credentials: 'include',
@@ -668,7 +691,7 @@
                 signal:      ctrl.signal,
             });
             if (!res.ok) return null;
-            const html = await res.text(); // abort signal はここでも有効（finally で clearTimeout）
+            const html = await res.text();
 
             const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
             if (!m) return null;
@@ -676,15 +699,11 @@
             let nd;
             try { nd = JSON.parse(m[1]); } catch(e) { return null; }
 
-            const item = nd?.props?.pageProps?.item
-                      || nd?.props?.pageProps?.data?.item
-                      || nd?.props?.pageProps?.initialData?.item
-                      || nd?.props?.pageProps?.itemDetail?.item;
-            return (item && item.description) || null;
+            return _findDesc(nd, itemId, 0);
         } catch(e) {
             return null;
         } finally {
-            clearTimeout(timer); // fetch・res.text() どちらが終わっても必ず解除
+            clearTimeout(timer);
         }
     }
 
