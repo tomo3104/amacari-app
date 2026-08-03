@@ -1,10 +1,9 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.47
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（商品ページAPIキャプチャ方式）
+// @version      2.48
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（HTMLフェッチ+RSCペイロード解析）
 // @match        https://jp.mercari.com/*
-// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      localhost
@@ -23,8 +22,6 @@
     const RESULT_KEY      = 'desc_model_results';
     const PROCESSED_KEY     = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
-    const ITEM_API_TPL_KEY    = 'mercari_item_api_tpl'; // 商品詳細APIテンプレート（キャプチャ済み）
-    const CAPTURE_PENDING_KEY = 'desc_capture_pending'; // APIキャプチャ待ちの商品リスト
     const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
@@ -105,9 +102,9 @@
         border-radius:8px; font-size:13px; display:none;
         max-width:360px; font-family:sans-serif; line-height:1.5;
     `;
-    // document-start対応：bodyが存在するタイミングで遅延アタッチ
+    document.body.appendChild(statusEl);
+
     function showStatus(msg, bg) {
-        if (!statusEl.isConnected) (document.body || document.documentElement).appendChild(statusEl);
         statusEl.style.display = 'block';
         statusEl.style.background = bg || 'rgba(0,0,0,0.80)';
         statusEl.textContent = msg;
@@ -115,134 +112,61 @@
     function hideStatus() { statusEl.style.display = 'none'; }
 
     // ========================================================
-    //  商品ページで item detail API テンプレートを自動キャプチャ（モード判定より前に設置）
-    //  React が叩く実際のAPIコールを傍受して URL/ヘッダー/ボディを localStorage に保存する
+    //  モード判定
     // ========================================================
-    (function () {
-        const _cId = (location.pathname.match(/^\/item\/(m[A-Za-z0-9]+)/) || [])[1];
-        if (!_cId || localStorage.getItem(ITEM_API_TPL_KEY)) return;
+    const itemMatch = location.pathname.match(/^\/item\/(m[A-Za-z0-9]+)/);
 
-        // フック設置確認（ここに到達すればdocument-startが効いている）
-        localStorage.setItem('desc_capture_log', JSON.stringify([`[install] ${_cId} ${new Date().toTimeString().slice(0,8)}`]));
-
-        const _origF = _uw.fetch;
-        let _done = false;
-        let _seq = 0;
-
-        _uw.fetch = async function (...args) {
-            const _r = await _origF.apply(this, args);
-            if (!_done) {
-                try {
-                    const _in = args[0], _ii = args[1] || {};
-                    const _u = typeof _in === 'string' ? _in : (_in.url || '');
-                    _seq++;
-                    // mercari関連URLのみログ（最大30件）
-                    if (_seq <= 30 && _u.includes('mercari')) {
-                        const _t = await _r.clone().text();
-                        const _hasD = _t.includes('"description"');
-                        const _capLog = JSON.parse(localStorage.getItem('desc_capture_log') || '[]');
-                        _capLog.push(`#${_seq} ${_u.slice(20, 65)} st=${_r.status} hasD=${_hasD} len=${_t.length}`);
-                        localStorage.setItem('desc_capture_log', JSON.stringify(_capLog));
-
-                        if (_hasD && !localStorage.getItem(ITEM_API_TPL_KEY)) {
-                            const _d = _findDesc(JSON.parse(_t), _cId, 0);
-                            if (_d && _d.length > 10 && !_u.includes('.mercari.com/item/')) {
-                                _done = true;
-                                _uw.fetch = _origF;
-                                let _h = {};
-                                const _rh = _ii.headers || (_in instanceof Request && _in.headers);
-                                if (_rh instanceof Headers) _rh.forEach((v, k) => { _h[k] = v; });
-                                else if (_rh) _h = Object.assign({}, _rh);
-                                localStorage.setItem(ITEM_API_TPL_KEY, JSON.stringify({
-                                    capturedItemId: _cId, url: _u,
-                                    method:  _ii.method || (_in instanceof Request ? _in.method : 'GET'),
-                                    headers: _h,
-                                    body:    typeof _ii.body === 'string' ? _ii.body : null,
-                                }));
-                                const _cl2 = JSON.parse(localStorage.getItem('desc_capture_log') || '[]');
-                                _cl2.push(`[CAPTURED] ${_u.slice(20, 70)}`);
-                                localStorage.setItem('desc_capture_log', JSON.stringify(_cl2));
-                            }
-                        }
-                    }
-                } catch (_e) {
-                    const _cl = JSON.parse(localStorage.getItem('desc_capture_log') || '[]');
-                    _cl.push(`ERR: ${_e.message}`);
-                    localStorage.setItem('desc_capture_log', JSON.stringify(_cl));
-                }
-            }
-            return _r;
-        };
-    })();
-
-    // ========================================================
-    //  モード判定（DOM構築後に実行 — document-start対応）
-    // ========================================================
-    (document.readyState !== 'loading'
-        ? Promise.resolve()
-        : new Promise(r => document.addEventListener('DOMContentLoaded', r))
-    ).then(() => {
-        const itemMatch = location.pathname.match(/^\/item\/(m[A-Za-z0-9]+)/);
-
-        if (itemMatch) {
-            // ============ 商品ページモード ============
-            runItemPageMode(itemMatch[1]);
-        } else {
-            // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
-            const _qStr = localStorage.getItem(QUEUE_KEY);
-            if (_qStr) {
-                try {
-                    const _q = JSON.parse(_qStr);
-                    if (_q.running && _q.items && _q.pendingIdx != null) {
-                        const skipTo = _q.pendingIdx + 1;
-                        if (skipTo < _q.items.length) {
-                            _q.pendingIdx = skipTo;
-                            localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
-                            showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
-                            setTimeout(() => { window.location.replace(_q.items[skipTo].url); }, 1000);
+    if (itemMatch) {
+        // ============ 商品ページモード ============
+        runItemPageMode(itemMatch[1]);
+    } else {
+        // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
+        const _qStr = localStorage.getItem(QUEUE_KEY);
+        if (_qStr) {
+            try {
+                const _q = JSON.parse(_qStr);
+                if (_q.running && _q.items && _q.pendingIdx != null) {
+                    const skipTo = _q.pendingIdx + 1;
+                    if (skipTo < _q.items.length) {
+                        _q.pendingIdx = skipTo;
+                        localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
+                        showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
+                        setTimeout(() => { window.location.replace(_q.items[skipTo].url); }, 1000);
+                    } else {
+                        delete _q.pendingIdx;
+                        localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
+                        if (_q.crawlerMode) {
+                            finishMakerAndContinue();
                         } else {
-                            delete _q.pendingIdx;
-                            localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
-                            if (_q.crawlerMode) {
-                                finishMakerAndContinue();
-                            } else {
-                                finishAndSend(null);
-                            }
+                            finishAndSend(null);
                         }
-                        return;
                     }
-                } catch(e) {}
-            }
-
-            // 発掘クローラーモード：検索ページに来たら次のメーカーを収集（QUEUE_KEYに依存しない）
-            const _crawlerStr = localStorage.getItem(CRAWLER_KEY);
-            if (_crawlerStr) {
-                try {
-                    const _cs = JSON.parse(_crawlerStr);
-                    if (_cs.running) {
-                        runCrawlerSearchMode(_cs);
-                        return;
-                    }
-                } catch(e) {}
-            }
-
-            // ============ 起動ページモード ============
-            runLaunchMode();
+                    return;
+                }
+            } catch(e) {}
         }
-    });
+
+        // 発掘クローラーモード：検索ページに来たら次のメーカーを収集（QUEUE_KEYに依存しない）
+        const _crawlerStr = localStorage.getItem(CRAWLER_KEY);
+        if (_crawlerStr) {
+            try {
+                const _cs = JSON.parse(_crawlerStr);
+                if (_cs.running) {
+                    runCrawlerSearchMode(_cs);
+                    return;
+                }
+            } catch(e) {}
+        }
+
+        // ============ 起動ページモード ============
+        runLaunchMode();
+    }
 
     // ========================================================
     //  商品ページモード：DOMから説明文を読んで次へ進む
     // ========================================================
     function runItemPageMode(currentId) {
         const queueStr = localStorage.getItem(QUEUE_KEY);
-
-        // APIキャプチャモード：QUEUE_KEYなし + CAPTURE_PENDING_KEY あり
-        if (!queueStr && localStorage.getItem(CAPTURE_PENDING_KEY)) {
-            setTimeout(() => { runCapturePendingMode(currentId); }, 2500); // Reactレンダリング待機
-            return;
-        }
-
         if (!queueStr) return; // スクリプト未起動なら何もしない
 
         let queue;
@@ -581,55 +505,6 @@
     }
 
     // ========================================================
-    //  商品ページAPIキャプチャモード
-    //  商品詳細APIをフック経由でキャプチャし、残りアイテムをこのページで一気に処理
-    // ========================================================
-    async function runCapturePendingMode(currentId) {
-        showStatus(`APIテンプレート取得中... (${currentId})`, 'rgba(0,70,160,0.88)');
-
-        // フックがAPIをキャプチャするまで最大10秒待つ
-        for (let w = 0; w < 20; w++) {
-            if (localStorage.getItem(ITEM_API_TPL_KEY)) break;
-            await sleep(500);
-        }
-        const captured = !!localStorage.getItem(ITEM_API_TPL_KEY);
-        dlog(`APIキャプチャ: ${captured ? '成功' : 'タイムアウト（失敗）'}`);
-
-        const capStr = localStorage.getItem(CAPTURE_PENDING_KEY);
-        if (!capStr) return;
-        localStorage.removeItem(CAPTURE_PENDING_KEY);
-        let cap;
-        try { cap = JSON.parse(capStr); } catch(e) { return; }
-
-        // items[0]（このページ）の説明文をDOMから取得して結果に追加
-        const el = document.querySelector(DESC_SEL);
-        const d0 = el ? el.innerText.trim() : '';
-        const m0 = extractModelsFromDesc(d0);
-        if (m0.length > 0) {
-            const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
-            const it0 = cap.items.find(i => i.id === currentId) || cap.items[0];
-            const SET_WORDS = ['セット', 'まとめ', 'まとめ売', 'セット売', '個セット', '台セット', '点セット', '本セット'];
-            const isBundle = SET_WORDS.some(w => (it0.name || '').includes(w) || d0.includes(w));
-            m0.forEach(m => {
-                const label = isBundle ? `【セット】${it0.name} ${m}` : `${it0.name} ${m}`;
-                results.push({ name: label, model: m, price: it0.price, url: it0.url, image: it0.image });
-            });
-            localStorage.setItem(RESULT_KEY, JSON.stringify(results));
-            dlog(`items[0] DOM型番: ${m0.join(', ')}`);
-        }
-        markProcessed(currentId);
-
-        // 残りのアイテムをAPIテンプレートで処理（このページから移動せずにAPI直接コール）
-        const remaining = cap.items.filter(i => i.id !== currentId);
-        if (!captured || remaining.length === 0) {
-            if (cap.isCrawlerMode) finishMakerAndContinue();
-            else finishAndSend(null);
-            return;
-        }
-        await processItemsWithFetch(remaining, cap.isCrawlerMode, cap.makerName);
-    }
-
-    // ========================================================
     //  起動ページモード：ボタン表示 → 収集開始
     // ========================================================
     function runLaunchMode() {
@@ -832,63 +707,55 @@
 
     var _fetchDiag = true;
 
-    // キャプチャ済みAPIテンプレートを使って商品説明文を取得
-    async function fetchItemDescViaApi(itemId) {
-        const tplStr = localStorage.getItem(ITEM_API_TPL_KEY);
-        if (!tplStr) return null;
-        const tpl  = JSON.parse(tplStr);
-        const id0  = tpl.capturedItemId;
-        // キャプチャ時のIDを新しいIDに置換（URL・ボディ両方）
-        const apiUrl  = tpl.url.split(id0).join(itemId);
-        let   apiBody = tpl.body;
-        if (apiBody) apiBody = apiBody.split(id0).join(itemId);
-        try {
-            const ctrl  = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 10000);
-            const r = await fetch(apiUrl, {
-                method:      tpl.method,
-                headers:     tpl.headers,
-                credentials: 'include',
-                body:        apiBody || undefined,
-                signal:      ctrl.signal,
-            });
-            clearTimeout(timer);
-            dlog(`fetchViaApi ${apiUrl.slice(26, 60)}: ${r.status}`);
-            if (!r.ok) return null;
-            const j    = await r.json();
-            const desc = _findDesc(j, itemId, 0);
-            dlog(`  desc: ${desc ? desc.slice(0, 30) : '未発見'}`);
-            return desc || null;
-        } catch(e) { dlog(`fetchViaApi例外: ${e.message}`); return null; }
-    }
-
+    // 商品ページHTMLをフェッチしてNext.js RSCペイロードから説明文を抽出
     async function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
         dlog(`fetchItemDesc: ${itemId}`);
-        const desc = await fetchItemDescViaApi(itemId);
-        if (!desc && _fetchDiag) {
-            showStatus(`[診断] APIテンプレートで取得失敗 → ログを確認`, '#b71c1c');
-            await sleep(3000);
-            _fetchDiag = false;
-        }
-        return desc;
+        try {
+            const ctrl  = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 15000);
+            const r = await fetch(url, { credentials: 'include', signal: ctrl.signal });
+            clearTimeout(timer);
+            dlog(`HTML: ${r.status}`);
+            if (!r.ok) return null;
+            const html = await r.text();
+            dlog(`HTML取得: ${html.length}文字`);
+
+            // RSCペイロード内の "description":"..." を全件検索して最長を採用
+            const re = /"description":"((?:[^"\\]|\\.)*)"/g;
+            let best = null;
+            let m;
+            while ((m = re.exec(html)) !== null) {
+                const decoded = m[1]
+                    .replace(/\\n/g, '\n').replace(/\\r/g, '').replace(/\\t/g, '\t')
+                    .replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+                    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+                // 50文字超かつURL・短文でないものを採用（型番説明が入るくらいの長さ）
+                if (decoded.length > 50 && !decoded.startsWith('http') &&
+                    (decoded.includes('\n') || decoded.length > 100)) {
+                    if (!best || decoded.length > best.length) best = decoded;
+                }
+            }
+            if (best) {
+                dlog(`RSC description発見: ${best.slice(0, 60)}`);
+                if (_fetchDiag) { showStatus(`[診断OK] 説明文取得:「${best.slice(0, 40)}…」`, 'rgba(0,100,0,0.9)'); await sleep(3000); _fetchDiag = false; }
+                return best;
+            }
+
+            // 診断：descriptionキー自体の存在確認
+            const anyD = html.match(/"description":"([^"]{0,120})/);
+            if (anyD) dlog(`候補あり(未フィルタ): ${anyD[1].slice(0, 80)}`);
+            else dlog(`"description"自体が存在しない`);
+
+            if (_fetchDiag) { showStatus(`[診断] RSCにdescriptionなし → ログ確認`, '#b71c1c'); await sleep(3000); _fetchDiag = false; }
+        } catch(e) { dlog(`HTML例外: ${e.message}`); }
+        return null;
     }
 
     async function processItemsWithFetch(noModelItems, isCrawlerMode, makerName) {
         _abortFetch = false;
         _diagLog    = [];
         _fetchDiag  = true;
-
-        // APIテンプレートがない場合：商品ページへ1回遷移してAPIをキャプチャ（以降は不要）
-        if (!localStorage.getItem(ITEM_API_TPL_KEY)) {
-            dlog(`APIテンプレートなし → キャプチャモードへ (${noModelItems[0].id})`);
-            localStorage.setItem(CAPTURE_PENDING_KEY, JSON.stringify({ items: noModelItems, isCrawlerMode, makerName }));
-            showStatus(`APIキャプチャのため商品ページへ移動（初回のみ）...`, 'rgba(0,70,120,0.88)');
-            await sleep(800);
-            window.location.replace(noModelItems[0].url);
-            return;
-        }
-
         const total  = noModelItems.length;
         const prefix = makerName ? `[${makerName}] ` : '';
         dlog(`processItemsWithFetch開始: total=${total} maker=${makerName||'(none)'}`);
