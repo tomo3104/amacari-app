@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.50
+// @version      2.51
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -464,6 +464,7 @@
         const noModelItems = itemList.filter(i => !hasModelInTitle(i.name) && !processedSet.has(i.id));
 
         showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${itemList.length}件収集 / 未処理型番なし: ${noModelItems.length}件`);
+        console.log(`[desc-finder] [${makerIdx + 1}/${makersTotal}] ${maker.name}: ${itemList.length}件収集 / 型番なし未処理: ${noModelItems.length}件`);
 
         if (noModelItems.length === 0) {
             await sleep(1000);
@@ -499,7 +500,9 @@
 
         localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
         const next = crawlerState.makers[done];
+        const _accum = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
         showStatus(`[${done}/${total}完了] 次: ${next.name}`, 'rgba(0,70,120,0.88)');
+        console.log(`[desc-finder] [${done}/${total}完了] 累計ヒット: ${_accum}件 → 次: ${next.name}`);
         // テンプレートをクリアして次ページで確実に新しい検索条件を取得する
         localStorage.removeItem(_SHARED_TPL_KEY);
         setTimeout(() => { window.location.href = next.url; }, 1500);
@@ -815,6 +818,7 @@
         document.body.appendChild(logBtn);
 
         let nullCount = 0;
+        let makerHits = 0;
 
         for (let i = 0; i < total; i++) {
             if (_abortFetch) break;
@@ -850,7 +854,9 @@
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     const tag = isBundle ? '【セット】' : '';
+                    makerHits++;
                     showStatus(`${prefix}[${i + 1}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
+                    console.log(`[desc-finder] ▶ ヒット [${i + 1}/${total}] ${models.join(', ')} — 累計: ${results.length}件`);
                     if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL));
                     await sleep(2000); // ヒット時は2秒停止して読めるように
                 } else {
@@ -869,6 +875,9 @@
         stopBtn.remove();
         // logBtnは残す（クリックしていつでもコピー可能）
         logBtn.textContent = 'ログコピー✓';
+
+        const totalSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+        console.log(`[desc-finder] ◀ ${makerName || '(検索)'}完了: ${total}件処理 / ${makerHits}件ヒット / 累計: ${totalSoFar}件`);
 
         if (isCrawlerMode) {
             if (_abortFetch) localStorage.removeItem(CRAWLER_KEY); // 中止時はクローラー全体も停止
