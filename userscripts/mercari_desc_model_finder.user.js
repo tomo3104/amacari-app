@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.39
+// @version      2.40
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -658,6 +658,12 @@
     //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
     // ========================================================
     var _abortFetch = false;
+    var _diagLog    = [];
+    function dlog(msg) {
+        const t = new Date().toTimeString().slice(0,8);
+        _diagLog.push(`[${t}] ${msg}`);
+        localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog));
+    }
 
     // __NEXT_DATA__ JSON を再帰探索して description フィールドを探す
     function _findDesc(obj, itemId, depth) {
@@ -699,6 +705,7 @@
 
     async function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
+        dlog(`fetch開始: ${itemId}`);
         const ctrl   = new AbortController();
         const timer  = setTimeout(() => ctrl.abort(), 10000);
         try {
@@ -707,24 +714,29 @@
                 headers:     { 'Accept': 'text/html,application/xhtml+xml' },
                 signal:      ctrl.signal,
             });
+            dlog(`fetch応答: status=${res.status} ok=${res.ok}`);
             if (!res.ok) {
                 if (_fetchDiag) { showStatus(`[診断] HTTP ${res.status} → 取得失敗`, '#5d4037'); await sleep(5000); _fetchDiag = false; }
                 return null;
             }
             const html = await res.text();
+            dlog(`HTML取得: ${html.length}chars`);
 
             // 方法1: __NEXT_DATA__ 再帰探索
             const ndMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
+            dlog(`NEXT_DATA: ${ndMatch ? 'あり' : 'なし'}`);
             if (ndMatch) {
                 try {
                     const nd   = JSON.parse(ndMatch[1]);
                     const desc = _findDesc(nd, itemId, 0);
+                    dlog(`_findDesc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見'}`);
                     if (desc) {
                         if (_fetchDiag) { showStatus(`[診断OK] NEXT_DATA取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
                         return desc;
                     }
                     if (_fetchDiag) { showStatus(`[診断] NEXT_DATAあり・description未発見（HTML:${html.length}chars）`, '#5d4037'); await sleep(5000); }
                 } catch(e) {
+                    dlog(`NEXT_DATAパース失敗: ${e.message}`);
                     if (_fetchDiag) { showStatus(`[診断] NEXT_DATAパース失敗`, '#5d4037'); await sleep(5000); }
                 }
             } else {
@@ -733,6 +745,8 @@
 
             // 方法2: SSR HTML の merText pre タグを直接抽出
             const preMatch = html.match(/<pre[^>]+class="[^"]*[Mm]er[Tt]ext[^"]*"[^>]*>([\s\S]*?)<\/pre>/i);
+            const preLen = preMatch ? _decodeHtml(preMatch[1]).trim().length : 0;
+            dlog(`merText: ${preMatch ? 'あり len=' + preLen : 'なし'}`);
             if (preMatch) {
                 const desc = _decodeHtml(preMatch[1]).trim();
                 if (desc.length > 10) {
@@ -741,9 +755,11 @@
                 }
             }
 
+            dlog(`結果: null（説明文なし）`);
             if (_fetchDiag) { showStatus(`[診断] merTextも未発見 → CSR専用の可能性あり`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
             return null;
         } catch(e) {
+            dlog(`fetch例外: ${e.message}`);
             if (_fetchDiag) { showStatus(`[診断] fetch例外: ${e.message}`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
             return null;
         } finally {
@@ -753,8 +769,11 @@
 
     async function processItemsWithFetch(noModelItems, isCrawlerMode, makerName) {
         _abortFetch = false;
+        _diagLog    = [];
+        _fetchDiag  = true;
         const total  = noModelItems.length;
         const prefix = makerName ? `[${makerName}] ` : '';
+        dlog(`processItemsWithFetch開始: total=${total} maker=${makerName||'(none)'}`);
 
         const stopBtn = document.createElement('button');
         stopBtn.textContent = '中止';
@@ -764,8 +783,21 @@
             border:none; border-radius:6px; font-size:12px; cursor:pointer;
             box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
-        stopBtn.onclick = () => { _abortFetch = true; stopBtn.remove(); };
+        stopBtn.onclick = () => { _abortFetch = true; stopBtn.remove(); logBtn.remove(); };
         document.body.appendChild(stopBtn);
+
+        const logBtn = document.createElement('button');
+        logBtn.textContent = 'ログコピー';
+        logBtn.style.cssText = `
+            position:fixed; bottom:120px; left:20px; z-index:99999;
+            padding:6px 12px; background:#333; color:#fff;
+            border:none; border-radius:6px; font-size:11px; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        logBtn.onclick = () => {
+            navigator.clipboard.writeText(_diagLog.join('\n')).then(() => { logBtn.textContent = 'コピー済!'; });
+        };
+        document.body.appendChild(logBtn);
 
         let nullCount = 0;
 
@@ -781,6 +813,7 @@
             if (desc) {
                 nullCount = 0;
                 const models    = extractModelsFromDesc(desc);
+                dlog(`models: ${JSON.stringify(models)}`);
                 const SET_WORDS = ['セット', 'まとめ', 'まとめ売', 'セット売', '個セット', '台セット', '点セット', '本セット'];
                 const isBundle  = SET_WORDS.some(w => item.name.includes(w) || desc.includes(w));
 
@@ -802,16 +835,13 @@
                 nullCount++;
                 const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                 showStatus(`${prefix}[${i + 1}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
-                // 5件連続でnullなら __NEXT_DATA__ 非対応の可能性あり → コンソールに警告
-                if (nullCount === 5) {
-                    console.warn('[desc-finder] __NEXT_DATA__ から説明文が取得できていません。JSONパスが変わった可能性があります。');
-                }
             }
 
             await sleep(300);
         }
 
         stopBtn.remove();
+        logBtn.remove();
 
         if (isCrawlerMode) {
             if (_abortFetch) localStorage.removeItem(CRAWLER_KEY); // 中止時はクローラー全体も停止
