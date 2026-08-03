@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.46
+// @version      2.47
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（商品ページAPIキャプチャ方式）
 // @match        https://jp.mercari.com/*
 // @run-at       document-start
@@ -120,38 +120,56 @@
     // ========================================================
     (function () {
         const _cId = (location.pathname.match(/^\/item\/(m[A-Za-z0-9]+)/) || [])[1];
-        if (!_cId || localStorage.getItem(ITEM_API_TPL_KEY)) return; // 商品ページ以外 or 取得済みはスキップ
+        if (!_cId || localStorage.getItem(ITEM_API_TPL_KEY)) return;
+
+        // フック設置確認（ここに到達すればdocument-startが効いている）
+        localStorage.setItem('desc_capture_log', JSON.stringify([`[install] ${_cId} ${new Date().toTimeString().slice(0,8)}`]));
+
         const _origF = _uw.fetch;
         let _done = false;
+        let _seq = 0;
+
         _uw.fetch = async function (...args) {
             const _r = await _origF.apply(this, args);
-            if (!_done && !localStorage.getItem(ITEM_API_TPL_KEY)) {
+            if (!_done) {
                 try {
-                    const _t = await _r.clone().text();
-                    if (_t.length > 50 && _t.includes('"description"')) {
-                        const _d = _findDesc(JSON.parse(_t), _cId, 0);
-                        if (_d && _d.length > 10) {
-                            const _in = args[0], _ii = args[1] || {};
-                            const _u = typeof _in === 'string' ? _in : (_in.url || '');
-                            if (!_u.includes('.mercari.com/item/')) { // HTML自体のfetchを除外
+                    const _in = args[0], _ii = args[1] || {};
+                    const _u = typeof _in === 'string' ? _in : (_in.url || '');
+                    _seq++;
+                    // mercari関連URLのみログ（最大30件）
+                    if (_seq <= 30 && _u.includes('mercari')) {
+                        const _t = await _r.clone().text();
+                        const _hasD = _t.includes('"description"');
+                        const _capLog = JSON.parse(localStorage.getItem('desc_capture_log') || '[]');
+                        _capLog.push(`#${_seq} ${_u.slice(20, 65)} st=${_r.status} hasD=${_hasD} len=${_t.length}`);
+                        localStorage.setItem('desc_capture_log', JSON.stringify(_capLog));
+
+                        if (_hasD && !localStorage.getItem(ITEM_API_TPL_KEY)) {
+                            const _d = _findDesc(JSON.parse(_t), _cId, 0);
+                            if (_d && _d.length > 10 && !_u.includes('.mercari.com/item/')) {
                                 _done = true;
-                                _uw.fetch = _origF; // フックを解除
+                                _uw.fetch = _origF;
                                 let _h = {};
                                 const _rh = _ii.headers || (_in instanceof Request && _in.headers);
                                 if (_rh instanceof Headers) _rh.forEach((v, k) => { _h[k] = v; });
                                 else if (_rh) _h = Object.assign({}, _rh);
                                 localStorage.setItem(ITEM_API_TPL_KEY, JSON.stringify({
-                                    capturedItemId: _cId,
-                                    url:    _u,
-                                    method: _ii.method || (_in instanceof Request ? _in.method : 'GET'),
+                                    capturedItemId: _cId, url: _u,
+                                    method:  _ii.method || (_in instanceof Request ? _in.method : 'GET'),
                                     headers: _h,
-                                    body:   typeof _ii.body === 'string' ? _ii.body : null,
+                                    body:    typeof _ii.body === 'string' ? _ii.body : null,
                                 }));
-                                dlog(`[API-capture] ${_u.slice(0, 70)}`);
+                                const _cl2 = JSON.parse(localStorage.getItem('desc_capture_log') || '[]');
+                                _cl2.push(`[CAPTURED] ${_u.slice(20, 70)}`);
+                                localStorage.setItem('desc_capture_log', JSON.stringify(_cl2));
                             }
                         }
                     }
-                } catch (_e) {}
+                } catch (_e) {
+                    const _cl = JSON.parse(localStorage.getItem('desc_capture_log') || '[]');
+                    _cl.push(`ERR: ${_e.message}`);
+                    localStorage.setItem('desc_capture_log', JSON.stringify(_cl));
+                }
             }
             return _r;
         };
