@@ -615,6 +615,11 @@
             searchBtn.disabled = true;
             searchBtn.textContent = '収集中...';
 
+            // 手動実行は常に全件スキャン（前回実行時刻フィルタをリセット）
+            const _bm = window.location.href.match(/brand_id=(\d+)/);
+            const _uh = window.location.href.split('').reduce((a, c) => (Math.imul(31, a) + c.charCodeAt(0)) | 0, 0);
+            localStorage.removeItem('desc_last_run_' + (_bm ? _bm[1] : Math.abs(_uh).toString(36)));
+
             showStatus(`現在の検索条件で収集中...`);
             let allItems;
             try {
