@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.49
+// @version      2.50
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -852,6 +852,7 @@
                     const tag = isBundle ? '【セット】' : '';
                     showStatus(`${prefix}[${i + 1}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
                     if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL));
+                    await sleep(2000); // ヒット時は2秒停止して読めるように
                 } else {
                     const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                     showStatus(`${prefix}[${i + 1}/${total}] 型番なし（累計: ${cnt}件）`);
