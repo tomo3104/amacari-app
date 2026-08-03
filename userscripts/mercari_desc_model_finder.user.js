@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.48
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（HTMLフェッチ+RSCペイロード解析）
+// @version      2.49
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
@@ -120,6 +120,7 @@
         // ============ 商品ページモード ============
         runItemPageMode(itemMatch[1]);
     } else {
+        if (window !== window.top) return; // iframeの中ではクローラー/起動モードを動かさない
         // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
         const _qStr = localStorage.getItem(QUEUE_KEY);
         if (_qStr) {
@@ -707,49 +708,73 @@
 
     var _fetchDiag = true;
 
-    // 商品ページHTMLをフェッチしてNext.js RSCペイロードから説明文を抽出
-    async function fetchItemDesc(url) {
+    // 同一オリジンのiframeで商品ページを読み込み、DOMから説明文を取得
+    // fetchでは取れない（サーバーがナビゲーションリクエストにのみRSCデータを返すため）
+    function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
-        dlog(`fetchItemDesc: ${itemId}`);
-        try {
-            const ctrl  = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 15000);
-            const r = await fetch(url, { credentials: 'include', signal: ctrl.signal });
-            clearTimeout(timer);
-            dlog(`HTML: ${r.status}`);
-            if (!r.ok) return null;
-            const html = await r.text();
-            dlog(`HTML取得: ${html.length}文字`);
+        dlog(`fetchItemDesc(iframe): ${itemId}`);
+        return new Promise(resolve => {
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
+            document.body.appendChild(iframe);
 
-            // RSCペイロード内の "description":"..." を全件検索して最長を採用
-            const re = /"description":"((?:[^"\\]|\\.)*)"/g;
-            let best = null;
-            let m;
-            while ((m = re.exec(html)) !== null) {
-                const decoded = m[1]
-                    .replace(/\\n/g, '\n').replace(/\\r/g, '').replace(/\\t/g, '\t')
-                    .replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-                    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-                // 50文字超かつURL・短文でないものを採用（型番説明が入るくらいの長さ）
-                if (decoded.length > 50 && !decoded.startsWith('http') &&
-                    (decoded.includes('\n') || decoded.length > 100)) {
-                    if (!best || decoded.length > best.length) best = decoded;
-                }
-            }
-            if (best) {
-                dlog(`RSC description発見: ${best.slice(0, 60)}`);
-                if (_fetchDiag) { showStatus(`[診断OK] 説明文取得:「${best.slice(0, 40)}…」`, 'rgba(0,100,0,0.9)'); await sleep(3000); _fetchDiag = false; }
-                return best;
-            }
+            let done = false;
+            const finish = result => {
+                if (done) return;
+                done = true;
+                try { iframe.remove(); } catch(_) {}
+                resolve(result);
+            };
 
-            // 診断：descriptionキー自体の存在確認
-            const anyD = html.match(/"description":"([^"]{0,120})/);
-            if (anyD) dlog(`候補あり(未フィルタ): ${anyD[1].slice(0, 80)}`);
-            else dlog(`"description"自体が存在しない`);
+            // 最大12秒でタイムアウト
+            const hardTimer = setTimeout(() => { dlog(`iframe timeout: ${itemId}`); finish(null); }, 12000);
 
-            if (_fetchDiag) { showStatus(`[診断] RSCにdescriptionなし → ログ確認`, '#b71c1c'); await sleep(3000); _fetchDiag = false; }
-        } catch(e) { dlog(`HTML例外: ${e.message}`); }
-        return null;
+            iframe.onload = () => {
+                let tries = 0;
+                const poll = setInterval(() => {
+                    try {
+                        const doc = iframe.contentDocument;
+                        if (!doc || !doc.body) return;
+
+                        // 説明文DOMが現れたら取得
+                        const el = doc.querySelector(DESC_SEL);
+                        if (el && el.innerText && el.innerText.trim().length > 5) {
+                            clearInterval(poll);
+                            clearTimeout(hardTimer);
+                            const desc = el.innerText.trim();
+                            dlog(`iframe desc: ${desc.slice(0, 50)}`);
+                            finish(desc);
+                            return;
+                        }
+
+                        // エラーページ（商品削除）
+                        const bodyText = doc.body.innerText || '';
+                        if (bodyText.includes('このページは存在しません') || bodyText.includes('商品が見つかりません')) {
+                            clearInterval(poll);
+                            clearTimeout(hardTimer);
+                            dlog(`iframe: 削除済み商品`);
+                            finish(null);
+                            return;
+                        }
+                    } catch(e) {
+                        clearInterval(poll);
+                        clearTimeout(hardTimer);
+                        dlog(`iframe crossorigin: ${e.message}`);
+                        finish(null);
+                        return;
+                    }
+                    if (++tries > 60) { // 60 × 200ms = 12秒
+                        clearInterval(poll);
+                        clearTimeout(hardTimer);
+                        dlog(`iframe: desc待機タイムアウト`);
+                        finish(null);
+                    }
+                }, 200);
+            };
+
+            iframe.onerror = () => { clearTimeout(hardTimer); dlog(`iframe onerror`); finish(null); };
+            iframe.src = url;
+        });
     }
 
     async function processItemsWithFetch(noModelItems, isCrawlerMode, makerName) {
@@ -794,6 +819,16 @@
             markProcessed(item.id);
 
             const desc = await fetchItemDesc(item.url);
+
+            if (desc && _fetchDiag) {
+                showStatus(`[診断OK] iframe取得成功:「${desc.slice(0, 40)}…」`, 'rgba(0,100,0,0.9)');
+                await sleep(2000);
+                _fetchDiag = false;
+            } else if (!desc && _fetchDiag) {
+                showStatus(`[診断] iframeで取得失敗（CSPブロックの可能性）`, '#b71c1c');
+                await sleep(2000);
+                _fetchDiag = false;
+            }
 
             if (desc) {
                 nullCount = 0;
