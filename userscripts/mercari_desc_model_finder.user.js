@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.41
+// @version      2.42
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -661,7 +661,9 @@
     var _diagLog    = [];
     function dlog(msg) {
         const t = new Date().toTimeString().slice(0,8);
-        _diagLog.push(`[${t}] ${msg}`);
+        const line = `[${t}] ${msg}`;
+        _diagLog.push(line);
+        console.log('[desc-finder]', line);
         localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog));
     }
 
@@ -874,7 +876,8 @@
         }
 
         stopBtn.remove();
-        logBtn.remove();
+        // logBtnは残す（クリックしていつでもコピー可能）
+        logBtn.textContent = 'ログコピー✓';
 
         if (isCrawlerMode) {
             if (_abortFetch) localStorage.removeItem(CRAWLER_KEY); // 中止時はクローラー全体も停止
