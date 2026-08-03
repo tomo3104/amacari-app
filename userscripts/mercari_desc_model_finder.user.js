@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.42
+// @version      2.43
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -705,101 +705,81 @@
 
     var _fetchDiag = true;
 
+    // entities:search テンプレートの認証ヘッダーで商品詳細APIを叩く
+    // エンドポイント候補を順番に試してdescriptionが取れたら返す
     async function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
-        dlog(`fetch開始: ${itemId}`);
-        const ctrl   = new AbortController();
-        const timer  = setTimeout(() => ctrl.abort(), 10000);
-        try {
-            const res = await fetch(url, {
-                credentials: 'include',
-                headers:     { 'Accept': 'text/html,application/xhtml+xml' },
-                signal:      ctrl.signal,
-            });
-            dlog(`fetch応答: status=${res.status} ok=${res.ok}`);
-            if (!res.ok) {
-                if (_fetchDiag) { showStatus(`[診断] HTTP ${res.status} → 取得失敗`, '#5d4037'); await sleep(5000); _fetchDiag = false; }
-                return null;
-            }
-            const html = await res.text();
-            dlog(`HTML取得: ${html.length}chars`);
+        dlog(`fetchItemDesc: ${itemId}`);
 
-            // 方法1: __NEXT_DATA__ 再帰探索
-            const ndMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]+?)<\/script>/);
-            dlog(`NEXT_DATA: ${ndMatch ? 'あり' : 'なし'}`);
-            if (ndMatch) {
-                try {
-                    const nd   = JSON.parse(ndMatch[1]);
-                    const desc = _findDesc(nd, itemId, 0);
-                    dlog(`_findDesc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見'}`);
-                    if (desc) {
-                        if (_fetchDiag) { showStatus(`[診断OK] NEXT_DATA取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
-                        return desc;
-                    }
-                } catch(e) {
-                    dlog(`NEXT_DATAパース失敗: ${e.message}`);
-                }
-            }
-
-            // 方法2: /_next/data/ エンドポイント（buildIdをHTMLから取得）
-            const buildIdMatch = html.match(/"buildId"\s*:\s*"([^"]+)"/);
-            dlog(`buildId: ${buildIdMatch ? buildIdMatch[1] : 'なし'}`);
-            if (buildIdMatch) {
-                const buildId  = buildIdMatch[1];
-                const dataUrl  = `https://jp.mercari.com/_next/data/${buildId}/item/${itemId}.json`;
-                dlog(`/_next/data/ fetch: ${dataUrl.slice(-60)}`);
-                try {
-                    const dr = await fetch(dataUrl, { credentials: 'include' });
-                    dlog(`/_next/data/ status: ${dr.status}`);
-                    if (dr.ok) {
-                        const dj   = await dr.json();
-                        const desc = _findDesc(dj, itemId, 0);
-                        dlog(`/_next/data/ desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見'}`);
-                        if (desc) {
-                            if (_fetchDiag) { showStatus(`[診断OK] /_next/data/取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
-                            return desc;
-                        }
-                    }
-                } catch(e) { dlog(`/_next/data/ 例外: ${e.message}`); }
-            }
-
-            // 方法3: JSON-LD
-            const ldMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
-            dlog(`JSON-LD: ${ldMatch ? ldMatch[1].slice(0,80) : 'なし'}`);
-            if (ldMatch) {
-                try {
-                    const ld = JSON.parse(ldMatch[1]);
-                    const desc = typeof ld.description === 'string' && ld.description.length > 10 ? ld.description : null;
-                    dlog(`JSON-LD desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見'}`);
-                    if (desc) {
-                        if (_fetchDiag) { showStatus(`[診断OK] JSON-LD取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
-                        return desc;
-                    }
-                } catch(e) { dlog(`JSON-LDパース失敗: ${e.message}`); }
-            }
-
-            // 方法4: merText pre タグ（SSR埋め込みの場合）
-            const preMatch = html.match(/<pre[^>]+class="[^"]*[Mm]er[Tt]ext[^"]*"[^>]*>([\s\S]*?)<\/pre>/i);
-            const preLen = preMatch ? _decodeHtml(preMatch[1]).trim().length : 0;
-            dlog(`merText: ${preMatch ? 'あり len=' + preLen : 'なし'}`);
-            if (preMatch) {
-                const desc = _decodeHtml(preMatch[1]).trim();
-                if (desc.length > 10) {
-                    if (_fetchDiag) { showStatus(`[診断OK] merText取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
-                    return desc;
-                }
-            }
-
-            dlog(`結果: null（全方法失敗）`);
-            if (_fetchDiag) { showStatus(`[診断] 全方法失敗 → CSR専用の可能性あり`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
+        const searchTpl = _getSharedTpl();
+        if (!searchTpl) {
+            dlog(`searchTpl: なし（テンプレート未取得）`);
             return null;
-        } catch(e) {
-            dlog(`fetch例外: ${e.message}`);
-            if (_fetchDiag) { showStatus(`[診断] fetch例外: ${e.message}`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
-            return null;
-        } finally {
-            clearTimeout(timer);
         }
+
+        // entities:search のヘッダーをそのまま流用
+        const authHeaders = Object.assign({}, searchTpl.headers, {
+            'Content-Type': 'application/json; charset=utf-8',
+        });
+
+        // 商品詳細APIの候補エンドポイント
+        const apiCandidates = [
+            // gRPC-Web: entities:batchGet（entities:searchと同系統）
+            {
+                url:    'https://api.mercari.jp/v2/entities:batchGet',
+                method: 'POST',
+                body:   JSON.stringify({ names: [`items/${itemId}`] }),
+            },
+            // REST: /items/get
+            {
+                url:    `https://api.mercari.jp/items/get?id=${itemId}`,
+                method: 'GET',
+                body:   null,
+            },
+            // v1 items
+            {
+                url:    `https://api.mercari.jp/v1/api/items/${itemId}`,
+                method: 'GET',
+                body:   null,
+            },
+            // jp.mercari.com API
+            {
+                url:    `https://jp.mercari.com/api/items/${itemId}`,
+                method: 'GET',
+                body:   null,
+            },
+        ];
+
+        for (const api of apiCandidates) {
+            try {
+                const ctrl  = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 8000);
+                const r = await fetch(api.url, {
+                    method:      api.method,
+                    headers:     api.method === 'GET' ? { Authorization: authHeaders.Authorization || authHeaders.authorization } : authHeaders,
+                    credentials: 'include',
+                    body:        api.body || undefined,
+                    signal:      ctrl.signal,
+                });
+                clearTimeout(timer);
+                dlog(`API[${api.url.slice(26, 60)}]: status=${r.status}`);
+                if (r.ok) {
+                    const j    = await r.json();
+                    const desc = _findDesc(j, itemId, 0);
+                    dlog(`  → desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見 keys=' + Object.keys(j).join(',')}`);
+                    if (desc) {
+                        if (_fetchDiag) { showStatus(`[診断OK] API取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(3000); _fetchDiag = false; }
+                        return desc;
+                    }
+                }
+            } catch(e) {
+                dlog(`API[${api.url.slice(26, 50)}] 例外: ${e.message}`);
+            }
+        }
+
+        dlog(`結果: null（全APIエンドポイント失敗）`);
+        if (_fetchDiag) { showStatus(`[診断] 全API失敗 → ログを確認`, '#b71c1c'); await sleep(3000); _fetchDiag = false; }
+        return null;
     }
 
     async function processItemsWithFetch(noModelItems, isCrawlerMode, makerName) {
