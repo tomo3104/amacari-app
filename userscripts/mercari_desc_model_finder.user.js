@@ -469,7 +469,9 @@
                 localStorage.setItem(RESULT_KEY, JSON.stringify([]));
                 localStorage.removeItem(QUEUE_KEY);
                 localStorage.removeItem(_SHARED_TPL_KEY);
-                localStorage.removeItem(PROCESSED_KEY); // クローラー開始時は処理済みリストをリセット
+                localStorage.removeItem(PROCESSED_KEY);
+                // desc_last_run_* をリセット（前回実行カットオフを解除して全件収集）
+                Object.keys(localStorage).filter(k => k.startsWith('desc_last_run_')).forEach(k => localStorage.removeItem(k));
                 showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
                 setTimeout(() => { window.location.href = makers[0].url; }, 1500);
             },
