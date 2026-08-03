@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.43
+// @version      2.44
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -722,32 +722,18 @@
             'Content-Type': 'application/json; charset=utf-8',
         });
 
-        // 商品詳細APIの候補エンドポイント
+        // 商品詳細APIの候補エンドポイント（cookie認証のみで試す）
+        const cookieOnly = { 'Content-Type': 'application/json; charset=utf-8' };
         const apiCandidates = [
-            // gRPC-Web: entities:batchGet（entities:searchと同系統）
-            {
-                url:    'https://api.mercari.jp/v2/entities:batchGet',
-                method: 'POST',
-                body:   JSON.stringify({ names: [`items/${itemId}`] }),
-            },
-            // REST: /items/get
-            {
-                url:    `https://api.mercari.jp/items/get?id=${itemId}`,
-                method: 'GET',
-                body:   null,
-            },
-            // v1 items
-            {
-                url:    `https://api.mercari.jp/v1/api/items/${itemId}`,
-                method: 'GET',
-                body:   null,
-            },
-            // jp.mercari.com API
-            {
-                url:    `https://jp.mercari.com/api/items/${itemId}`,
-                method: 'GET',
-                body:   null,
-            },
+            // batchGet: cookie認証のみ（DPoP不使用）
+            { url: 'https://api.mercari.jp/v2/entities:batchGet', method: 'POST', headers: cookieOnly,    body: JSON.stringify({ names: [`items/${itemId}`] }) },
+            // items/get: パラメータ各種
+            { url: `https://api.mercari.jp/items/get?id=${itemId}`,     method: 'GET', headers: {},        body: null },
+            { url: `https://api.mercari.jp/items/get?itemId=${itemId}`, method: 'GET', headers: {},        body: null },
+            { url: 'https://api.mercari.jp/items/get',                  method: 'POST', headers: cookieOnly, body: JSON.stringify({ id: itemId }) },
+            // v2 item get
+            { url: `https://api.mercari.jp/v2/items/${itemId}`,        method: 'GET', headers: {},        body: null },
+            { url: `https://api.mercari.jp/v1/items/${itemId}`,        method: 'GET', headers: {},        body: null },
         ];
 
         for (const api of apiCandidates) {
@@ -756,24 +742,25 @@
                 const timer = setTimeout(() => ctrl.abort(), 8000);
                 const r = await fetch(api.url, {
                     method:      api.method,
-                    headers:     api.method === 'GET' ? { Authorization: authHeaders.Authorization || authHeaders.authorization } : authHeaders,
+                    headers:     api.headers,
                     credentials: 'include',
                     body:        api.body || undefined,
                     signal:      ctrl.signal,
                 });
                 clearTimeout(timer);
-                dlog(`API[${api.url.slice(26, 60)}]: status=${r.status}`);
+                const label = api.url.replace('https://api.mercari.jp','').slice(0,40);
+                dlog(`API[${label}]: status=${r.status}`);
                 if (r.ok) {
                     const j    = await r.json();
                     const desc = _findDesc(j, itemId, 0);
-                    dlog(`  → desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見 keys=' + Object.keys(j).join(',')}`);
+                    dlog(`  → desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見 keys=' + Object.keys(j).slice(0,5).join(',')}`);
                     if (desc) {
                         if (_fetchDiag) { showStatus(`[診断OK] API取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(3000); _fetchDiag = false; }
                         return desc;
                     }
                 }
             } catch(e) {
-                dlog(`API[${api.url.slice(26, 50)}] 例外: ${e.message}`);
+                dlog(`API例外: ${e.message}`);
             }
         }
 
