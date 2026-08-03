@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.38
+// @version      2.39
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -657,7 +657,7 @@
     // ========================================================
     //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
     // ========================================================
-    let _abortFetch = false;
+    var _abortFetch = false;
 
     // __NEXT_DATA__ JSON を再帰探索して description フィールドを探す
     function _findDesc(obj, itemId, depth) {
@@ -695,7 +695,7 @@
                 .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
     }
 
-    let _fetchDiag = true; // 最初の1件だけステータスに診断結果を表示
+    var _fetchDiag = true;
 
     async function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
