@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.45
+// @version      2.46
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（商品ページAPIキャプチャ方式）
 // @match        https://jp.mercari.com/*
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      localhost
@@ -104,9 +105,9 @@
         border-radius:8px; font-size:13px; display:none;
         max-width:360px; font-family:sans-serif; line-height:1.5;
     `;
-    document.body.appendChild(statusEl);
-
+    // document-start対応：bodyが存在するタイミングで遅延アタッチ
     function showStatus(msg, bg) {
+        if (!statusEl.isConnected) (document.body || document.documentElement).appendChild(statusEl);
         statusEl.style.display = 'block';
         statusEl.style.background = bg || 'rgba(0,0,0,0.80)';
         statusEl.textContent = msg;
@@ -157,55 +158,60 @@
     })();
 
     // ========================================================
-    //  モード判定
+    //  モード判定（DOM構築後に実行 — document-start対応）
     // ========================================================
-    const itemMatch = location.pathname.match(/^\/item\/(m[A-Za-z0-9]+)/);
+    (document.readyState !== 'loading'
+        ? Promise.resolve()
+        : new Promise(r => document.addEventListener('DOMContentLoaded', r))
+    ).then(() => {
+        const itemMatch = location.pathname.match(/^\/item\/(m[A-Za-z0-9]+)/);
 
-    if (itemMatch) {
-        // ============ 商品ページモード ============
-        runItemPageMode(itemMatch[1]);
-    } else {
-        // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
-        const _qStr = localStorage.getItem(QUEUE_KEY);
-        if (_qStr) {
-            try {
-                const _q = JSON.parse(_qStr);
-                if (_q.running && _q.items && _q.pendingIdx != null) {
-                    const skipTo = _q.pendingIdx + 1;
-                    if (skipTo < _q.items.length) {
-                        _q.pendingIdx = skipTo;
-                        localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
-                        showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
-                        setTimeout(() => { window.location.replace(_q.items[skipTo].url); }, 1000);
-                    } else {
-                        delete _q.pendingIdx;
-                        localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
-                        if (_q.crawlerMode) {
-                            finishMakerAndContinue();
+        if (itemMatch) {
+            // ============ 商品ページモード ============
+            runItemPageMode(itemMatch[1]);
+        } else {
+            // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
+            const _qStr = localStorage.getItem(QUEUE_KEY);
+            if (_qStr) {
+                try {
+                    const _q = JSON.parse(_qStr);
+                    if (_q.running && _q.items && _q.pendingIdx != null) {
+                        const skipTo = _q.pendingIdx + 1;
+                        if (skipTo < _q.items.length) {
+                            _q.pendingIdx = skipTo;
+                            localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
+                            showStatus(`削除済み商品をスキップ → [${skipTo + 1}/${_q.items.length}]`, 'rgba(160,80,0,0.88)');
+                            setTimeout(() => { window.location.replace(_q.items[skipTo].url); }, 1000);
                         } else {
-                            finishAndSend(null);
+                            delete _q.pendingIdx;
+                            localStorage.setItem(QUEUE_KEY, JSON.stringify(_q));
+                            if (_q.crawlerMode) {
+                                finishMakerAndContinue();
+                            } else {
+                                finishAndSend(null);
+                            }
                         }
+                        return;
                     }
-                    return;
-                }
-            } catch(e) {}
-        }
+                } catch(e) {}
+            }
 
-        // 発掘クローラーモード：検索ページに来たら次のメーカーを収集（QUEUE_KEYに依存しない）
-        const _crawlerStr = localStorage.getItem(CRAWLER_KEY);
-        if (_crawlerStr) {
-            try {
-                const _cs = JSON.parse(_crawlerStr);
-                if (_cs.running) {
-                    runCrawlerSearchMode(_cs);
-                    return;
-                }
-            } catch(e) {}
-        }
+            // 発掘クローラーモード：検索ページに来たら次のメーカーを収集（QUEUE_KEYに依存しない）
+            const _crawlerStr = localStorage.getItem(CRAWLER_KEY);
+            if (_crawlerStr) {
+                try {
+                    const _cs = JSON.parse(_crawlerStr);
+                    if (_cs.running) {
+                        runCrawlerSearchMode(_cs);
+                        return;
+                    }
+                } catch(e) {}
+            }
 
-        // ============ 起動ページモード ============
-        runLaunchMode();
-    }
+            // ============ 起動ページモード ============
+            runLaunchMode();
+        }
+    });
 
     // ========================================================
     //  商品ページモード：DOMから説明文を読んで次へ進む
