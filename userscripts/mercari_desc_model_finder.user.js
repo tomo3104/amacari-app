@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.40
+// @version      2.41
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（__NEXT_DATA__ fetchアプローチ）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -734,16 +734,49 @@
                         if (_fetchDiag) { showStatus(`[診断OK] NEXT_DATA取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
                         return desc;
                     }
-                    if (_fetchDiag) { showStatus(`[診断] NEXT_DATAあり・description未発見（HTML:${html.length}chars）`, '#5d4037'); await sleep(5000); }
                 } catch(e) {
                     dlog(`NEXT_DATAパース失敗: ${e.message}`);
-                    if (_fetchDiag) { showStatus(`[診断] NEXT_DATAパース失敗`, '#5d4037'); await sleep(5000); }
                 }
-            } else {
-                if (_fetchDiag) { showStatus(`[診断] NEXT_DATAタグなし（HTML:${html.length}chars）`, '#5d4037'); await sleep(5000); }
             }
 
-            // 方法2: SSR HTML の merText pre タグを直接抽出
+            // 方法2: /_next/data/ エンドポイント（buildIdをHTMLから取得）
+            const buildIdMatch = html.match(/"buildId"\s*:\s*"([^"]+)"/);
+            dlog(`buildId: ${buildIdMatch ? buildIdMatch[1] : 'なし'}`);
+            if (buildIdMatch) {
+                const buildId  = buildIdMatch[1];
+                const dataUrl  = `https://jp.mercari.com/_next/data/${buildId}/item/${itemId}.json`;
+                dlog(`/_next/data/ fetch: ${dataUrl.slice(-60)}`);
+                try {
+                    const dr = await fetch(dataUrl, { credentials: 'include' });
+                    dlog(`/_next/data/ status: ${dr.status}`);
+                    if (dr.ok) {
+                        const dj   = await dr.json();
+                        const desc = _findDesc(dj, itemId, 0);
+                        dlog(`/_next/data/ desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見'}`);
+                        if (desc) {
+                            if (_fetchDiag) { showStatus(`[診断OK] /_next/data/取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
+                            return desc;
+                        }
+                    }
+                } catch(e) { dlog(`/_next/data/ 例外: ${e.message}`); }
+            }
+
+            // 方法3: JSON-LD
+            const ldMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+            dlog(`JSON-LD: ${ldMatch ? ldMatch[1].slice(0,80) : 'なし'}`);
+            if (ldMatch) {
+                try {
+                    const ld = JSON.parse(ldMatch[1]);
+                    const desc = typeof ld.description === 'string' && ld.description.length > 10 ? ld.description : null;
+                    dlog(`JSON-LD desc: ${desc ? '発見(' + desc.slice(0,30) + ')' : '未発見'}`);
+                    if (desc) {
+                        if (_fetchDiag) { showStatus(`[診断OK] JSON-LD取得成功:「${desc.slice(0,45)}…」`, 'rgba(0,100,0,0.9)'); await sleep(5000); _fetchDiag = false; }
+                        return desc;
+                    }
+                } catch(e) { dlog(`JSON-LDパース失敗: ${e.message}`); }
+            }
+
+            // 方法4: merText pre タグ（SSR埋め込みの場合）
             const preMatch = html.match(/<pre[^>]+class="[^"]*[Mm]er[Tt]ext[^"]*"[^>]*>([\s\S]*?)<\/pre>/i);
             const preLen = preMatch ? _decodeHtml(preMatch[1]).trim().length : 0;
             dlog(`merText: ${preMatch ? 'あり len=' + preLen : 'なし'}`);
@@ -755,8 +788,8 @@
                 }
             }
 
-            dlog(`結果: null（説明文なし）`);
-            if (_fetchDiag) { showStatus(`[診断] merTextも未発見 → CSR専用の可能性あり`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
+            dlog(`結果: null（全方法失敗）`);
+            if (_fetchDiag) { showStatus(`[診断] 全方法失敗 → CSR専用の可能性あり`, '#b71c1c'); await sleep(5000); _fetchDiag = false; }
             return null;
         } catch(e) {
             dlog(`fetch例外: ${e.message}`);
