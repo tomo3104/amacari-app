@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.0
+// @version      6.1
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -99,6 +99,45 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+    // カテゴリ検索URL一覧（グループ: CAT）
+    const BASE_CAT = 'item_condition_id=1&shipping_payer_id=2&price_min=1000&price_max=20000&sort=created_time&order=desc';
+    const STATIC_CATEGORIES = [
+        { name: 'ライト・照明',               group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=65` },
+        { name: 'テレビ・映像機器',           group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=98` },
+        { name: 'オーディオ機器',             group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=99` },
+        { name: '生活家電',                   group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=101` },
+        { name: 'ノートPC',                   group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=840` },
+        { name: 'PC周辺機器',                 group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=841` },
+        { name: 'テレビ',                     group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=848` },
+        { name: 'カーナビ',                   group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1113` },
+        { name: 'カーオーディオ',             group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1114` },
+        { name: 'ETC車載器',                  group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1117` },
+        { name: 'PCパーツ',                   group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1156` },
+        { name: 'アウトドア',                 group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1164` },
+        { name: '美容家電',                   group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1237` },
+        { name: '冷暖房・空調',               group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1243` },
+        { name: 'ディスプレイ・モニター',     group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1262` },
+        { name: '旅行用家電',                 group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3117` },
+        { name: 'キーボード',                 group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3710` },
+        { name: 'マウス・トラックボール',     group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3716` },
+        { name: '外付けHDD・ドライブ',       group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3756` },
+        { name: 'ルーター・ネットワーク機器', group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3770` },
+        { name: 'プリンター・複合機',         group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3733` },
+        { name: 'スキャナー',                 group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3811` },
+        { name: '分配器・切替器',             group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3820` },
+        { name: 'Webカメラ',                  group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3829` },
+        { name: 'PCスピーカー',               group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3831` },
+        { name: 'メモリーカード',             group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3875` },
+        { name: '生活家電・空調',             group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=4136` },
+        { name: '電池・充電池アクセサリー',   group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=4290` },
+        { name: '電卓',                       group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5457` },
+        { name: '防犯・セーフティ',           group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5497` },
+        { name: '電動工具・エア工具',         group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5598` },
+        { name: '計測・検査',                 group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5907` },
+        { name: 'ゴルフ GPSナビ',            group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=8096` },
+        { name: 'ゴルフ用距離計',            group: 'CAT', crawl_url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=8097` },
+    ];
+
     // ========== fetch化: 共有テンプレートから直接API呼び出し（v5.2） ==========
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
@@ -131,7 +170,8 @@
             sc.keyword = keyword;
             sc.status  = [apiStatus];
             if (brandIds) sc.brandId = brandIds; else delete sc.brandId;
-            delete sc.categoryId;
+            const categoryId = sp.get('category_id');
+            if (categoryId) { sc.categoryId = categoryId.split(',').map(Number); } else { delete sc.categoryId; }
             if (priceMin != null) sc.priceMin = priceMin; else delete sc.priceMin;
             if (priceMax != null) sc.priceMax = priceMax; else delete sc.priceMax;
             if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
@@ -173,7 +213,8 @@
 
     async function runCrawlerFetch(mfrs, selected) {
         const targets = selected.map(s => s.toUpperCase());
-        const filtered = targets.includes('ALL') ? mfrs : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
+        const allMfrs = [...mfrs, ...STATIC_CATEGORIES];
+        const filtered = targets.includes('ALL') ? allMfrs : allMfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
         if (filtered.length === 0) { updateStatus('対象なし'); return; }
 
         running = true;
