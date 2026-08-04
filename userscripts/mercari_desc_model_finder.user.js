@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.52
+// @version      2.53
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -398,6 +398,7 @@
                 // desc_last_run_* をリセット（前回実行カットオフを解除して全件収集）
                 Object.keys(localStorage).filter(k => k.startsWith('desc_last_run_')).forEach(k => localStorage.removeItem(k));
                 showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
+                dlog(`===== クローラー開始 ${makers.length}メーカー (グループ: ${group}) =====`);
                 setTimeout(() => { window.location.href = makers[0].url; }, 1500);
             },
             onerror:    () => showStatus('サーバー未起動（localhost:8766）', 'rgba(160,0,0,0.88)'),
@@ -493,7 +494,13 @@
 
         if (done >= total) {
             localStorage.removeItem(CRAWLER_KEY);
+            const _elapsed = Math.round((Date.now() - (crawlerState.startedAt || Date.now())) / 1000);
+            const _mins = Math.floor(_elapsed / 60);
+            const _secs = _elapsed % 60;
+            const _startStr = crawlerState.startedAt ? new Date(crawlerState.startedAt).toTimeString().slice(0, 8) : '?';
+            const _summary = `全完了: ${total}メーカー / 開始${_startStr} / 所要時間${_mins}分${_secs}秒`;
             showStatus(`発掘クローラー全完了 (${total}メーカー) → list.jsonと照合中...`, 'rgba(0,70,160,0.88)');
+            dlog(`===== ${_summary} =====`);
             finishAndSend(null);
             return;
         }
