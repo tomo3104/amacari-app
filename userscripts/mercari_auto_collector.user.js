@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.2
+// @version      6.3
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @grant        unsafeWindow
 // @connect      localhost
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_auto_collector.user.js
@@ -225,10 +226,9 @@
         // ===== テンプレート自動取得 =====
         if (!_getSharedTpl()) {
             addLog('テンプレート未取得 → 別タブで自動取得中...', '#88ccff');
-            updateStatus('テンプレート取得中... 8秒待機');
-            const _captureTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=sold_out');
-            await sleep(8000);
-            try { if (_captureTab) _captureTab.close(); } catch(_) {}
+            updateStatus('テンプレート取得中... 10秒待機');
+            GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=sold_out', { active: false });
+            await sleep(10000);
             if (!_getSharedTpl()) {
                 addLog('テンプレート取得失敗 → 従来モードへ切替', '#ffaa44');
                 updateStatus('テンプレート取得失敗 → 従来モードで起動');
@@ -278,9 +278,8 @@
                 if (e.message === 'NO_TEMPLATE' || /HTTP 4/.test(e.message)) {
                     updateStatus('テンプレート更新中...');
                     _uw.localStorage.removeItem(_SHARED_TPL_KEY);
-                    const _rt = _uw.open('https://jp.mercari.com/search?keyword=sony&status=sold_out');
-                    await sleep(8000);
-                    try { if (_rt) _rt.close(); } catch(_) {}
+                    GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=sold_out', { active: false });
+                    await sleep(10000);
                     if (_getSharedTpl()) {
                         i--; errors = 0;
                         addLog('テンプレート再取得完了 → リトライ', '#88ccff');

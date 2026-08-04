@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @grant        unsafeWindow
 // @connect      localhost
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
@@ -207,10 +208,9 @@
 
         // ===== テンプレート自動取得 =====
         if (!_getSharedTpl()) {
-            updateStatus('テンプレート取得中... 8秒待機');
-            const _captureTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=on_sale');
-            await sleep(8000);
-            try { if (_captureTab) _captureTab.close(); } catch(_) {}
+            updateStatus('テンプレート取得中... 10秒待機');
+            GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+            await sleep(10000);
             if (!_getSharedTpl()) {
                 updateStatus('テンプレート取得失敗 → 中断（リアルタイムリサーチを起動してから再試行）');
                 running = false; setRunningUI(false); return;
@@ -247,9 +247,8 @@
                 if (/HTTP 4/.test(e.message) || e.message === 'NO_TEMPLATE') {
                     updateStatus(`[${i+1}/${filtered.length}] ${name} テンプレート更新中...`);
                     _uw.localStorage.removeItem(_SHARED_TPL_KEY);
-                    const refreshTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=on_sale');
-                    await sleep(8000);
-                    try { if (refreshTab) refreshTab.close(); } catch(_) {}
+                    GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+                    await sleep(10000);
                     if (_getSharedTpl()) {
                         i--;
                         await sleep(1000);
