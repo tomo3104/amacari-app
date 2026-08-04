@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.54
+// @version      2.55
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -467,15 +467,19 @@
         showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${itemList.length}件収集 / 未処理型番なし: ${noModelItems.length}件`);
         dlog(`[${makerIdx + 1}/${makersTotal}] ${maker.name}: ${itemList.length}件収集 / 型番なし未処理: ${noModelItems.length}件`);
 
-        if (noModelItems.length === 0) {
-            await sleep(1000);
+        try {
+            if (noModelItems.length === 0) {
+                await sleep(1000);
+                abortBtn.remove();
+                finishMakerAndContinue();
+                return;
+            }
             abortBtn.remove();
-            finishMakerAndContinue();
-            return;
+            await processItemsWithFetch(noModelItems, true, maker.name);
+        } catch(e) {
+            console.error('[desc-finder] runCrawlerSearchMode ERROR:', e);
+            showStatus(`[ERROR] ${e.message}`, 'rgba(200,0,0,0.95)');
         }
-
-        abortBtn.remove();
-        await processItemsWithFetch(noModelItems, true, maker.name);
     }
 
     // 発掘クローラー：1メーカー完了 → 次のメーカーへ or 全完了
