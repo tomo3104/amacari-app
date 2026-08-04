@@ -682,7 +682,7 @@
         const line = `[${t}] ${msg}`;
         _diagLog.push(line);
         console.log('[desc-finder]', line);
-        localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog));
+        try { localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog)); } catch(e) { console.warn('[desc-finder] dlog storage err:', e); }
     }
 
     // __NEXT_DATA__ JSON を再帰探索して description フィールドを探す
