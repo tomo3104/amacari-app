@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.55
+// @version      2.56
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -110,6 +110,12 @@
         statusEl.textContent = msg;
     }
     function hideStatus() { statusEl.style.display = 'none'; }
+
+    // ========================================================
+    //  共有変数（return より前に初期化必須）
+    // ========================================================
+    var _abortFetch = false;
+    var _diagLog    = [];
 
     // ========================================================
     //  モード判定
@@ -679,8 +685,6 @@
     // ========================================================
     //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
     // ========================================================
-    var _abortFetch = false;
-    var _diagLog    = [];
     function dlog(msg) {
         const t = new Date().toTimeString().slice(0,8);
         const line = `[${t}] ${msg}`;
