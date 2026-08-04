@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -204,6 +204,19 @@
 
         running = true;
         setRunningUI(true);
+
+        // ===== テンプレート自動取得 =====
+        if (!_getSharedTpl()) {
+            updateStatus('テンプレート取得中... 8秒待機');
+            const _captureTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=on_sale');
+            await sleep(8000);
+            try { if (_captureTab) _captureTab.close(); } catch(_) {}
+            if (!_getSharedTpl()) {
+                updateStatus('テンプレート取得失敗 → 中断（リアルタイムリサーチを起動してから再試行）');
+                running = false; setRunningUI(false); return;
+            }
+        }
+
         let errors = 0;
         const batchStart = Date.now();
         const groupLabel = selected.join(',');
@@ -231,8 +244,8 @@
                 postTiming({ type: 'mfr', name, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched: result.n_model_match || 0, hits: (result.matches || []).length, new_cands: result.new_candidates_count || 0 });
                 await sleep(500);
             } catch(e) {
-                if (/HTTP 4/.test(e.message)) {
-                    updateStatus(`[${i+1}/${filtered.length}] ${name} セッション切れ → テンプレート更新中...`);
+                if (/HTTP 4/.test(e.message) || e.message === 'NO_TEMPLATE') {
+                    updateStatus(`[${i+1}/${filtered.length}] ${name} テンプレート更新中...`);
                     _uw.localStorage.removeItem(_SHARED_TPL_KEY);
                     const refreshTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=on_sale');
                     await sleep(8000);
@@ -248,12 +261,8 @@
                 }
                 errors++;
                 updateStatus(`[${i+1}/${filtered.length}] ${name} エラー(${errors}): ${e.message}`);
-                if (errors >= 3 || e.message === 'NO_TEMPLATE') {
-                    if (e.message === 'NO_TEMPLATE') {
-                        updateStatus('テンプレートなし → 検索1回後に再試行してください');
-                    } else {
-                        updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
-                    }
+                if (errors >= 3) {
+                    updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
                     await postTiming({
                         type: 'end', group: groupLabel, total: filtered.length,
                         elapsed_ms: Date.now() - batchStart,
@@ -552,12 +561,7 @@
             const checked = Array.from(list.querySelectorAll('.group-picker-check:checked')).map(c => c.value);
             const selected = checked.length > 0 ? checked : ['ALL'];
             overlay.remove();
-            if (_getSharedTpl()) {
-                runBatchFetch(mfrs, selected);
-            } else {
-                updateStatus('テンプレート未取得 → リアルタイムリサーチ起動後に再試行。従来モードで開始');
-                runBatchWithGroups(mfrs, selected);
-            }
+            runBatchFetch(mfrs, selected);
         };
     }
 
@@ -665,11 +669,7 @@
                                 const mfrs = JSON.parse(res.responseText).manufacturers || [];
                                 if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
                                 const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                                if (_getSharedTpl()) {
-                                    runBatchFetch(mfrs, groups);
-                                } else {
-                                    runBatchWithGroups(mfrs, groups);
-                                }
+                                runBatchFetch(mfrs, groups);
                             } catch(e) { updateStatus('自動起動失敗: ' + e); }
                         },
                         onerror: () => updateStatus('サーバー未起動（auto_research）'),

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.1
+// @version      6.2
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -222,6 +222,23 @@
         clearLog();
         addLog('▶ クローラーコレクト開始 ' + filtered.length + '件', '#88ccff');
 
+        // ===== テンプレート自動取得 =====
+        if (!_getSharedTpl()) {
+            addLog('テンプレート未取得 → 別タブで自動取得中...', '#88ccff');
+            updateStatus('テンプレート取得中... 8秒待機');
+            const _captureTab = _uw.open('https://jp.mercari.com/search?keyword=sony&status=sold_out');
+            await sleep(8000);
+            try { if (_captureTab) _captureTab.close(); } catch(_) {}
+            if (!_getSharedTpl()) {
+                addLog('テンプレート取得失敗 → 従来モードへ切替', '#ffaa44');
+                updateStatus('テンプレート取得失敗 → 従来モードで起動');
+                running = false; setRunningUI(false);
+                runCrawlerWithGroups(mfrs, selected);
+                return;
+            }
+            addLog('テンプレート取得完了 ✓', '#88ccff');
+        }
+
         // サーバーに開始通知
         GM_xmlhttpRequest({
             method: 'POST', url: 'http://localhost:8765/log-start',
@@ -258,18 +275,23 @@
                 errors++;
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  エラー: ' + e.message, '#ff8888');
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' エラー(' + errors + '): ' + e.message);
-                if (errors >= 3 || e.message === 'NO_TEMPLATE') {
-                    if (e.message === 'NO_TEMPLATE') {
-                        updateStatus('テンプレートなし → 検索1回後に再試行してください');
-                    } else if (/HTTP 4/.test(e.message)) {
-                        _uw.localStorage.removeItem(_SHARED_TPL_KEY);
-                        updateStatus('セッション切れ → ページ再読み込み後に再試行してください');
-                    } else {
-                        updateStatus('エラー連続' + errors + '回 → 再試行してください: ' + e.message);
+                if (e.message === 'NO_TEMPLATE' || /HTTP 4/.test(e.message)) {
+                    updateStatus('テンプレート更新中...');
+                    _uw.localStorage.removeItem(_SHARED_TPL_KEY);
+                    const _rt = _uw.open('https://jp.mercari.com/search?keyword=sony&status=sold_out');
+                    await sleep(8000);
+                    try { if (_rt) _rt.close(); } catch(_) {}
+                    if (_getSharedTpl()) {
+                        i--; errors = 0;
+                        addLog('テンプレート再取得完了 → リトライ', '#88ccff');
+                        await sleep(500);
+                        continue;
                     }
-                    running = false;
-                    setRunningUI(false);
-                    return;
+                    updateStatus('テンプレート再取得失敗 → 中断');
+                    running = false; setRunningUI(false); return;
+                } else if (errors >= 3) {
+                    updateStatus('エラー連続' + errors + '回 → 再試行してください: ' + e.message);
+                    running = false; setRunningUI(false); return;
                 }
                 await sleep(2000);
             }
@@ -539,12 +561,7 @@
             const checked = Array.from(list.querySelectorAll('.crawler-group-picker-check:checked')).map(c => c.value);
             const selected = checked.length > 0 ? checked : ['ALL'];
             overlay.remove();
-            if (_getSharedTpl()) {
-                runCrawlerFetch(mfrs, selected);
-            } else {
-                updateStatus('テンプレート未取得 → リアルタイムリサーチ起動後に再試行。従来モードで開始');
-                runCrawlerWithGroups(mfrs, selected);
-            }
+            runCrawlerFetch(mfrs, selected);
         };
     }
 
@@ -644,11 +661,7 @@
                                 const mfrs = JSON.parse(res.responseText).manufacturers || [];
                                 if (!mfrs.length) { updateStatus('メーカーリストが空です'); return; }
                                 const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                                if (_getSharedTpl()) {
-                                    runCrawlerFetch(mfrs, groups);
-                                } else {
-                                    runCrawlerWithGroups(mfrs, groups);
-                                }
+                                runCrawlerFetch(mfrs, groups);
                             } catch(e) { updateStatus('自動起動失敗: ' + e); }
                         },
                         onerror: () => updateStatus('サーバー未起動（auto_crawl）'),
