@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.56
+// @version      2.57
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -302,12 +302,12 @@
     // ========================================================
     //  中間保存（30件ごと）→ サーバーへ送信してシートに記録
     // ========================================================
-    function sendProgress(items) {
+    function sendProgress(items, makerName) {
         GM_xmlhttpRequest({
             method:  'POST',
             url:     PROGRESS_URL,
             headers: { 'Content-Type': 'application/json' },
-            data:    JSON.stringify({ items, keyword: '' }),
+            data:    JSON.stringify({ items, keyword: makerName || '' }),
             timeout: 30000,
             onload:  res => {
                 try {
@@ -872,7 +872,7 @@
                     makerHits++;
                     showStatus(`${prefix}[${i + 1}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
                     dlog(`▶ ヒット [${i + 1}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${results.length}件`);
-                    if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL));
+                    if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL), makerName);
                     await sleep(2000); // ヒット時は2秒停止して読めるように
                 } else {
                     const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
