@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      5.9
+// @version      6.0
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -269,6 +269,18 @@
         const totalModels = result.total || 0;
         addLog('新規型番: ' + newCount + '件  累計型番: ' + totalModels + '件', '#88ff88');
         updateStatus('完了！ ' + grandTotal + '件収集 / 新規型番' + newCount + '件');
+
+        // 自動起動モード（auto_crawl）の場合、完了後にASIN Checkerへチェーン
+        if (localStorage.getItem('autoPipeline') === 'true') {
+            localStorage.removeItem('autoPipeline');
+            const chainGroup = localStorage.getItem('autoChainGroup') || 'ALL';
+            localStorage.removeItem('autoChainGroup');
+            addLog('→ ASIN Checkerへ自動移行中...', '#88ccff');
+            updateStatus('ASIN Checkerへ移行中...');
+            setTimeout(() => {
+                window.location.href = 'https://jp.mercari.com/?auto_research=' + encodeURIComponent(chainGroup);
+            }, 3000);
+        }
     }
 
     // ========== 商品収集 ==========
@@ -580,6 +592,7 @@
         const autoGroup = new URLSearchParams(location.search).get('auto_crawl');
         if (autoGroup) {
             localStorage.setItem('autoPipeline', 'true');
+            localStorage.setItem('autoChainGroup', autoGroup.toUpperCase()); // チェーン用にグループを保存
             window.addEventListener('load', () => {
                 setTimeout(() => {
                     GM_xmlhttpRequest({
