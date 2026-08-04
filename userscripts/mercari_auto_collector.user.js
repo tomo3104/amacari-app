@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.3
+// @version      6.4
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -150,7 +150,7 @@
         } catch(e) { return null; }
     }
 
-    async function fetchCollectorItems(mfrUrl) {
+    async function fetchCollectorItems(mfrUrl, ctx) {
         const tpl = _getSharedTpl();
         if (!tpl) throw new Error('NO_TEMPLATE');
 
@@ -204,6 +204,9 @@
                 if (id && item.name && item.price != null) allItems[id] = { name: item.name, price: String(item.price) };
             });
 
+            const cnt = Object.keys(allItems).length;
+            if (ctx) updateStatus('[' + ctx.idx + '/' + ctx.total + '] ' + ctx.name + ' p' + (page + 1) + ': ' + cnt + '件');
+
             const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
             if (!nextToken || (data.items || []).length === 0) break;
             pageToken = nextToken;
@@ -256,7 +259,7 @@
             updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' 収集中...');
 
             try {
-                const fetched = await fetchCollectorItems(url);
+                const fetched = await fetchCollectorItems(url, { name: mfr.name, idx: i + 1, total: filtered.length });
                 errors = 0;
                 Object.assign(allItems, fetched);
                 const cnt   = Object.keys(fetched).length;

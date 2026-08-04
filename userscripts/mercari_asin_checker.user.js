@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.6
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -130,7 +130,7 @@
         } catch(e) { return null; }
     }
 
-    async function fetchCheckerItems(mfrUrl) {
+    async function fetchCheckerItems(mfrUrl, ctx) {
         const tpl = _getSharedTpl();
         if (!tpl) throw new Error('NO_TEMPLATE');
 
@@ -189,6 +189,9 @@
                 };
             });
 
+            const cnt = Object.keys(allItems).length;
+            if (ctx) updateStatus('[' + ctx.idx + '/' + ctx.total + '] ' + ctx.name + ' p' + (page + 1) + ': ' + cnt + '件');
+
             const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
             if (!nextToken || (data.items || []).length === 0) break;
             pageToken = nextToken;
@@ -232,7 +235,7 @@
 
             const mfrStart = Date.now();
             try {
-                items = await fetchCheckerItems(url);
+                items = await fetchCheckerItems(url, { name, idx: i + 1, total: filtered.length });
                 errors = 0;
                 const itemList = Object.values(items);
                 updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
