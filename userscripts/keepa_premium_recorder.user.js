@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.23
+// @version      3.24
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -17,6 +17,22 @@
 
 (function () {
     'use strict';
+
+    // $.plot をフックしてチャートデータを _flotPlot に保存（jQuery data() 方式が jQuery 3.x で機能しなくなったため）
+    (function hookFlotWhenReady() {
+        var $ = unsafeWindow.jQuery || unsafeWindow.$;
+        if (!$ || !$.plot) { setTimeout(hookFlotWhenReady, 50); return; }
+        var orig = $.plot;
+        $.plot = function(placeholder, data, options) {
+            var result = orig.apply(this, arguments);
+            try {
+                var el = placeholder && placeholder.jquery ? placeholder[0] : placeholder;
+                if (el) el._flotPlot = result;
+            } catch(e) {}
+            return result;
+        };
+        console.log('[KPR] $.plot hooked');
+    })();
 
     const SERVER    = 'http://localhost:8766';
     const K_QUEUE   = 'kpr_queue';
@@ -64,7 +80,7 @@
             if (!$) return null;
             const canvas = document.querySelector('.flot-base');
             if (!canvas) return null;
-            const plot = $(canvas.parentElement).data('plot');
+            const plot = canvas.parentElement._flotPlot || $(canvas.parentElement).data('plot');
             if (!plot) return null;
             const allSeries = plot.getData();
             if (!allSeries || !allSeries.length) return null;
