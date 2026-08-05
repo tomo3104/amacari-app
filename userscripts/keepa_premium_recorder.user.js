@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.22
+// @version      3.23
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -12,6 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        unsafeWindow
+// @connect      localhost
 // ==/UserScript==
 
 (function () {
