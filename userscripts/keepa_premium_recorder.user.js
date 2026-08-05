@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.24
+// @version      3.25
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -17,22 +17,6 @@
 
 (function () {
     'use strict';
-
-    // $.plot をフックしてチャートデータを _flotPlot に保存（jQuery data() 方式が jQuery 3.x で機能しなくなったため）
-    (function hookFlotWhenReady() {
-        var $ = unsafeWindow.jQuery || unsafeWindow.$;
-        if (!$ || !$.plot) { setTimeout(hookFlotWhenReady, 50); return; }
-        var orig = $.plot;
-        $.plot = function(placeholder, data, options) {
-            var result = orig.apply(this, arguments);
-            try {
-                var el = placeholder && placeholder.jquery ? placeholder[0] : placeholder;
-                if (el) el._flotPlot = result;
-            } catch(e) {}
-            return result;
-        };
-        console.log('[KPR] $.plot hooked');
-    })();
 
     const SERVER    = 'http://localhost:8766';
     const K_QUEUE   = 'kpr_queue';
@@ -249,9 +233,8 @@
             clearInterval(cdTimer);
             clearInterval(pollTimer);
             if (!handled) {
-                console.log('[KPR] タイムアウト → スキップ');
-                showAutoOverlay(cand, index, queue.length, null, null, '⚠ タイムアウト - スキップ');
-                setTimeout(() => goNext(), 500);
+                console.log('[KPR] タイムアウト → 手動入力モードへ');
+                showAutoManualInputOverlay(cand, index, queue.length);
             }
         }, 15000);
     }
@@ -310,6 +293,68 @@
         if (cl) cl.onclick = () => { overlayEl = null; el.remove(); };
     }
 
+    function showAutoManualInputOverlay(cand, index, total) {
+        const el = getOrCreate('kpr-overlay');
+        el.setAttribute('style', OV_STYLE);
+        el.innerHTML = `
+            <div style="font-size:11px;color:#aaa;margin-bottom:2px;">🤖 自動取得中  [${index + 1} / ${total}]</div>
+            <div style="font-size:11px;color:#aaa;">型番: <b style="color:#ddd">${cand.model || '-'}</b></div>
+            <div style="font-size:11px;color:#aaa;margin-bottom:8px;">ASIN: ${cand.asin || '-'}</div>
+            <div style="color:#ff9800;font-size:11px;margin-bottom:8px;">チャートから自動取得できませんでした。<br>チャートを見て価格を手入力してください。</div>
+            <input id="kpr-auto-price" type="number" placeholder="価格（円）"
+                style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
+                       background:#0d1921 !important;color:#fff !important;font-size:15px;
+                       margin-bottom:8px;box-sizing:border-box;">
+            <div style="display:flex;gap:6px;">
+                <button id="kpr-auto-save" style="flex:1;padding:8px;border:none;border-radius:6px;
+                    background:#2e7d32 !important;color:#fff !important;font-size:12px;
+                    cursor:pointer;font-weight:bold;">📥 記録</button>
+                <button id="kpr-auto-skip2" style="flex:1;padding:8px;border:none;border-radius:6px;
+                    background:#37474f !important;color:#fff !important;font-size:12px;cursor:pointer;">スキップ</button>
+                <button id="kpr-stop3" style="padding:8px 10px;border:none;border-radius:6px;
+                    background:#c62828 !important;color:#fff !important;font-size:12px;cursor:pointer;">■</button>
+            </div>
+            <div id="kpr-auto-status" style="margin-top:6px;font-size:11px;color:#aaa;min-height:14px;"></div>`;
+        document.getElementById('kpr-auto-skip2').onclick = () => {
+            handled = true;
+            showAutoOverlay(cand, index, total, null, null, 'スキップ');
+            setTimeout(() => goNext(), 400);
+        };
+        document.getElementById('kpr-stop3').onclick = stopAuto;
+        const saveBtn = document.getElementById('kpr-auto-save');
+        const statusEl = document.getElementById('kpr-auto-status');
+        if (saveBtn) {
+            const doSave = () => {
+                const p = parseInt(document.getElementById('kpr-auto-price').value);
+                if (!p || p <= 0) { statusEl.textContent = '価格を入力してください'; return; }
+                handled = true;
+                saveBtn.disabled = true; saveBtn.textContent = '送信中…';
+                const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1] || cand.asin;
+                GM_xmlhttpRequest({
+                    method: 'POST', url: `${SERVER}/save-premium-price`,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ asin, price: p }), timeout: 30000,
+                    onload: res => {
+                        try {
+                            const r = JSON.parse(res.responseText);
+                            if (r.ok) showAutoOverlay(cand, index, total, p, null, `✅ 記録完了 pmax¥${r.pmax.toLocaleString()}`);
+                            else      showAutoOverlay(cand, index, total, p, null, `⚠ ${r.error || 'エラー'}`);
+                        } catch(e) { showAutoOverlay(cand, index, total, p, null, '⚠ 通信エラー'); }
+                        setTimeout(() => goNext(), 800);
+                    },
+                    onerror:   () => { showAutoOverlay(cand, index, total, p, null, '⚠ サーバー未起動'); setTimeout(() => goNext(), 800); },
+                    ontimeout: () => { showAutoOverlay(cand, index, total, p, null, '⚠ 送信タイムアウト'); setTimeout(() => goNext(), 800); },
+                });
+            };
+            saveBtn.onclick = doSave;
+        }
+        const input = document.getElementById('kpr-auto-price');
+        if (input) {
+            input.focus();
+            input.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('kpr-auto-save').click(); });
+        }
+    }
+
     // ===== 手動モード =====
 
     function showManualOverlay(asin, price, dateStr) {
@@ -323,7 +368,7 @@
             <div style="font-size:11px;color:#aaa;margin-bottom:4px;">📦 プレミアム価格記録</div>
             <div style="font-size:11px;color:#aaa;margin-bottom:10px;">ASIN: ${asin}</div>
             <div style="margin-bottom:8px;">
-                <span style="color:#aaa;font-size:11px;">チャート取得価格（編集可）${dateStr ? `<span style="color:#80cbc4;margin-left:6px;">${dateStr}時点</span>` : ''}</span><br>
+                <span style="color:#aaa;font-size:11px;">${price ? `チャート取得価格（編集可）${dateStr ? `<span style="color:#80cbc4;margin-left:6px;">${dateStr}時点</span>` : ''}` : 'チャートから取得できませんでした。価格を手入力してください。'}</span><br>
                 <input id="kpr-price" type="number" value="${price}"
                     style="width:100%;padding:6px;border-radius:6px;border:1px solid #3a4a5a;
                            background:#0d1921 !important;color:#fff !important;font-size:14px;margin-top:4px;box-sizing:border-box;">
@@ -471,7 +516,8 @@
                     if (asin) showManualOverlay(asin, result.price, result.date);
                 } else if (manualAttempts > 30) {
                     clearInterval(manualPoll);
-                    console.log('[KPR] 手動モード: 30秒でタイムアウト');
+                    console.log('[KPR] 手動モード: タイムアウト → 手動入力');
+                    if (asin) showManualOverlay(asin, '', null);
                 }
             }, 1000);
         }
