@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.25
+// @version      3.26
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -207,36 +207,21 @@
         gmSet(K_HEARTBEAT, String(Date.now()));
         updateStartBtn();
 
-        let sec = 15;
+        let sec = 5;
         const updateCd = () => {
-            showAutoOverlay(cand, index, queue.length, null, null, `チャート読み込み待機中... (${sec}秒)`);
+            showAutoOverlay(cand, index, queue.length, null, null, `ページ読み込み中... (${sec}秒)`);
             sec--;
         };
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
-        // 500ms間隔でFlotチャートをポーリングして価格を取得
-        let _pollCount = 0;
-        pollTimer = setInterval(() => {
-            if (handled) { clearInterval(pollTimer); return; }
-            _pollCount++;
-            if (_pollCount % 10 === 0) gmSet(K_HEARTBEAT, String(Date.now())); // 5秒ごとにハートビート更新
-            const result = readFlotPrice();
-            if (result !== null) {
-                const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
-                console.log('[KPR] チャート価格取得:', asin, '→', result.price, result.date);
-                onAutoResult(asin, result);
-            }
-        }, 500);
-
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
-            clearInterval(pollTimer);
             if (!handled) {
-                console.log('[KPR] タイムアウト → 手動入力モードへ');
+                console.log('[KPR] 5秒経過 → 手動入力モードへ');
                 showAutoManualInputOverlay(cand, index, queue.length);
             }
-        }, 15000);
+        }, 5000);
     }
 
     // ===== UI =====
@@ -294,6 +279,7 @@
     }
 
     function showAutoManualInputOverlay(cand, index, total) {
+        gmSet(K_HEARTBEAT, String(Date.now()));
         const el = getOrCreate('kpr-overlay');
         el.setAttribute('style', OV_STYLE);
         el.innerHTML = `
