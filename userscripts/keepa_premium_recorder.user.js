@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.26
+// @version      3.27
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -50,44 +50,58 @@
     let startBtn    = null;
     let overlayEl   = null;
 
-    // ===== Flotチャートから価格を読み取る =====
-    function keepaTsToDateStr(ts) {
-        // Flot X軸はUnix ms。1e10より小さければKeepaミリ分換算
-        const ms = ts > 1e10 ? ts : (ts + 21564000) * 60000;
-        const d = new Date(ms);
-        return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
-    }
-
-    function readFlotPrice() {
+    // ===== canvasピクセルから価格を読み取る =====
+    // KeepaはFlotを内部jQueryで初期化しており $.plot / $.data('plot') が取得不可のため
+    // Y軸DOM目盛りでスケールを構築し、canvasを右→左スキャンして最新データ点の最高価格を返す
+    function readCanvasPrice() {
         try {
-            const $ = unsafeWindow.jQuery || unsafeWindow.$;
-            if (!$) return null;
             const canvas = document.querySelector('.flot-base');
             if (!canvas) return null;
-            const plot = canvas.parentElement._flotPlot || $(canvas.parentElement).data('plot');
-            if (!plot) return null;
-            const allSeries = plot.getData();
-            if (!allSeries || !allSeries.length) return null;
+            const canvasRect = canvas.getBoundingClientRect();
+            if (canvasRect.width === 0) return null;
+            const scaleY = canvas.height / canvasRect.height;
 
-            const candidates = [];
-            allSeries.forEach(series => {
-                if (!series.data || !series.data.length) return;
-                // ランク系列（Y軸2本目 or 値が極端に大きい）をスキップ
-                if (series.yaxis && series.yaxis.n === 2) return;
-                for (let j = series.data.length - 1; j >= 0; j--) {
-                    if (!series.data[j]) continue;
-                    const p = series.data[j][1];
-                    const ts = series.data[j][0];
-                    if (p > 0 && p < 5000000) { candidates.push({ price: p, ts }); break; }
-                }
+            const yTicks = [];
+            document.querySelectorAll('.yAxis.y1Axis .tickLabel').forEach(el => {
+                const rect = el.getBoundingClientRect();
+                const py = (rect.top + rect.height / 2 - canvasRect.top) * scaleY;
+                const price = parseInt(el.textContent.replace(/[^0-9]/g, ''));
+                if (!isNaN(price) && py > 0 && py < canvas.height) yTicks.push({py, price});
             });
-            if (!candidates.length) return null;
-            console.log('[KPR] Flot価格候補:', candidates);
-            candidates.sort((a, b) => b.price - a.price);
-            const best = candidates[0];
-            return { price: best.price, date: keepaTsToDateStr(best.ts) };
-        } catch (e) {
-            console.log('[KPR] readFlotPrice例外:', e);
+            if (yTicks.length < 2) return null;
+            yTicks.sort((a, b) => a.price - b.price);
+            const lo = yTicks[0], hi = yTicks[yTicks.length - 1];
+            const pyToPrice = py => Math.round(lo.price + (hi.price - lo.price) * (lo.py - py) / (lo.py - hi.py));
+
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const data = ctx.getImageData(0, 0, w, h).data;
+            const margin = 8;
+
+            // 右から左へスキャン。色付きピクセルが最初に現れた列 = 最新データ列
+            // その列のトップY（最高価格）を返す
+            for (let x = w - margin - 1; x >= Math.floor(w * 0.03); x--) {
+                let topY = null;
+                for (let y = margin; y < h - margin; y++) {
+                    const i = (y * w + x) * 4;
+                    const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+                    if (a < 50) continue;
+                    if (r + g + b < 80) continue; // ほぼ黒（背景）
+                    const grayness = Math.max(Math.abs(r-g), Math.abs(g-b), Math.abs(r-b));
+                    if (grayness < 35) continue; // グレー（グリッド線・枠）
+                    if (topY === null || y < topY) topY = y;
+                }
+                if (topY !== null) {
+                    const price = pyToPrice(topY);
+                    if (price > 0 && price < 10000000) {
+                        console.log('[KPR] canvas価格取得: ¥' + price + ' at (' + x + ',' + topY + ')');
+                        return {price, date: null};
+                    }
+                }
+            }
+            return null;
+        } catch(e) {
+            console.log('[KPR] readCanvasPrice例外:', e);
             return null;
         }
     }
@@ -207,21 +221,35 @@
         gmSet(K_HEARTBEAT, String(Date.now()));
         updateStartBtn();
 
-        let sec = 5;
+        let sec = 15;
         const updateCd = () => {
-            showAutoOverlay(cand, index, queue.length, null, null, `ページ読み込み中... (${sec}秒)`);
+            showAutoOverlay(cand, index, queue.length, null, null, `チャート読み込み中... (${sec}秒)`);
             sec--;
         };
         updateCd();
         cdTimer = setInterval(updateCd, 1000);
 
+        // 500ms間隔でcanvasから価格をポーリング
+        let _pollCount = 0;
+        pollTimer = setInterval(() => {
+            if (handled) { clearInterval(pollTimer); return; }
+            _pollCount++;
+            if (_pollCount % 4 === 0) gmSet(K_HEARTBEAT, String(Date.now()));
+            const result = readCanvasPrice();
+            if (result !== null) {
+                const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
+                onAutoResult(asin, result);
+            }
+        }, 500);
+
         autoTimer = setTimeout(() => {
             clearInterval(cdTimer);
+            clearInterval(pollTimer);
             if (!handled) {
-                console.log('[KPR] 5秒経過 → 手動入力モードへ');
+                console.log('[KPR] タイムアウト → 手動入力モードへ');
                 showAutoManualInputOverlay(cand, index, queue.length);
             }
-        }, 5000);
+        }, 15000);
     }
 
     // ===== UI =====
@@ -492,13 +520,13 @@
             }, 30000);
         } else if (unsafeWindow.location.hash.includes('#!product/')) {
             // 手動モード: チャートが描画されたら価格オーバーレイを表示
+            const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
             let manualAttempts = 0;
             const manualPoll = setInterval(() => {
                 manualAttempts++;
-                const result = readFlotPrice();
+                const result = readCanvasPrice();
                 if (result !== null) {
                     clearInterval(manualPoll);
-                    const asin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1];
                     if (asin) showManualOverlay(asin, result.price, result.date);
                 } else if (manualAttempts > 30) {
                     clearInterval(manualPoll);
