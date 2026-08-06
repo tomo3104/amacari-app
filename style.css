@@ -281,7 +281,7 @@ body {
 
 .card-links {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 5px;
 }
 
@@ -522,7 +522,7 @@ body {
 }
 
 /* ASIN修正ボタン */
-.link-asin-fix { background: #e8eaf6; color: #3949ab; grid-column: 1 / -1; border: none; cursor: pointer; }
+.link-asin-fix { background: #e8eaf6; color: #3949ab; border: none; cursor: pointer; }
 
 /* ASIN修正モーダル内 */
 .asin-fix-note { font-size: 13px; color: #777; margin: 0 0 12px; }

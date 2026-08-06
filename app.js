@@ -348,13 +348,6 @@ function buildCardEl(card) {
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
-      <div class="card-keepa">
-        <p class="keepa-label">Keepa（90日）</p>
-        <div class="keepa-graph-wrap">
-          <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy">
-          <button class="keepa-reload-btn" aria-label="グラフ再読込" title="グラフ再読込">🔄</button>
-        </div>
-      </div>
       <div class="card-links">
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
         <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
@@ -362,6 +355,13 @@ function buildCardEl(card) {
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix no-swipe" data-row="${card.row}">ASIN修正</button>
         <button class="link-btn link-reload no-swipe">リロード</button>
+      </div>
+      <div class="card-keepa">
+        <p class="keepa-label">Keepa（90日）</p>
+        <div class="keepa-graph-wrap">
+          <img class="keepa-graph" src="${'https://graph.keepa.com/pricehistory.png?asin='+encodeURIComponent(card.asin)+'&domain=5&amazon=1&new=1&used=1&salesrank=1&range=90&width=800&cAmazon=f5a623&cNew=4fc3f7&cUsed=aaaaaa&cSales=8e44ad&cFont=1b2733&cBackground=ffffff'}" alt="Keepaグラフ" loading="lazy">
+          <button class="keepa-reload-btn" aria-label="グラフ再読込" title="グラフ再読込">🔄</button>
+        </div>
       </div>
     </div>
   `;
