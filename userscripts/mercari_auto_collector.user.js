@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.4
+// @version      6.5
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
