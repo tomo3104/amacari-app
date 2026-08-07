@@ -20,43 +20,78 @@
     // メルカリ検索条件（クローラーリサーチ用）
     const BATCH_CONDITIONS = 'status=on_sale&item_condition_id=1&shipping_payer_id=2';
 
-    // カテゴリ検索URL一覧（グループ: CAT）
-    const BASE_CAT = 'item_condition_id=1&shipping_payer_id=2&price_min=1000&price_max=20000&sort=created_time&order=desc';
+    // カテゴリ検索URL一覧（1周目: CAT 1000-10000円 / 2周目: CAT2 10001-20000円）
+    const BASE_CAT  = 'item_condition_id=1&shipping_payer_id=2&price_min=1000&price_max=10000&sort=created_time&order=desc';
+    const BASE_CAT2 = 'item_condition_id=1&shipping_payer_id=2&price_min=10001&price_max=20000&sort=created_time&order=desc';
     const STATIC_CATEGORIES = [
-        { name: 'ライト・照明',                       group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=65` },
-        { name: 'テレビ・映像機器',                   group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=98` },
-        { name: 'オーディオ機器',                     group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=99` },
-        { name: '生活家電',                           group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=101` },
-        { name: 'ノートPC',                           group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=840` },
-        { name: 'PC周辺機器',                         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=841` },
-        { name: 'テレビ',                             group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=848` },
-        { name: 'カーナビ',                           group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1113` },
-        { name: 'カーオーディオ',                     group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1114` },
-        { name: 'ETC車載器',                          group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1117` },
-        { name: 'PCパーツ',                           group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1156` },
-        { name: 'アウトドア',                         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1164` },
-        { name: '美容家電',                           group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1237` },
-        { name: '冷暖房・空調',                       group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1243` },
-        { name: 'ディスプレイ・モニター',             group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1262` },
-        { name: '旅行用家電',                         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3117` },
-        { name: 'キーボード',                         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3710` },
-        { name: 'マウス・トラックボール',             group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3716` },
-        { name: '外付けHDD・ドライブ',               group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3756` },
-        { name: 'ルーター・ネットワーク機器',         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3770` },
-        { name: 'プリンター・複合機',                 group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3733` },
-        { name: 'スキャナー',                         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3811` },
-        { name: '分配器・切替器',                     group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3820` },
-        { name: 'Webカメラ',                          group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3829` },
-        { name: 'PCスピーカー',                       group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3831` },
-        { name: 'メモリーカード',                     group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3875` },
-        { name: '生活家電・空調',                     group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=4136` },
-        { name: '電池・充電池アクセサリー',           group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=4290` },
-        { name: '電卓',                               group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5457` },
-        { name: '防犯・セーフティ',                   group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5497` },
-        { name: '電動工具・エア工具',                 group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5598` },
-        { name: '計測・検査',                         group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5907` },
-        { name: 'ゴルフ GPSナビ',                    group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=8096` },
-        { name: 'ゴルフ用距離計',                    group: 'CAT', url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=8097` },
+        { name: 'ライト・照明',                       group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=65` },
+        { name: 'テレビ・映像機器',                   group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=98` },
+        { name: 'オーディオ機器',                     group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=99` },
+        { name: '生活家電',                           group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=101` },
+        { name: 'ノートPC',                           group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=840` },
+        { name: 'PC周辺機器',                         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=841` },
+        { name: 'テレビ',                             group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=848` },
+        { name: 'カーナビ',                           group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1113` },
+        { name: 'カーオーディオ',                     group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1114` },
+        { name: 'ETC車載器',                          group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1117` },
+        { name: 'PCパーツ',                           group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1156` },
+        { name: 'アウトドア',                         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1164` },
+        { name: '美容家電',                           group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1237` },
+        { name: '冷暖房・空調',                       group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1243` },
+        { name: 'ディスプレイ・モニター',             group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=1262` },
+        { name: '旅行用家電',                         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3117` },
+        { name: 'キーボード',                         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3710` },
+        { name: 'マウス・トラックボール',             group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3716` },
+        { name: '外付けHDD・ドライブ',               group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3756` },
+        { name: 'ルーター・ネットワーク機器',         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3770` },
+        { name: 'プリンター・複合機',                 group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3733` },
+        { name: 'スキャナー',                         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3811` },
+        { name: '分配器・切替器',                     group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3820` },
+        { name: 'Webカメラ',                          group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3829` },
+        { name: 'PCスピーカー',                       group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3831` },
+        { name: 'メモリーカード',                     group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=3875` },
+        { name: '生活家電・空調',                     group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=4136` },
+        { name: '電池・充電池アクセサリー',           group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=4290` },
+        { name: '電卓',                               group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5457` },
+        { name: '防犯・セーフティ',                   group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5497` },
+        { name: '電動工具・エア工具',                 group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5598` },
+        { name: '計測・検査',                         group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=5907` },
+        { name: 'ゴルフ GPSナビ',                    group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=8096` },
+        { name: 'ゴルフ用距離計',                    group: 'CAT',  url: `https://jp.mercari.com/search?${BASE_CAT}&category_id=8097` },
+        { name: 'ライト・照明',                       group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=65` },
+        { name: 'テレビ・映像機器',                   group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=98` },
+        { name: 'オーディオ機器',                     group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=99` },
+        { name: '生活家電',                           group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=101` },
+        { name: 'ノートPC',                           group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=840` },
+        { name: 'PC周辺機器',                         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=841` },
+        { name: 'テレビ',                             group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=848` },
+        { name: 'カーナビ',                           group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1113` },
+        { name: 'カーオーディオ',                     group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1114` },
+        { name: 'ETC車載器',                          group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1117` },
+        { name: 'PCパーツ',                           group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1156` },
+        { name: 'アウトドア',                         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1164` },
+        { name: '美容家電',                           group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1237` },
+        { name: '冷暖房・空調',                       group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1243` },
+        { name: 'ディスプレイ・モニター',             group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=1262` },
+        { name: '旅行用家電',                         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3117` },
+        { name: 'キーボード',                         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3710` },
+        { name: 'マウス・トラックボール',             group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3716` },
+        { name: '外付けHDD・ドライブ',               group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3756` },
+        { name: 'ルーター・ネットワーク機器',         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3770` },
+        { name: 'プリンター・複合機',                 group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3733` },
+        { name: 'スキャナー',                         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3811` },
+        { name: '分配器・切替器',                     group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3820` },
+        { name: 'Webカメラ',                          group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3829` },
+        { name: 'PCスピーカー',                       group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3831` },
+        { name: 'メモリーカード',                     group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=3875` },
+        { name: '生活家電・空調',                     group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=4136` },
+        { name: '電池・充電池アクセサリー',           group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=4290` },
+        { name: '電卓',                               group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=5457` },
+        { name: '防犯・セーフティ',                   group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=5497` },
+        { name: '電動工具・エア工具',                 group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=5598` },
+        { name: '計測・検査',                         group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=5907` },
+        { name: 'ゴルフ GPSナビ',                    group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=8096` },
+        { name: 'ゴルフ用距離計',                    group: 'CAT2', url: `https://jp.mercari.com/search?${BASE_CAT2}&category_id=8097` },
     ];
     const ITEM_SEL    = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
     const NAME_SEL    = '[data-testid="thumbnail-item-name"]';
@@ -150,8 +185,10 @@
             sc.status = [apiStatus];
             const categoryId = sp.get('category_id');
             if (categoryId) { sc.categoryId = categoryId.split(',').map(Number); } else { delete sc.categoryId; }
-            delete sc.priceMin;
-            delete sc.priceMax;
+            const priceMin = sp.get('price_min') ? Number(sp.get('price_min')) : null;
+            const priceMax = sp.get('price_max') ? Number(sp.get('price_max')) : null;
+            if (priceMin != null) sc.priceMin = priceMin; else delete sc.priceMin;
+            if (priceMax != null) sc.priceMax = priceMax; else delete sc.priceMax;
             if (brandId) { sc.brandId = [parseInt(brandId)]; } else { delete sc.brandId; }
             if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
             if (sp.get('shipping_payer_id')) sc.shippingPayerId = sp.get('shipping_payer_id').split(',').map(Number);
