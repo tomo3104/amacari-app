@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.57
+// @version      2.58
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,7 @@
 
     const SERVER_URL      = 'http://localhost:8766/check-mercari';
     const PROGRESS_URL    = 'http://localhost:8766/save-progress';
+    const TIMING_URL      = 'http://localhost:8766/log-timing';
     const SAVE_INTERVAL   = 30; // 何件ごとにサーバー中間送信するか
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const QUEUE_KEY       = 'desc_model_queue';
@@ -405,6 +406,8 @@
                 Object.keys(localStorage).filter(k => k.startsWith('desc_last_run_')).forEach(k => localStorage.removeItem(k));
                 showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
                 dlog(`===== クローラー開始 ${makers.length}メーカー (グループ: ${group}) =====`);
+                GM_xmlhttpRequest({ method: 'POST', url: TIMING_URL, headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ type: 'desc_start', group, total: makers.length }) });
                 setTimeout(() => { window.location.href = makers[0].url; }, 1500);
             },
             onerror:    () => showStatus('サーバー未起動（localhost:8766）', 'rgba(160,0,0,0.88)'),
@@ -511,6 +514,9 @@
             const _summary = `全完了: ${total}メーカー / 開始${_startStr} / 所要時間${_mins}分${_secs}秒`;
             showStatus(`発掘クローラー全完了 (${total}メーカー) → list.jsonと照合中...`, 'rgba(0,70,160,0.88)');
             dlog(`===== ${_summary} =====`);
+            const _hits = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+            GM_xmlhttpRequest({ method: 'POST', url: TIMING_URL, headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ type: 'desc_end', group: crawlerState.group, total, elapsed_ms: _elapsed * 1000, hits: _hits }) });
             finishAndSend(null);
             return;
         }
