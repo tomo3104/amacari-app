@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.29
+// @version      3.30
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -181,6 +181,12 @@
 
         if (!price) {
             showAutoOverlay(cand, index, queue.length, null, null, '価格データなし - スキップ');
+            GM_xmlhttpRequest({
+                method: 'POST', url: `${SERVER}/skip-premium`,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ asin: asin || cand.asin }),
+                timeout: 5000, onerror: () => {}, ontimeout: () => {},
+            });
             setTimeout(() => goNext(), 500);
             return;
         }
@@ -248,6 +254,13 @@
             if (!handled) {
                 handled = true;
                 console.log('[KPR] タイムアウト → 自動スキップ');
+                const skipAsin = (unsafeWindow.location.hash.match(/product\/5-([A-Z0-9]+)/) || [])[1] || cand.asin;
+                GM_xmlhttpRequest({
+                    method: 'POST', url: `${SERVER}/skip-premium`,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ asin: skipAsin }),
+                    timeout: 5000, onerror: () => {}, ontimeout: () => {},
+                });
                 showAutoOverlay(cand, index, queue.length, null, null, '価格取得失敗 - スキップ');
                 setTimeout(() => goNext(), 1000);
             }
