@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.61
+// @version      2.62
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -825,8 +825,8 @@
                 resolve(result);
             };
 
-            // 最大12秒でタイムアウト
-            const hardTimer = setTimeout(() => { dlog(`iframe timeout: ${itemId}`); finish(null); }, 12000);
+            // 最大8秒でタイムアウト
+            const hardTimer = setTimeout(() => { dlog(`iframe timeout: ${itemId}`); finish(null); }, 8000);
 
             iframe.onload = () => {
                 let tries = 0;
@@ -862,7 +862,7 @@
                         finish(null);
                         return;
                     }
-                    if (++tries > 60) { // 60 × 200ms = 12秒
+                    if (++tries > 40) { // 40 × 200ms = 8秒
                         clearInterval(poll);
                         clearTimeout(hardTimer);
                         dlog(`iframe: desc待機タイムアウト`);
@@ -949,7 +949,7 @@
                     showStatus(`${prefix}[${i + 1}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
                     dlog(`▶ ヒット [${i + 1}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${results.length}件`);
                     if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL), makerName);
-                    await sleep(2000); // ヒット時は2秒停止して読めるように
+                    await sleep(isCrawlerMode ? 500 : 2000); // クローラー時は短縮
                 } else {
                     const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                     showStatus(`${prefix}[${i + 1}/${total}] 型番なし（累計: ${cnt}件）`);
