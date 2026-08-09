@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.60
+// @version      2.61
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -26,6 +26,9 @@
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
     const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+    let _pauseRequested  = false; // 一時停止フラグ
+    let _crawlerPauseBtn = null;  // 一時停止ボタン参照（複数箇所から削除できるように）
 
     // タイトルに型番が含まれるか判定
     // ダッシュ後は英字＋数字の両方を含む必要あり（Wi-Fi / PC-12台 などの誤検知を防ぐ）
@@ -435,9 +438,28 @@
             localStorage.removeItem(CRAWLER_KEY);
             localStorage.removeItem(QUEUE_KEY);
             abortBtn.remove();
+            if (_crawlerPauseBtn) { _crawlerPauseBtn.remove(); _crawlerPauseBtn = null; }
             finishAndSend(null);
         };
         document.body.appendChild(abortBtn);
+
+        // 一時停止ボタン（現メーカー完了後に停止・CRAWLER_KEYは保持→再開可能）
+        _pauseRequested  = false;
+        _crawlerPauseBtn = document.createElement('button');
+        _crawlerPauseBtn.textContent = '一時停止';
+        _crawlerPauseBtn.style.cssText = `
+            position:fixed; bottom:120px; left:20px; z-index:99999;
+            padding:8px 14px; background:#E65100; color:#fff;
+            border:none; border-radius:6px; font-size:12px; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        _crawlerPauseBtn.onclick = () => {
+            _pauseRequested = true;
+            _crawlerPauseBtn.textContent = '停止待ち...';
+            _crawlerPauseBtn.disabled = true;
+            _crawlerPauseBtn.style.background = '#9E9E9E';
+        };
+        document.body.appendChild(_crawlerPauseBtn);
 
         showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — テンプレート待機中...`);
 
@@ -453,6 +475,7 @@
             showStatus(`テンプレート取得できず → スキップ: ${maker.name}`, 'rgba(160,80,0,0.88)');
             await sleep(2000);
             abortBtn.remove();
+            if (_crawlerPauseBtn) { _crawlerPauseBtn.remove(); _crawlerPauseBtn = null; }
             finishMakerAndContinue();
             return;
         }
@@ -466,6 +489,7 @@
             showStatus(`収集エラー: ${e.message} → スキップ`, 'rgba(160,0,0,0.88)');
             await sleep(2000);
             abortBtn.remove();
+            if (_crawlerPauseBtn) { _crawlerPauseBtn.remove(); _crawlerPauseBtn = null; }
             finishMakerAndContinue();
             return;
         }
@@ -481,10 +505,12 @@
             if (noModelItems.length === 0) {
                 await sleep(1000);
                 abortBtn.remove();
+                if (_crawlerPauseBtn) { _crawlerPauseBtn.remove(); _crawlerPauseBtn = null; }
                 finishMakerAndContinue();
                 return;
             }
             abortBtn.remove();
+            if (_crawlerPauseBtn) { _crawlerPauseBtn.remove(); _crawlerPauseBtn = null; }
             await processItemsWithFetch(noModelItems, true, maker.name);
         } catch(e) {
             console.error('[desc-finder] runCrawlerSearchMode ERROR:', e);
@@ -529,8 +555,32 @@
         dlog(`[${done}/${total}完了] 累計ヒット: ${_accum}件 → 次: ${next.name}`);
         localStorage.removeItem(_SHARED_TPL_KEY);
 
-        // メーカー完了ごとに中間保存してからページ遷移（止めてもデータが消えないように）
+        // メーカー完了ごとに中間保存（止めてもデータが消えないように）
         const _interim = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+
+        // 一時停止フラグが立っていた場合は中間保存後に停止（CRAWLER_KEYは保持→再開可能）
+        if (_pauseRequested) {
+            _pauseRequested = false;
+            const _doPause = () => {
+                showStatus(`[${done}/${total}完了] 一時停止中 — メルカリを開いたら「クローラー再開」で続きから再開できます`, 'rgba(80,50,0,0.90)');
+                dlog(`===== 一時停止: ${done}/${total}完了 =====`);
+            };
+            if (_interim.length > 0) {
+                GM_xmlhttpRequest({
+                    method: 'POST', url: SERVER_URL,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ items: _interim, source: 'desc' }),
+                    timeout: 30000,
+                    onload: () => { localStorage.setItem(RESULT_KEY, JSON.stringify([])); dlog(`[中間保存完了] ${_interim.length}件`); _doPause(); },
+                    onerror:   () => { dlog('[中間保存失敗] ローカルに保持'); _doPause(); },
+                    ontimeout: () => { dlog('[中間保存タイムアウト] ローカルに保持'); _doPause(); },
+                });
+            } else {
+                _doPause();
+            }
+            return;
+        }
+
         const _doNavigate = () => { window.location.href = next.url; };
         if (_interim.length > 0) {
             GM_xmlhttpRequest({
