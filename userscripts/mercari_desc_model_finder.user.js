@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.59
+// @version      2.60
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -527,9 +527,28 @@
         const _accum = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
         showStatus(`[${done}/${total}完了] 次: ${next.name}`, 'rgba(0,70,120,0.88)');
         dlog(`[${done}/${total}完了] 累計ヒット: ${_accum}件 → 次: ${next.name}`);
-        // テンプレートをクリアして次ページで確実に新しい検索条件を取得する
         localStorage.removeItem(_SHARED_TPL_KEY);
-        setTimeout(() => { window.location.href = next.url; }, 1500);
+
+        // メーカー完了ごとに中間保存してからページ遷移（止めてもデータが消えないように）
+        const _interim = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+        const _doNavigate = () => { window.location.href = next.url; };
+        if (_interim.length > 0) {
+            GM_xmlhttpRequest({
+                method: 'POST', url: SERVER_URL,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ items: _interim, source: 'desc' }),
+                timeout: 30000,
+                onload: () => {
+                    localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+                    dlog(`[中間保存完了] ${_interim.length}件`);
+                    _doNavigate();
+                },
+                onerror:   () => { dlog('[中間保存失敗] ローカルに保持'); _doNavigate(); },
+                ontimeout: () => { dlog('[中間保存タイムアウト] ローカルに保持'); _doNavigate(); },
+            });
+        } else {
+            setTimeout(_doNavigate, 1500);
+        }
     }
 
     // ========================================================
