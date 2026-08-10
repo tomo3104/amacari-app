@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.14
+// @version      3.15
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -867,41 +867,45 @@
             iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:700px;border:none;opacity:0;';
             document.body.appendChild(iframe);
             let done = false;
-            const timer = setTimeout(() => {
-                if (!done) { done = true; iframe.remove(); resolve(null); }
-            }, 8000);
-            iframe.onload = () => {
+            const cleanup = (val) => { if (!done) { done = true; iframe.remove(); resolve(val); } };
+            setTimeout(() => cleanup(null), 10000);
+
+            iframe.onload = async () => {
                 if (done) return;
-                try {
-                    const scripts = iframe.contentDocument.querySelectorAll('script[type="application/ld+json"]');
-                    let product = null, breadcrumb = null;
-                    for (const s of scripts) {
-                        try {
-                            const obj = JSON.parse(s.textContent);
-                            if (obj['@type'] === 'Product') product = obj;
-                            if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
-                        } catch (_) {}
-                    }
-                    if (!product) { done = true; clearTimeout(timer); iframe.remove(); resolve(null); return; }
-                    const avail = product.offers?.availability || '';
-                    if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) {
-                        done = true; clearTimeout(timer); iframe.remove(); resolve(null); return;
-                    }
-                    let jan = product.gtin13 || product.gtin || null;
-                    if (!jan) {
-                        const m = (product.description || '').match(/JANコード[：:]\s*(\d{13})/);
-                        if (m) jan = m[1];
-                    }
-                    let category = '';
-                    const blist = breadcrumb?.itemListElement || [];
-                    if (blist.length >= 3) category = blist[2].name || '';
-                    else if (blist.length >= 2) category = blist[1].name || '';
-                    const price = parseInt(product.offers?.price || '0', 10);
-                    const title = product.name || '';
-                    const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
-                    done = true; clearTimeout(timer); iframe.remove();
-                    resolve({ jan, category, price, title, url, image });
-                } catch (_) { done = true; clearTimeout(timer); iframe.remove(); resolve(null); }
+                // onload後にJSON-LDが出るまで最大5秒ポーリング
+                for (let i = 0; i < 50; i++) {
+                    await sleep(100);
+                    if (done) return;
+                    try {
+                        const scripts = iframe.contentDocument.querySelectorAll('script[type="application/ld+json"]');
+                        let product = null, breadcrumb = null;
+                        for (const s of scripts) {
+                            try {
+                                const obj = JSON.parse(s.textContent);
+                                if (obj['@type'] === 'Product') product = obj;
+                                if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
+                            } catch (_) {}
+                        }
+                        if (!product) continue;
+                        const avail = product.offers?.availability || '';
+                        if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) { cleanup(null); return; }
+                        let jan = product.gtin13 || product.gtin || null;
+                        if (!jan) {
+                            const m = (product.description || '').match(/JANコード[：:]\s*(\d{13})/);
+                            if (m) jan = m[1];
+                        }
+                        let category = '';
+                        const blist = breadcrumb?.itemListElement || [];
+                        if (blist.length >= 3) category = blist[2].name || '';
+                        else if (blist.length >= 2) category = blist[1].name || '';
+                        const price = parseInt(product.offers?.price || '0', 10);
+                        const title = product.name || '';
+                        const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
+                        cleanup({ jan, category, price, title, url, image });
+                        return;
+                    } catch (_) {}
+                }
+                cleanup(null);
             };
             iframe.src = url;
         });
@@ -958,10 +962,16 @@
             const products = [];
             let done = 0, skipped = 0;
 
+            let _dbgCount = 0;
             async function processChunk(chunk) {
                 for (const purl of chunk) {
                     const prod = await fetchKojimaProduct(purl);
                     done++;
+                    if (_dbgCount < 2) {
+                        _dbgCount++;
+                        kojimaUpdateStatus(`[DBG] jan:${prod?.jan} cat:${prod?.category} price:${prod?.price}`);
+                        await sleep(3000);
+                    }
                     if (!prod || !prod.jan || prod.price <= 0) { skipped++; }
                     else if (KOJIMA_EXCL.some(c => prod.category.includes(c))) { skipped++; }
                     else { products.push(prod); }
