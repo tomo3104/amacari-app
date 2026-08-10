@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      3.10
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -340,18 +340,20 @@
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
     `;
+    container.appendChild(statusEl);
+    container.appendChild(startBtn);
+    container.appendChild(batchBtn);
+    container.appendChild(stopBtn);
+
     const kojimaBtn = document.createElement('button');
     kojimaBtn.textContent = 'コジマ';
     kojimaBtn.style.cssText = `
+        position:fixed; top:20px; left:20px; z-index:99999;
         padding:12px 22px; background:#00897B; color:#fff;
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
     `;
-    container.appendChild(statusEl);
-    container.appendChild(startBtn);
-    container.appendChild(batchBtn);
-    container.appendChild(kojimaBtn);
-    container.appendChild(stopBtn);
+    document.body.appendChild(kojimaBtn);
     document.body.appendChild(container);
 
     // ========== 状態 ==========
