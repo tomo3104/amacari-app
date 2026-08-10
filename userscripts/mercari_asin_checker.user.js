@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.18
+// @version      3.19
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -857,75 +857,23 @@
 
     // ========== コジマShopsウォッチ ==========
     const KOJIMA_URL    = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
-    const KOJIMA_SERVER = 'http://localhost:8766/check-shops';
+    const KOJIMA_SERVER = 'http://localhost:8766/check-mercari';
     const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
-    const KOJIMA_CONC   = 3;
-
-    function fetchKojimaProduct(url) {
-        return new Promise(resolve => {
-            const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:700px;border:none;opacity:0;';
-            document.body.appendChild(iframe);
-            let done = false;
-            const cleanup = (val) => { if (!done) { done = true; iframe.remove(); resolve(val); } };
-            setTimeout(() => cleanup(null), 10000);
-
-            iframe.onload = async () => {
-                if (done) return;
-                // onload後にJSON-LDが出るまで最大5秒ポーリング
-                for (let i = 0; i < 50; i++) {
-                    await sleep(100);
-                    if (done) return;
-                    try {
-                        const scripts = iframe.contentDocument.querySelectorAll('script[type="application/ld+json"]');
-                        let product = null, breadcrumb = null;
-                        for (const s of scripts) {
-                            try {
-                                const obj = JSON.parse(s.textContent);
-                                if (obj['@type'] === 'Product') product = obj;
-                                if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
-                            } catch (_) {}
-                        }
-                        if (!product) continue;
-                        const avail = product.offers?.availability || '';
-                        if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) { cleanup(null); return; }
-                        let jan = product.gtin13 || product.gtin || null;
-                        if (!jan) {
-                            const m = (product.description || '').match(/JANコード[：:]\s*(\d{13})/);
-                            if (m) jan = m[1];
-                        }
-                        let category = '';
-                        const blist = breadcrumb?.itemListElement || [];
-                        if (blist.length >= 3) category = blist[2].name || '';
-                        else if (blist.length >= 2) category = blist[1].name || '';
-                        const price = parseInt(product.offers?.price || '0', 10);
-                        const title = product.name || '';
-                        const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
-                        cleanup({ jan, category, price, title, url, image });
-                        return;
-                    } catch (_) {}
-                }
-                cleanup(null);
-            };
-            iframe.src = url;
-        });
-    }
 
     function kojimaUpdateStatus(msg) {
         kojimaStatus.style.display = 'block';
         kojimaStatus.textContent = msg;
     }
 
+    // 一覧ページをiframeで開いてスクロール→タイトル・価格を直接抽出して返す
     function collectKojimaItems() {
         return new Promise(resolve => {
             kojimaUpdateStatus('iframeでコジマShops読み込み中...');
             const iframe = document.createElement('iframe');
             iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:390px;height:700px;border:none;z-index:99990;opacity:0.05;pointer-events:none;';
             document.body.appendChild(iframe);
-
             const cleanup = () => { try { iframe.remove(); } catch(_) {} };
-            setTimeout(() => { cleanup(); resolve([]); }, 150000);
-
+            setTimeout(() => { cleanup(); resolve([]); }, 180000);
             iframe.onload = async () => {
                 try {
                     const iwin = iframe.contentWindow;
@@ -939,15 +887,30 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // 最初の1件をデバッグ表示
-                    const first = idoc.querySelector('a[href*="/shops/product/"]');
-                    if (first) {
-                        kojimaUpdateStatus(`[DBG] innerText:\n${first.innerText.slice(0, 120)}`);
-                        await sleep(5000);
-                    }
+                    // 重複除外しながらタイトル・価格を抽出
+                    const seen = new Set();
+                    const items = [];
+                    idoc.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
+                        const url = a.href.split('?')[0];
+                        if (seen.has(url)) return;
+                        seen.add(url);
+                        // リンク内テキスト、なければ親要素のテキストを使う
+                        const text = (a.innerText || a.parentElement?.innerText || '').trim();
+                        if (KOJIMA_EXCL.some(w => text.includes(w))) return;
+                        const priceMatch = text.match(/¥([\d,]+)/) || text.match(/([\d,]+)円/);
+                        const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
+                        const name = text.replace(/¥[\d,]+|[\d,]+円/g, '').replace(/\s+/g, ' ').trim();
+                        if (name) items.push({ name, price, url });
+                    });
+                    kojimaUpdateStatus(`${items.length}件取得完了（重複除外後）`);
+                    cleanup();
+                    resolve(items);
+                } catch(e) {
+                    kojimaUpdateStatus(`iframeエラー: ${e.message}`);
+                    await sleep(3000);
                     cleanup();
                     resolve([]);
-                } catch(e) { kojimaUpdateStatus(`iframeエラー: ${e.message}`); await sleep(5000); cleanup(); resolve([]); }
+                }
             };
             iframe.src = KOJIMA_URL;
         });
@@ -957,48 +920,19 @@
         kojimaBtn.disabled = true;
         kojimaBtn.textContent = '実行中...';
         try {
-            const urls = await collectKojimaItems();
-            kojimaUpdateStatus(`${urls.length}件取得 → 詳細取得中...`);
-            if (urls.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
-
-            const products = [];
-            let done = 0, skipped = 0;
-
-            let _dbgCount = 0;
-            async function processChunk(chunk) {
-                for (const purl of chunk) {
-                    const prod = await fetchKojimaProduct(purl);
-                    done++;
-                    if (_dbgCount < 2) {
-                        _dbgCount++;
-                        kojimaUpdateStatus(`[DBG] jan:${prod?.jan} cat:${prod?.category} price:${prod?.price}`);
-                        await sleep(3000);
-                    }
-                    if (!prod || !prod.jan || prod.price <= 0) { skipped++; }
-                    else if (KOJIMA_EXCL.some(c => prod.category.includes(c))) { skipped++; }
-                    else { products.push(prod); }
-                    kojimaUpdateStatus(`詳細取得: ${done}/${urls.length}\n有効:${products.length}件  除外:${skipped}件`);
-                }
-            }
-
-            const chunkSize = Math.ceil(urls.length / KOJIMA_CONC);
-            const chunks = [];
-            for (let i = 0; i < urls.length; i += chunkSize) chunks.push(urls.slice(i, i + chunkSize));
-            await Promise.all(chunks.map(processChunk));
-
-            if (products.length === 0) { kojimaUpdateStatus('有効な商品なし（JAN無し/カテゴリ除外）'); return; }
-
-            kojimaUpdateStatus(`${products.length}件をサーバーへ送信中...`);
+            const items = await collectKojimaItems();
+            if (items.length === 0) { kojimaUpdateStatus('商品が取得できませんでした'); return; }
+            kojimaUpdateStatus(`${items.length}件をサーバーへ送信中...`);
             await new Promise(resolve => {
                 GM_xmlhttpRequest({
                     method: 'POST', url: KOJIMA_SERVER,
                     headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ products }),
+                    data: JSON.stringify({ items, source: 'shops' }),
                     timeout: 180000,
-                    onload:    res => {
+                    onload: res => {
                         try {
                             const r = JSON.parse(res.responseText);
-                            kojimaUpdateStatus(`完了 — ${r.hits || 0}件ヒット`);
+                            kojimaUpdateStatus(`完了 — ${(r.matches || []).length}件ヒット`);
                         } catch (_) { kojimaUpdateStatus('完了（レスポンス解析失敗）'); }
                         resolve();
                     },
