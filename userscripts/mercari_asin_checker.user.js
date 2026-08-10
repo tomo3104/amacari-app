@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @grant        unsafeWindow
 // @connect      localhost
+// @connect      jp.mercari.com
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // ==/UserScript==
@@ -851,8 +852,8 @@
                 method: 'GET', url,
                 timeout: 15000,
                 onload:    r => resolve(r.responseText),
-                onerror:   () => reject(new Error('fetch error')),
-                ontimeout: () => reject(new Error('timeout')),
+                onerror:   e => { console.error('[kojima] fetch error', url, e); reject(new Error('fetch error')); },
+                ontimeout: () => { console.error('[kojima] timeout', url); reject(new Error('timeout')); },
             });
         });
     }
