@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.12
+// @version      3.13
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -873,6 +873,7 @@
         });
     }
 
+    let _kojDbg = 0;
     function parseProductLd(html, url) {
         try {
             const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -884,6 +885,13 @@
                     if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
                 } catch (_) {}
             });
+            if (_kojDbg < 3) {
+                _kojDbg++;
+                console.log('[kojima] url:', url);
+                console.log('[kojima] product:', product);
+                console.log('[kojima] avail:', product?.offers?.availability);
+                console.log('[kojima] desc:', (product?.description || '').slice(0, 200));
+            }
             if (!product) return null;
             const avail = product.offers?.availability || '';
             if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) return null;
@@ -900,7 +908,7 @@
             const title = product.name || '';
             const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
             return { jan, category, price, title, url, image };
-        } catch (_) { return null; }
+        } catch (e) { console.error('[kojima] parse error', url, e); return null; }
     }
 
     function kojimaUpdateStatus(msg) {
