@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.62
+// @version      2.63
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -556,7 +556,10 @@
         localStorage.removeItem(_SHARED_TPL_KEY);
 
         // メーカー完了ごとに中間保存（止めてもデータが消えないように）
-        const _interim = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+        const _interim      = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+        const _completedMaker = crawlerState.makers[done - 1].name;
+
+        const _buildPayload = () => JSON.stringify({ items: _interim, source: 'desc', maker: _completedMaker });
 
         // 一時停止フラグが立っていた場合は中間保存後に停止（CRAWLER_KEYは保持→再開可能）
         if (_pauseRequested) {
@@ -569,7 +572,7 @@
                 GM_xmlhttpRequest({
                     method: 'POST', url: SERVER_URL,
                     headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ items: _interim, source: 'desc' }),
+                    data: _buildPayload(),
                     timeout: 30000,
                     onload: () => { localStorage.setItem(RESULT_KEY, JSON.stringify([])); dlog(`[中間保存完了] ${_interim.length}件`); _doPause(); },
                     onerror:   () => { dlog('[中間保存失敗] ローカルに保持'); _doPause(); },
@@ -586,7 +589,7 @@
             GM_xmlhttpRequest({
                 method: 'POST', url: SERVER_URL,
                 headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ items: _interim, source: 'desc' }),
+                data: _buildPayload(),
                 timeout: 30000,
                 onload: () => {
                     localStorage.setItem(RESULT_KEY, JSON.stringify([]));
