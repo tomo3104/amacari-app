@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.17
+// @version      3.18
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -920,7 +920,7 @@
         return new Promise(resolve => {
             kojimaUpdateStatus('iframeでコジマShops読み込み中...');
             const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'position:fixed;top:0;left:-620px;width:400px;height:100vh;border:none;z-index:-1;';
+            iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:390px;height:700px;border:none;z-index:99990;opacity:0.05;pointer-events:none;';
             document.body.appendChild(iframe);
 
             const cleanup = () => { try { iframe.remove(); } catch(_) {} };
