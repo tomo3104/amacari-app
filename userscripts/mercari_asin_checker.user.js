@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.15
+// @version      3.16
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -916,7 +916,7 @@
         kojimaStatus.textContent = msg;
     }
 
-    function collectKojimaUrls() {
+    function collectKojimaItems() {
         return new Promise(resolve => {
             kojimaUpdateStatus('iframeでコジマShops読み込み中...');
             const iframe = document.createElement('iframe');
@@ -939,12 +939,14 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    const links = new Set();
-                    idoc.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
-                        links.add(a.href.split('?')[0]);
-                    });
+                    // 最初の1件をデバッグ表示
+                    const first = idoc.querySelector('a[href*="/shops/product/"]');
+                    if (first) {
+                        kojimaUpdateStatus(`[DBG] innerText:\n${first.innerText.slice(0, 120)}`);
+                        await sleep(5000);
+                    }
                     cleanup();
-                    resolve([...links]);
+                    resolve([]);
                 } catch(e) { cleanup(); resolve([]); }
             };
             iframe.src = KOJIMA_URL;
@@ -955,7 +957,7 @@
         kojimaBtn.disabled = true;
         kojimaBtn.textContent = '実行中...';
         try {
-            const urls = await collectKojimaUrls();
+            const urls = await collectKojimaItems();
             kojimaUpdateStatus(`${urls.length}件取得 → 詳細取得中...`);
             if (urls.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
 
