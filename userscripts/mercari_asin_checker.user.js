@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.13
+// @version      3.14
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -861,54 +861,50 @@
     const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
     const KOJIMA_CONC   = 3;
 
-    function gmGet(url) {
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: 'GET', url,
-                timeout: 15000,
-                onload:    r => resolve(r.responseText),
-                onerror:   e => { console.error('[kojima] fetch error', url, e); reject(new Error('fetch error')); },
-                ontimeout: () => { console.error('[kojima] timeout', url); reject(new Error('timeout')); },
-            });
-        });
-    }
-
-    let _kojDbg = 0;
-    function parseProductLd(html, url) {
-        try {
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-            let product = null, breadcrumb = null;
-            doc.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+    function fetchKojimaProduct(url) {
+        return new Promise(resolve => {
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:700px;border:none;opacity:0;';
+            document.body.appendChild(iframe);
+            let done = false;
+            const timer = setTimeout(() => {
+                if (!done) { done = true; iframe.remove(); resolve(null); }
+            }, 8000);
+            iframe.onload = () => {
+                if (done) return;
                 try {
-                    const obj = JSON.parse(s.textContent);
-                    if (obj['@type'] === 'Product') product = obj;
-                    if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
-                } catch (_) {}
-            });
-            if (_kojDbg < 3) {
-                _kojDbg++;
-                console.log('[kojima] url:', url);
-                console.log('[kojima] product:', product);
-                console.log('[kojima] avail:', product?.offers?.availability);
-                console.log('[kojima] desc:', (product?.description || '').slice(0, 200));
-            }
-            if (!product) return null;
-            const avail = product.offers?.availability || '';
-            if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) return null;
-            let jan = product.gtin13 || product.gtin || null;
-            if (!jan) {
-                const m = (product.description || '').match(/JANコード[：:]\s*(\d{13})/);
-                if (m) jan = m[1];
-            }
-            let category = '';
-            const blist = breadcrumb?.itemListElement || [];
-            if (blist.length >= 3) category = blist[2].name || '';
-            else if (blist.length >= 2) category = blist[1].name || '';
-            const price = parseInt(product.offers?.price || '0', 10);
-            const title = product.name || '';
-            const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
-            return { jan, category, price, title, url, image };
-        } catch (e) { console.error('[kojima] parse error', url, e); return null; }
+                    const scripts = iframe.contentDocument.querySelectorAll('script[type="application/ld+json"]');
+                    let product = null, breadcrumb = null;
+                    for (const s of scripts) {
+                        try {
+                            const obj = JSON.parse(s.textContent);
+                            if (obj['@type'] === 'Product') product = obj;
+                            if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
+                        } catch (_) {}
+                    }
+                    if (!product) { done = true; clearTimeout(timer); iframe.remove(); resolve(null); return; }
+                    const avail = product.offers?.availability || '';
+                    if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) {
+                        done = true; clearTimeout(timer); iframe.remove(); resolve(null); return;
+                    }
+                    let jan = product.gtin13 || product.gtin || null;
+                    if (!jan) {
+                        const m = (product.description || '').match(/JANコード[：:]\s*(\d{13})/);
+                        if (m) jan = m[1];
+                    }
+                    let category = '';
+                    const blist = breadcrumb?.itemListElement || [];
+                    if (blist.length >= 3) category = blist[2].name || '';
+                    else if (blist.length >= 2) category = blist[1].name || '';
+                    const price = parseInt(product.offers?.price || '0', 10);
+                    const title = product.name || '';
+                    const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
+                    done = true; clearTimeout(timer); iframe.remove();
+                    resolve({ jan, category, price, title, url, image });
+                } catch (_) { done = true; clearTimeout(timer); iframe.remove(); resolve(null); }
+            };
+            iframe.src = url;
+        });
     }
 
     function kojimaUpdateStatus(msg) {
@@ -964,15 +960,12 @@
 
             async function processChunk(chunk) {
                 for (const purl of chunk) {
-                    try {
-                        const html = await gmGet(purl);
-                        const prod = parseProductLd(html, purl);
-                        done++;
-                        if (!prod || !prod.jan || prod.price <= 0) { skipped++; }
-                        else if (KOJIMA_EXCL.some(c => prod.category.includes(c))) { skipped++; }
-                        else { products.push(prod); }
-                        kojimaUpdateStatus(`詳細取得: ${done}/${urls.length}\n有効:${products.length}件  除外:${skipped}件`);
-                    } catch (_) { done++; skipped++; }
+                    const prod = await fetchKojimaProduct(purl);
+                    done++;
+                    if (!prod || !prod.jan || prod.price <= 0) { skipped++; }
+                    else if (KOJIMA_EXCL.some(c => prod.category.includes(c))) { skipped++; }
+                    else { products.push(prod); }
+                    kojimaUpdateStatus(`詳細取得: ${done}/${urls.length}\n有効:${products.length}件  除外:${skipped}件`);
                 }
             }
 
