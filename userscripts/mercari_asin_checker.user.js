@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -339,9 +339,17 @@
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
     `;
+    const kojimaBtn = document.createElement('button');
+    kojimaBtn.textContent = 'コジマ';
+    kojimaBtn.style.cssText = `
+        padding:12px 22px; background:#00897B; color:#fff;
+        border:none; border-radius:6px; font-size:14px;
+        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    `;
     container.appendChild(statusEl);
     container.appendChild(startBtn);
     container.appendChild(batchBtn);
+    container.appendChild(kojimaBtn);
     container.appendChild(stopBtn);
     document.body.appendChild(container);
 
@@ -831,6 +839,122 @@
         showGroupPicker(STATIC_MANUFACTURERS);
     }
 
+    // ========== コジマShopsウォッチ ==========
+    const KOJIMA_URL    = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
+    const KOJIMA_SERVER = 'http://localhost:8766/check-shops';
+    const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
+    const KOJIMA_CONC   = 3;
+
+    function gmGet(url) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET', url,
+                timeout: 15000,
+                onload:    r => resolve(r.responseText),
+                onerror:   () => reject(new Error('fetch error')),
+                ontimeout: () => reject(new Error('timeout')),
+            });
+        });
+    }
+
+    function parseProductLd(html, url) {
+        try {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            let product = null, breadcrumb = null;
+            doc.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+                try {
+                    const obj = JSON.parse(s.textContent);
+                    if (obj['@type'] === 'Product') product = obj;
+                    if (obj['@type'] === 'BreadcrumbList') breadcrumb = obj;
+                } catch (_) {}
+            });
+            if (!product) return null;
+            const avail = product.offers?.availability || '';
+            if (!avail.includes('InStock') && !avail.includes('OnlineOnly')) return null;
+            let jan = product.gtin13 || product.gtin || null;
+            if (!jan) {
+                const m = (product.description || '').match(/JANコード[：:]\s*(\d{13})/);
+                if (m) jan = m[1];
+            }
+            let category = '';
+            const blist = breadcrumb?.itemListElement || [];
+            if (blist.length >= 3) category = blist[2].name || '';
+            else if (blist.length >= 2) category = blist[1].name || '';
+            const price = parseInt(product.offers?.price || '0', 10);
+            const title = product.name || '';
+            const image = (Array.isArray(product.image) ? product.image[0] : product.image) || '';
+            return { jan, category, price, title, url, image };
+        } catch (_) { return null; }
+    }
+
+    async function runKojimaWatch() {
+        kojimaBtn.disabled = true;
+        kojimaBtn.textContent = '実行中...';
+        try {
+            updateStatus('コジマShops一覧取得中...');
+            const listHtml = await gmGet(KOJIMA_URL);
+            const listDoc  = new DOMParser().parseFromString(listHtml, 'text/html');
+            const links    = new Set();
+            listDoc.querySelectorAll('a').forEach(a => {
+                const attr = a.getAttribute('href') || '';
+                if (attr.includes('/shops/product/')) {
+                    links.add('https://jp.mercari.com' + attr.split('?')[0]);
+                }
+            });
+            const urls = [...links];
+            updateStatus(`${urls.length}件のURL取得 → 詳細取得中...`);
+            if (urls.length === 0) { updateStatus('商品URLが取得できませんでした'); return; }
+
+            const products = [];
+            let done = 0, skipped = 0;
+
+            async function processChunk(chunk) {
+                for (const purl of chunk) {
+                    try {
+                        const html = await gmGet(purl);
+                        const prod = parseProductLd(html, purl);
+                        done++;
+                        if (!prod || !prod.jan || prod.price <= 0) { skipped++; }
+                        else if (KOJIMA_EXCL.some(c => prod.category.includes(c))) { skipped++; }
+                        else { products.push(prod); }
+                        updateStatus(`詳細取得: ${done}/${urls.length}  有効:${products.length}件  除外:${skipped}件`);
+                    } catch (_) { done++; skipped++; }
+                }
+            }
+
+            const chunkSize = Math.ceil(urls.length / KOJIMA_CONC);
+            const chunks = [];
+            for (let i = 0; i < urls.length; i += chunkSize) chunks.push(urls.slice(i, i + chunkSize));
+            await Promise.all(chunks.map(processChunk));
+
+            if (products.length === 0) { updateStatus('有効な商品なし（JAN無し/カテゴリ除外）'); return; }
+
+            updateStatus(`${products.length}件をサーバーへ送信中...`);
+            await new Promise(resolve => {
+                GM_xmlhttpRequest({
+                    method: 'POST', url: KOJIMA_SERVER,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ products }),
+                    timeout: 180000,
+                    onload:    res => {
+                        try {
+                            const r = JSON.parse(res.responseText);
+                            updateStatus(`コジマウォッチ完了 — ${r.hits || 0}件ヒット`);
+                        } catch (_) { updateStatus('コジマウォッチ完了（レスポンス解析失敗）'); }
+                        resolve();
+                    },
+                    onerror:   () => { updateStatus('サーバー未起動'); resolve(); },
+                    ontimeout: () => { updateStatus('タイムアウト'); resolve(); },
+                });
+            });
+        } catch (e) {
+            updateStatus(`コジマエラー: ${e.message}`);
+        } finally {
+            kojimaBtn.disabled = false;
+            kojimaBtn.textContent = 'コジマ';
+        }
+    }
+
     function goNextBatch() {
         const list  = JSON.parse(localStorage.getItem('batchList') || '[]');
         const index = parseInt(localStorage.getItem('batchIndex') || '0');
@@ -897,6 +1021,7 @@
 
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
     batchBtn.addEventListener('click', startBatch);
+    kojimaBtn.addEventListener('click', runKojimaWatch);
     stopBtn.addEventListener('click',  () => {
         running = false;
         localStorage.removeItem('batchMode');
