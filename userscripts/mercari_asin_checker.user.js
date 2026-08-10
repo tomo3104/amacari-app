@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.11
+// @version      3.12
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -9,6 +9,7 @@
 // @grant        unsafeWindow
 // @connect      localhost
 // @connect      jp.mercari.com
+// @noframes
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // ==/UserScript==
@@ -907,22 +908,47 @@
         kojimaStatus.textContent = msg;
     }
 
+    function collectKojimaUrls() {
+        return new Promise(resolve => {
+            kojimaUpdateStatus('iframeでコジマShops読み込み中...');
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;top:0;left:-620px;width:400px;height:100vh;border:none;z-index:-1;';
+            document.body.appendChild(iframe);
+
+            const cleanup = () => { try { iframe.remove(); } catch(_) {} };
+            setTimeout(() => { cleanup(); resolve([]); }, 150000);
+
+            iframe.onload = async () => {
+                try {
+                    const iwin = iframe.contentWindow;
+                    const idoc = iframe.contentDocument;
+                    let prev = -1;
+                    while (true) {
+                        iwin.scrollTo(0, idoc.body.scrollHeight);
+                        await sleep(2000);
+                        const count = idoc.querySelectorAll('a[href*="/shops/product/"]').length;
+                        kojimaUpdateStatus(`スクロール中... ${count}件`);
+                        if (count === prev) break;
+                        prev = count;
+                    }
+                    const links = new Set();
+                    idoc.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
+                        links.add(a.href.split('?')[0]);
+                    });
+                    cleanup();
+                    resolve([...links]);
+                } catch(e) { cleanup(); resolve([]); }
+            };
+            iframe.src = KOJIMA_URL;
+        });
+    }
+
     async function runKojimaWatch() {
         kojimaBtn.disabled = true;
         kojimaBtn.textContent = '実行中...';
         try {
-            kojimaUpdateStatus('コジマShops一覧取得中...');
-            const listHtml = await gmGet(KOJIMA_URL);
-            const listDoc  = new DOMParser().parseFromString(listHtml, 'text/html');
-            const links    = new Set();
-            listDoc.querySelectorAll('a').forEach(a => {
-                const attr = a.getAttribute('href') || '';
-                if (attr.includes('/shops/product/')) {
-                    links.add('https://jp.mercari.com' + attr.split('?')[0]);
-                }
-            });
-            const urls = [...links];
-            kojimaUpdateStatus(`${urls.length}件のURL取得 → 詳細取得中...`);
+            const urls = await collectKojimaUrls();
+            kojimaUpdateStatus(`${urls.length}件取得 → 詳細取得中...`);
             if (urls.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
 
             const products = [];
