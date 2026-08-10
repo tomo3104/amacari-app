@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.10
+// @version      3.11
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -345,15 +345,27 @@
     container.appendChild(batchBtn);
     container.appendChild(stopBtn);
 
+    const kojimaWrap = document.createElement('div');
+    kojimaWrap.style.cssText = `
+        position:fixed; top:20px; left:20px; z-index:99999;
+        display:flex; flex-direction:column; align-items:flex-start; gap:6px;
+    `;
     const kojimaBtn = document.createElement('button');
     kojimaBtn.textContent = 'コジマ';
     kojimaBtn.style.cssText = `
-        position:fixed; top:20px; left:20px; z-index:99999;
         padding:12px 22px; background:#00897B; color:#fff;
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
     `;
-    document.body.appendChild(kojimaBtn);
+    const kojimaStatus = document.createElement('div');
+    kojimaStatus.style.cssText = `
+        background:rgba(0,0,0,0.82); color:#fff; padding:6px 12px;
+        border-radius:6px; font-size:12px; display:none;
+        max-width:280px; white-space:pre-wrap; line-height:1.4;
+    `;
+    kojimaWrap.appendChild(kojimaBtn);
+    kojimaWrap.appendChild(kojimaStatus);
+    document.body.appendChild(kojimaWrap);
     document.body.appendChild(container);
 
     // ========== 状態 ==========
@@ -890,11 +902,16 @@
         } catch (_) { return null; }
     }
 
+    function kojimaUpdateStatus(msg) {
+        kojimaStatus.style.display = 'block';
+        kojimaStatus.textContent = msg;
+    }
+
     async function runKojimaWatch() {
         kojimaBtn.disabled = true;
         kojimaBtn.textContent = '実行中...';
         try {
-            updateStatus('コジマShops一覧取得中...');
+            kojimaUpdateStatus('コジマShops一覧取得中...');
             const listHtml = await gmGet(KOJIMA_URL);
             const listDoc  = new DOMParser().parseFromString(listHtml, 'text/html');
             const links    = new Set();
@@ -905,8 +922,8 @@
                 }
             });
             const urls = [...links];
-            updateStatus(`${urls.length}件のURL取得 → 詳細取得中...`);
-            if (urls.length === 0) { updateStatus('商品URLが取得できませんでした'); return; }
+            kojimaUpdateStatus(`${urls.length}件のURL取得 → 詳細取得中...`);
+            if (urls.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
 
             const products = [];
             let done = 0, skipped = 0;
@@ -920,7 +937,7 @@
                         if (!prod || !prod.jan || prod.price <= 0) { skipped++; }
                         else if (KOJIMA_EXCL.some(c => prod.category.includes(c))) { skipped++; }
                         else { products.push(prod); }
-                        updateStatus(`詳細取得: ${done}/${urls.length}  有効:${products.length}件  除外:${skipped}件`);
+                        kojimaUpdateStatus(`詳細取得: ${done}/${urls.length}\n有効:${products.length}件  除外:${skipped}件`);
                     } catch (_) { done++; skipped++; }
                 }
             }
@@ -930,9 +947,9 @@
             for (let i = 0; i < urls.length; i += chunkSize) chunks.push(urls.slice(i, i + chunkSize));
             await Promise.all(chunks.map(processChunk));
 
-            if (products.length === 0) { updateStatus('有効な商品なし（JAN無し/カテゴリ除外）'); return; }
+            if (products.length === 0) { kojimaUpdateStatus('有効な商品なし（JAN無し/カテゴリ除外）'); return; }
 
-            updateStatus(`${products.length}件をサーバーへ送信中...`);
+            kojimaUpdateStatus(`${products.length}件をサーバーへ送信中...`);
             await new Promise(resolve => {
                 GM_xmlhttpRequest({
                     method: 'POST', url: KOJIMA_SERVER,
@@ -942,16 +959,16 @@
                     onload:    res => {
                         try {
                             const r = JSON.parse(res.responseText);
-                            updateStatus(`コジマウォッチ完了 — ${r.hits || 0}件ヒット`);
-                        } catch (_) { updateStatus('コジマウォッチ完了（レスポンス解析失敗）'); }
+                            kojimaUpdateStatus(`完了 — ${r.hits || 0}件ヒット`);
+                        } catch (_) { kojimaUpdateStatus('完了（レスポンス解析失敗）'); }
                         resolve();
                     },
-                    onerror:   () => { updateStatus('サーバー未起動'); resolve(); },
-                    ontimeout: () => { updateStatus('タイムアウト'); resolve(); },
+                    onerror:   () => { kojimaUpdateStatus('サーバー未起動'); resolve(); },
+                    ontimeout: () => { kojimaUpdateStatus('タイムアウト'); resolve(); },
                 });
             });
         } catch (e) {
-            updateStatus(`コジマエラー: ${e.message}`);
+            kojimaUpdateStatus(`エラー: ${e.message}`);
         } finally {
             kojimaBtn.disabled = false;
             kojimaBtn.textContent = 'コジマ';
