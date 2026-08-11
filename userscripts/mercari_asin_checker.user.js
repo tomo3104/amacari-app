@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.36
+// @version      3.37
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -1181,54 +1181,21 @@
     });
     kojimaDbgBtn.addEventListener('click', async () => {
         kojimaDbgBtn.disabled = true;
-        kojimaUpdateStatus('mercari-shops.com取得中...');
+        kojimaUpdateStatus('RSCペイロード確認中...');
+        const testUrl = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&in_stock=true&category_id=98';
         await new Promise(resolve => {
             GM_xmlhttpRequest({
-                method: 'GET', url: KOJIMA_SHOPS_SEARCH, timeout: 15000,
+                method: 'GET', url: testUrl, timeout: 15000,
+                headers: { 'RSC': '1', 'Accept': 'text/x-component, */*' },
                 onload: res => {
-                    try {
-                        const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
-                        const nd = doc.getElementById('__NEXT_DATA__');
-                        if (nd) {
-                            const data = JSON.parse(nd.textContent);
-                            const pp = data?.props?.pageProps || {};
-                            console.log('[KOJIMA DBG] NEXT_DATA全体:', data);
-                            // _next/data APIを試す
-                            const buildId = data.buildId || '';
-                            const page = data.page || '';
-                            const query = data.query || {};
-                            // HTMLに商品リンクが含まれているか確認
-                            const linkCount = doc.querySelectorAll('a[href*="/products/"], a[href*="/search/"]').length;
-                            const allLinks = doc.querySelectorAll('a').length;
-                            const info = `buildId: ${buildId}\npage: ${page}\nquery: ${JSON.stringify(query)}\nppKeys: ${Object.keys(pp).join(',') || 'none'}\nlinks/a: ${linkCount}/${allLinks}`;
-                            kojimaUpdateStatus(`__NEXT_DATA__あり\n${info}\n_next/data試行中...`);
-                            // _next/data API試行
-                            const nextDataUrl = `https://mercari-shops.com/_next/data/${buildId}/search.json?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&keyword=%E5%AE%B6%E9%9B%BB&in_stock=true`;
-                            GM_xmlhttpRequest({
-                                method: 'GET', url: nextDataUrl, timeout: 10000,
-                                onload: res2 => {
-                                    try {
-                                        if (res2.status === 200) {
-                                            const d = JSON.parse(res2.responseText);
-                                            console.log('[KOJIMA DBG] _next/data:', d);
-                                            const keys = Object.keys(d?.pageProps || {}).join(',') || 'none';
-                                            kojimaUpdateStatus(`_next/data成功!\nstatus:200\nkeys:${keys}\n${JSON.stringify(d).substring(0,200)}`);
-                                        } else {
-                                            kojimaUpdateStatus(`_next/data: HTTP ${res2.status}\n→ App Router確定`);
-                                        }
-                                    } catch(e2) { kojimaUpdateStatus(`_next/data解析エラー: ${e2.message}`); }
-                                },
-                                onerror: () => kojimaUpdateStatus('_next/data: 接続エラー'),
-                                ontimeout: () => kojimaUpdateStatus('_next/data: タイムアウト'),
-                            });
-                        } else {
-                            console.log('[KOJIMA DBG] HTML(先頭2000):', res.responseText.substring(0, 2000));
-                            kojimaUpdateStatus('__NEXT_DATA__なし（CSR）\nコンソール確認');
-                        }
-                    } catch(e) { kojimaUpdateStatus(`解析エラー: ${e.message}`); }
+                    const ct = res.responseHeaders.match(/content-type:\s*([^\r\n]+)/i)?.[1] || '不明';
+                    const preview = res.responseText.substring(0, 400);
+                    const hasProduct = res.responseText.includes('/shops/product/');
+                    console.log('[KOJIMA DBG] RSC response:', res.responseText.substring(0, 2000));
+                    kojimaUpdateStatus(`status: ${res.status}\ncontent-type: ${ct}\n商品URL含む: ${hasProduct}\n---\n${preview}`);
                     resolve();
                 },
-                onerror:   () => { kojimaUpdateStatus('取得エラー'); resolve(); },
+                onerror:   () => { kojimaUpdateStatus('接続エラー'); resolve(); },
                 ontimeout: () => { kojimaUpdateStatus('タイムアウト'); resolve(); },
             });
         });
