@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.26
+// @version      3.27
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -887,24 +887,25 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // __NEXT_DATA__ からproductデータを探す
-                    const nextScript = idoc.getElementById('__NEXT_DATA__');
-                    let dbg = '';
-                    if (nextScript) {
-                        try {
-                            const nd = JSON.parse(nextScript.textContent);
-                            const pp = nd.props?.pageProps || {};
-                            dbg = `NEXT keys: ${Object.keys(nd).join(',')}\n`;
-                            dbg += `pageProps keys: ${Object.keys(pp).join(',')}\n`;
-                            // 深いところにあるproducts/itemsを探す
-                            const flat = JSON.stringify(pp);
-                            const sample = flat.slice(0, 200).replace(/"/g, "'");
-                            dbg += `pageProps sample:\n${sample}`;
-                        } catch(e) { dbg = `parse error: ${e.message}`; }
-                    } else {
-                        dbg = '__NEXT_DATA__: なし';
-                    }
-                    kojimaUpdateStatus(dbg);
+                    // 最初のURLをGM_xmlhttpRequestでHTTP取得してog:titleを確認
+                    const firstUrl2 = idoc.querySelector('a[href*="/shops/product/"]')?.href || '';
+                    kojimaUpdateStatus(`テスト取得: ${firstUrl2.slice(-20)}`);
+                    const ogResult = await new Promise(r => {
+                        GM_xmlhttpRequest({
+                            method: 'GET', url: firstUrl2, timeout: 10000,
+                            onload: res => {
+                                const doc2 = new DOMParser().parseFromString(res.responseText, 'text/html');
+                                r({
+                                    og:    doc2.querySelector('meta[property="og:title"]')?.content || '(なし)',
+                                    desc:  doc2.querySelector('meta[property="og:description"]')?.content || '(なし)',
+                                    title: doc2.querySelector('title')?.textContent || '(なし)',
+                                });
+                            },
+                            onerror:   () => r({ og:'エラー', desc:'', title:'' }),
+                            ontimeout: () => r({ og:'TOut', desc:'', title:'' }),
+                        });
+                    });
+                    kojimaUpdateStatus(`og:title: "${ogResult.og.slice(0,50)}"\nog:desc: "${ogResult.desc.slice(0,50)}"\ntitle: "${ogResult.title.slice(0,50)}"`);
                     await sleep(12000);
                     cleanup();
                     resolve([]);
