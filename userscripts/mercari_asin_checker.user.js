@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.33
+// @version      3.34
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -23,8 +23,7 @@
     if (location.hostname === 'mercari-shops.com') {
         if (location.pathname === '/search' &&
             location.search.includes('WBGoQB8mMBB5VTEpM6PKZK') &&
-            localStorage.getItem('kojimaAutoRun') === '1') {
-            localStorage.removeItem('kojimaAutoRun');
+            new URLSearchParams(location.search).get('autorun') === '1') {
             const sleep2 = ms => new Promise(r => setTimeout(r, ms));
             const sd = document.createElement('div');
             sd.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:rgba(0,0,0,0.88);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:300px;white-space:pre-wrap;line-height:1.5;';
@@ -922,7 +921,7 @@
 
     // ========== コジマShopsウォッチ ==========
     const KOJIMA_URL         = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
-    const KOJIMA_SHOPS_SEARCH = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&keyword=%E5%AE%B6%E9%9B%BB&in_stock=true';
+    const KOJIMA_SHOPS_SEARCH = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&keyword=%E5%AE%B6%E9%9B%BB&in_stock=true&autorun=1';
     const KOJIMA_SERVER = 'http://localhost:8766/check-mercari';
     const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
     const KOJIMA_CONC   = 5;
@@ -1121,7 +1120,6 @@
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
     batchBtn.addEventListener('click', startBatch);
     kojimaBtn.addEventListener('click', () => {
-        localStorage.setItem('kojimaAutoRun', '1');
         GM_openInTab(KOJIMA_SHOPS_SEARCH, { active: true });
         kojimaUpdateStatus('新タブで家電検索を開いています...\n自動スキャンが開始されます');
     });
