@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.27
+// @version      3.28
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -859,13 +859,14 @@
     const KOJIMA_URL    = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
     const KOJIMA_SERVER = 'http://localhost:8766/check-mercari';
     const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
+    const KOJIMA_CONC   = 5;
 
     function kojimaUpdateStatus(msg) {
         kojimaStatus.style.display = 'block';
         kojimaStatus.textContent = msg;
     }
 
-    // 一覧ページをiframeで開いてスクロール→タイトル・価格を直接抽出して返す
+    // 一覧ページをiframeでスクロール → {url, price} の配列を返す
     function collectKojimaItems() {
         return new Promise(resolve => {
             kojimaUpdateStatus('iframeでコジマShops読み込み中...');
@@ -887,28 +888,20 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // 最初のURLをGM_xmlhttpRequestでHTTP取得してog:titleを確認
-                    const firstUrl2 = idoc.querySelector('a[href*="/shops/product/"]')?.href || '';
-                    kojimaUpdateStatus(`テスト取得: ${firstUrl2.slice(-20)}`);
-                    const ogResult = await new Promise(r => {
-                        GM_xmlhttpRequest({
-                            method: 'GET', url: firstUrl2, timeout: 10000,
-                            onload: res => {
-                                const doc2 = new DOMParser().parseFromString(res.responseText, 'text/html');
-                                r({
-                                    og:    doc2.querySelector('meta[property="og:title"]')?.content || '(なし)',
-                                    desc:  doc2.querySelector('meta[property="og:description"]')?.content || '(なし)',
-                                    title: doc2.querySelector('title')?.textContent || '(なし)',
-                                });
-                            },
-                            onerror:   () => r({ og:'エラー', desc:'', title:'' }),
-                            ontimeout: () => r({ og:'TOut', desc:'', title:'' }),
-                        });
+                    // URL・価格を収集（重複除外）
+                    const seen = new Set();
+                    const items = [];
+                    idoc.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
+                        const url = a.href.split('?')[0];
+                        if (seen.has(url)) return;
+                        seen.add(url);
+                        const priceMatch = (a.innerText || '').match(/¥\s*([\d,]+)/);
+                        const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
+                        items.push({ url, price });
                     });
-                    kojimaUpdateStatus(`og:title: "${ogResult.og.slice(0,50)}"\nog:desc: "${ogResult.desc.slice(0,50)}"\ntitle: "${ogResult.title.slice(0,50)}"`);
-                    await sleep(12000);
+                    kojimaUpdateStatus(`${items.length}件のURL収集完了`);
                     cleanup();
-                    resolve([]);
+                    resolve(items);
                 } catch(e) {
                     kojimaUpdateStatus(`iframeエラー: ${e.message}`);
                     await sleep(3000);
@@ -920,16 +913,61 @@
         });
     }
 
+    // 商品ページのHTMLをGM_xmlhttpRequestで取得しog:titleを返す
+    function fetchOgTitle(url) {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'GET', url, timeout: 10000,
+                onload: res => {
+                    try {
+                        const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+                        const t = doc.querySelector('meta[property="og:title"]')?.content
+                               || doc.querySelector('title')?.textContent || '';
+                        resolve(t.replace(/\s*[|｜].*$/, '').trim());
+                    } catch(_) { resolve(''); }
+                },
+                onerror:   () => resolve(''),
+                ontimeout: () => resolve(''),
+            });
+        });
+    }
+
     async function runKojimaWatch() {
         kojimaBtn.disabled = true;
         kojimaBtn.textContent = '実行中...';
         try {
-            const items = await collectKojimaItems();
-            if (items.length === 0) { kojimaUpdateStatus('商品が取得できませんでした'); return; }
-            // デバッグ: 最初の3件を5秒表示
-            const sample = items.slice(0, 3).map(it => `¥${it.price} ${it.name.slice(0, 30)}`).join('\n');
-            kojimaUpdateStatus(`[DBG] ${items.length}件取得\n${sample}`);
-            await sleep(5000);
+            // Step1: 一覧ページからURL・価格を収集
+            const urlItems = await collectKojimaItems();
+            if (urlItems.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
+
+            // Step2: 最初の1件でog:titleが取れるか確認
+            kojimaUpdateStatus(`og:titleテスト中... (${urlItems[0].url.slice(-10)})`);
+            const testTitle = await fetchOgTitle(urlItems[0].url);
+            kojimaUpdateStatus(`og:title: "${testTitle.slice(0, 50)}"\n¥${urlItems[0].price}`);
+            await sleep(6000);
+
+            // Step3: 全件のog:titleを並列取得（concurrency 5）
+            kojimaUpdateStatus(`タイトル取得中: 0/${urlItems.length}件...`);
+            const items = [];
+            let done = 0;
+            const chunkSize = Math.ceil(urlItems.length / KOJIMA_CONC);
+            await Promise.all(
+                Array.from({ length: KOJIMA_CONC }, (_, i) => urlItems.slice(i * chunkSize, (i + 1) * chunkSize))
+                    .map(async chunk => {
+                        for (const { url, price } of chunk) {
+                            const name = await fetchOgTitle(url);
+                            done++;
+                            if (name && !KOJIMA_EXCL.some(w => name.includes(w))) {
+                                items.push({ name, price, url });
+                            }
+                            if (done % 20 === 0) kojimaUpdateStatus(`タイトル取得: ${done}/${urlItems.length}\n有効: ${items.length}件`);
+                        }
+                    })
+            );
+
+            if (items.length === 0) { kojimaUpdateStatus('有効な商品なし'); return; }
+
+            // Step4: サーバーへ送信
             kojimaUpdateStatus(`${items.length}件をサーバーへ送信中...`);
             await new Promise(resolve => {
                 GM_xmlhttpRequest({
