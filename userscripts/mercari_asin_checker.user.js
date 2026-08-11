@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.32
+// @version      3.33
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
+// @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @grant        unsafeWindow
@@ -17,6 +18,62 @@
 
 (function () {
     'use strict';
+
+    // ========== mercari-shops.com 家電検索 自動起動モード ==========
+    if (location.hostname === 'mercari-shops.com') {
+        if (location.pathname === '/search' &&
+            location.search.includes('WBGoQB8mMBB5VTEpM6PKZK') &&
+            localStorage.getItem('kojimaAutoRun') === '1') {
+            localStorage.removeItem('kojimaAutoRun');
+            const sleep2 = ms => new Promise(r => setTimeout(r, ms));
+            const sd = document.createElement('div');
+            sd.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:rgba(0,0,0,0.88);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:300px;white-space:pre-wrap;line-height:1.5;';
+            sd.textContent = 'コジマ家電スキャン開始...';
+            document.body.appendChild(sd);
+            (async () => {
+                let prev = -1;
+                while (true) {
+                    window.scrollTo(0, document.body.scrollHeight);
+                    await sleep2(2000);
+                    const count = document.querySelectorAll('a[href*="/shops/product/"]').length;
+                    sd.textContent = `スクロール中... ${count}件`;
+                    if (count === prev) break;
+                    prev = count;
+                }
+                const EXCL = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
+                const seen = new Set();
+                const items = [];
+                document.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
+                    const url = a.href.split('?')[0];
+                    if (seen.has(url)) return;
+                    seen.add(url);
+                    const text = a.innerText || '';
+                    const priceMatch = text.match(/[¥￥]\s*([\d,]+)/);
+                    const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
+                    const name = text.split('\n').map(l => l.trim()).filter(l => l && !/^[¥￥]/.test(l)).join(' ').trim();
+                    if (name && !EXCL.some(w => name.includes(w))) items.push({ name, price, url });
+                });
+                if (items.length === 0) { sd.textContent = '商品なし'; return; }
+                sd.textContent = `${items.length}件を送信中...`;
+                GM_xmlhttpRequest({
+                    method: 'POST', url: 'http://localhost:8766/check-mercari',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ items, source: 'shops' }),
+                    timeout: 180000,
+                    onload: res => {
+                        try {
+                            const r = JSON.parse(res.responseText);
+                            sd.textContent = `完了 — ${(r.matches || []).length}件ヒット`;
+                        } catch(_) { sd.textContent = '完了（解析失敗）'; }
+                    },
+                    onerror:   () => { sd.textContent = 'サーバー未起動'; },
+                    ontimeout: () => { sd.textContent = 'タイムアウト'; },
+                });
+            })();
+        }
+        return;
+    }
+    // ========== ここから jp.mercari.com ==========
 
     const SERVER_URL   = 'http://localhost:8766/check-mercari';
     // メルカリ検索条件（クローラーリサーチ用）
@@ -1063,7 +1120,11 @@
 
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
     batchBtn.addEventListener('click', startBatch);
-    kojimaBtn.addEventListener('click', runKojimaWatch);
+    kojimaBtn.addEventListener('click', () => {
+        localStorage.setItem('kojimaAutoRun', '1');
+        GM_openInTab(KOJIMA_SHOPS_SEARCH, { active: true });
+        kojimaUpdateStatus('新タブで家電検索を開いています...\n自動スキャンが開始されます');
+    });
     kojimaDbgBtn.addEventListener('click', async () => {
         kojimaDbgBtn.disabled = true;
         kojimaUpdateStatus('mercari-shops.com取得中...');
