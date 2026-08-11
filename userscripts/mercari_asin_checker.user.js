@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.35
+// @version      3.36
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -19,67 +19,111 @@
 (function () {
     'use strict';
 
-    // ========== mercari-shops.com 家電検索 自動起動モード ==========
+    // ========== mercari-shops.com カテゴリ別スキャンモード ==========
     if (location.hostname === 'mercari-shops.com') {
+        const KOJSHOPS_BASE = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&in_stock=true';
+        const KOJSHOPS_CATS = [
+            { id: 98,   name: 'テレビ・映像' },
+            { id: 99,   name: 'オーディオ' },
+            { id: 101,  name: '生活家電' },
+            { id: 840,  name: 'ノートPC' },
+            { id: 841,  name: 'PC周辺機器' },
+            { id: 1156, name: 'PCパーツ' },
+            { id: 1237, name: '美容家電' },
+            { id: 1243, name: '冷暖房・空調' },
+            { id: 1262, name: 'ディスプレイ' },
+            { id: 3710, name: 'キーボード' },
+            { id: 3716, name: 'マウス' },
+            { id: 3756, name: '外付けHDD' },
+            { id: 3770, name: 'ルーター・NW' },
+            { id: 3733, name: 'プリンター' },
+            { id: 1113, name: 'カーナビ' },
+            { id: 1114, name: 'カーオーディオ' },
+            { id: 65,   name: 'ライト・照明' },
+        ];
+        const params = new URLSearchParams(location.search);
         if (location.pathname === '/search' &&
             location.search.includes('WBGoQB8mMBB5VTEpM6PKZK') &&
-            new URLSearchParams(location.search).get('autorun') === '1') {
+            params.get('autorun') === '1') {
+
+            const catIndex = parseInt(params.get('catindex') || '0', 10);
+            const cat = KOJSHOPS_CATS[catIndex];
             const sleep2 = ms => new Promise(r => setTimeout(r, ms));
+            if (catIndex === 0) localStorage.removeItem('kojimaItems');
+
             const wrap = document.createElement('div');
             wrap.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;display:flex;flex-direction:column;gap:6px;align-items:flex-end;';
             const sd = document.createElement('div');
             sd.style.cssText = 'background:rgba(0,0,0,0.88);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:300px;white-space:pre-wrap;line-height:1.5;';
-            sd.textContent = 'コジマ家電スキャン開始...';
+            sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}`;
             const stopBtn = document.createElement('button');
             stopBtn.textContent = '中止';
             stopBtn.style.cssText = 'padding:4px 14px;background:#c0392b;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;';
             wrap.appendChild(sd);
             wrap.appendChild(stopBtn);
             document.body.appendChild(wrap);
+
             let cancelled = false;
-            stopBtn.addEventListener('click', () => { cancelled = true; sd.textContent = '中止しました'; stopBtn.remove(); });
+            stopBtn.addEventListener('click', () => {
+                cancelled = true;
+                localStorage.removeItem('kojimaItems');
+                sd.textContent = '中止しました';
+                stopBtn.remove();
+            });
+
             (async () => {
                 let prev = -1;
                 while (!cancelled) {
                     window.scrollTo(0, document.body.scrollHeight);
                     await sleep2(2000);
-                    if (cancelled) break;
+                    if (cancelled) return;
                     const count = document.querySelectorAll('a[href*="/shops/product/"]').length;
-                    sd.textContent = `スクロール中... ${count}件`;
+                    sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}\nスクロール中... ${count}件`;
                     if (count === prev) break;
                     prev = count;
                 }
                 if (cancelled) return;
-                const EXCL = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
-                const seen = new Set();
-                const items = [];
+
+                const existing = JSON.parse(localStorage.getItem('kojimaItems') || '[]');
+                const seenUrls = new Set(existing.map(i => i.url));
                 document.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
                     const url = a.href.split('?')[0];
-                    if (seen.has(url)) return;
-                    seen.add(url);
+                    if (seenUrls.has(url)) return;
+                    seenUrls.add(url);
                     const text = a.innerText || '';
                     const priceMatch = text.match(/[¥￥]\s*([\d,]+)/);
                     const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
                     const name = text.split('\n').map(l => l.trim()).filter(l => l && !/^[¥￥]/.test(l)).join(' ').trim();
-                    if (name && !EXCL.some(w => name.includes(w))) items.push({ name, price, url });
+                    if (name) existing.push({ name, price, url });
                 });
-                if (items.length === 0) { sd.textContent = '商品なし'; stopBtn.remove(); return; }
-                sd.textContent = `${items.length}件を送信中...`;
-                stopBtn.remove();
-                GM_xmlhttpRequest({
-                    method: 'POST', url: 'http://localhost:8766/check-mercari',
-                    headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ items, source: 'shops' }),
-                    timeout: 180000,
-                    onload: res => {
-                        try {
-                            const r = JSON.parse(res.responseText);
-                            sd.textContent = `完了 — ${(r.matches || []).length}件ヒット`;
-                        } catch(_) { sd.textContent = '完了（解析失敗）'; }
-                    },
-                    onerror:   () => { sd.textContent = 'サーバー未起動'; },
-                    ontimeout: () => { sd.textContent = 'タイムアウト'; },
-                });
+                localStorage.setItem('kojimaItems', JSON.stringify(existing));
+
+                const nextIndex = catIndex + 1;
+                if (nextIndex < KOJSHOPS_CATS.length) {
+                    sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}: 完了\n蓄積${existing.length}件 → 次へ...`;
+                    await sleep2(800);
+                    location.href = `${KOJSHOPS_BASE}&category_id=${KOJSHOPS_CATS[nextIndex].id}&autorun=1&catindex=${nextIndex}`;
+                } else {
+                    const allItems = JSON.parse(localStorage.getItem('kojimaItems') || '[]');
+                    localStorage.removeItem('kojimaItems');
+                    if (allItems.length === 0) { sd.textContent = '商品なし'; stopBtn.remove(); return; }
+                    sd.textContent = `全${KOJSHOPS_CATS.length}カテゴリ完了\n${allItems.length}件を送信中...`;
+                    stopBtn.remove();
+                    GM_xmlhttpRequest({
+                        method: 'POST', url: 'http://localhost:8766/check-mercari',
+                        headers: { 'Content-Type': 'application/json' },
+                        data: JSON.stringify({ items: allItems, source: 'shops' }),
+                        timeout: 180000,
+                        onload: res => {
+                            try {
+                                const r = JSON.parse(res.responseText);
+                                sd.textContent = `完了 — ${(r.matches || []).length}件ヒット`;
+                            } catch(_) { sd.textContent = '完了（解析失敗）'; }
+                        },
+                        onerror:   () => { sd.textContent = 'サーバー未起動'; },
+                        ontimeout: () => { sd.textContent = 'タイムアウト'; },
+                    });
+                }
             })();
         }
         return;
@@ -933,7 +977,7 @@
 
     // ========== コジマShopsウォッチ ==========
     const KOJIMA_URL         = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
-    const KOJIMA_SHOPS_SEARCH = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&keyword=%E5%AE%B6%E9%9B%BB&in_stock=true&autorun=1';
+    const KOJIMA_SHOPS_SEARCH = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&in_stock=true&category_id=98&autorun=1&catindex=0';
     const KOJIMA_SERVER = 'http://localhost:8766/check-mercari';
     const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
     const KOJIMA_CONC   = 5;
