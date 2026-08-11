@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.34
+// @version      3.35
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -25,20 +25,31 @@
             location.search.includes('WBGoQB8mMBB5VTEpM6PKZK') &&
             new URLSearchParams(location.search).get('autorun') === '1') {
             const sleep2 = ms => new Promise(r => setTimeout(r, ms));
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;display:flex;flex-direction:column;gap:6px;align-items:flex-end;';
             const sd = document.createElement('div');
-            sd.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:rgba(0,0,0,0.88);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:300px;white-space:pre-wrap;line-height:1.5;';
+            sd.style.cssText = 'background:rgba(0,0,0,0.88);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:300px;white-space:pre-wrap;line-height:1.5;';
             sd.textContent = 'コジマ家電スキャン開始...';
-            document.body.appendChild(sd);
+            const stopBtn = document.createElement('button');
+            stopBtn.textContent = '中止';
+            stopBtn.style.cssText = 'padding:4px 14px;background:#c0392b;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;';
+            wrap.appendChild(sd);
+            wrap.appendChild(stopBtn);
+            document.body.appendChild(wrap);
+            let cancelled = false;
+            stopBtn.addEventListener('click', () => { cancelled = true; sd.textContent = '中止しました'; stopBtn.remove(); });
             (async () => {
                 let prev = -1;
-                while (true) {
+                while (!cancelled) {
                     window.scrollTo(0, document.body.scrollHeight);
                     await sleep2(2000);
+                    if (cancelled) break;
                     const count = document.querySelectorAll('a[href*="/shops/product/"]').length;
                     sd.textContent = `スクロール中... ${count}件`;
                     if (count === prev) break;
                     prev = count;
                 }
+                if (cancelled) return;
                 const EXCL = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
                 const seen = new Set();
                 const items = [];
@@ -52,8 +63,9 @@
                     const name = text.split('\n').map(l => l.trim()).filter(l => l && !/^[¥￥]/.test(l)).join(' ').trim();
                     if (name && !EXCL.some(w => name.includes(w))) items.push({ name, price, url });
                 });
-                if (items.length === 0) { sd.textContent = '商品なし'; return; }
+                if (items.length === 0) { sd.textContent = '商品なし'; stopBtn.remove(); return; }
                 sd.textContent = `${items.length}件を送信中...`;
+                stopBtn.remove();
                 GM_xmlhttpRequest({
                     method: 'POST', url: 'http://localhost:8766/check-mercari',
                     headers: { 'Content-Type': 'application/json' },
