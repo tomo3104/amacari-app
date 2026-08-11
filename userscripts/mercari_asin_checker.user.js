@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.25
+// @version      3.26
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -887,25 +887,25 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // DOM構造デバッグ: アンカー属性・img alt・兄弟要素を確認
-                    const firstA = idoc.querySelector('a[href*="/shops/product/"]');
-                    if (firstA) {
-                        const attrs = [...firstA.attributes].map(a => `${a.name}="${a.value.slice(0,30)}"`).join(' ');
-                        const imgAlt = firstA.querySelector('img')?.alt || '(なし)';
-                        // 兄弟要素に非価格テキストがあるか確認
-                        let siblingText = '(なし)';
-                        for (let el = firstA.parentElement; el && el !== idoc.body; el = el.parentElement) {
-                            for (const s of el.parentElement?.children || []) {
-                                if (s === el) continue;
-                                const t = (s.innerText || '').replace(/¥\s*[\d,]+/g, '').trim();
-                                if (t.length > 3) { siblingText = t.slice(0, 40).replace(/\n/g,'|'); break; }
-                            }
-                            if (siblingText !== '(なし)') break;
-                        }
-                        let dbg = `attrs: ${attrs.slice(0,60)}\nimg.alt: "${imgAlt.slice(0,40)}"\n兄弟テキスト: "${siblingText}"`;
-                        kojimaUpdateStatus(dbg);
-                        await sleep(10000);
+                    // __NEXT_DATA__ からproductデータを探す
+                    const nextScript = idoc.getElementById('__NEXT_DATA__');
+                    let dbg = '';
+                    if (nextScript) {
+                        try {
+                            const nd = JSON.parse(nextScript.textContent);
+                            const pp = nd.props?.pageProps || {};
+                            dbg = `NEXT keys: ${Object.keys(nd).join(',')}\n`;
+                            dbg += `pageProps keys: ${Object.keys(pp).join(',')}\n`;
+                            // 深いところにあるproducts/itemsを探す
+                            const flat = JSON.stringify(pp);
+                            const sample = flat.slice(0, 200).replace(/"/g, "'");
+                            dbg += `pageProps sample:\n${sample}`;
+                        } catch(e) { dbg = `parse error: ${e.message}`; }
+                    } else {
+                        dbg = '__NEXT_DATA__: なし';
                     }
+                    kojimaUpdateStatus(dbg);
+                    await sleep(12000);
                     cleanup();
                     resolve([]);
                 } catch(e) {
