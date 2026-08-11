@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.22
+// @version      3.23
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -887,25 +887,22 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // 重複除外しながらタイトル・価格を抽出
-                    const seen = new Set();
-                    const items = [];
-                    idoc.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
-                        const url = a.href.split('?')[0];
-                        if (seen.has(url)) return;
-                        seen.add(url);
-                        // カード全体（li）のテキストを使う（タイトルがa外にある構造に対応）
-                        const card = a.closest('li') || a.closest('[class]') || a.parentElement;
-                        const text = (card?.innerText || a.innerText || '').trim();
-                        if (KOJIMA_EXCL.some(w => text.includes(w))) return;
-                        const priceMatch = text.match(/¥\s*([\d,]+)/) || text.match(/([\d,]+)円/);
-                        const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
-                        const name = text.replace(/¥\s*[\d,]+|[\d,]+円/g, '').replace(/\s+/g, ' ').trim();
-                        if (name) items.push({ name, price, url });
-                    });
-                    kojimaUpdateStatus(`${items.length}件取得完了（重複除外後）`);
+                    // DOM構造デバッグ: 最初のアンカーから4段階さかのぼる
+                    const firstA = idoc.querySelector('a[href*="/shops/product/"]');
+                    if (firstA) {
+                        let dbg = `a: "${(firstA.innerText || '').slice(0, 25).replace(/\n/g,'|')}"\n`;
+                        let el = firstA;
+                        for (let i = 1; i <= 4; i++) {
+                            el = el.parentElement;
+                            if (!el || el === idoc.body) break;
+                            const t = (el.innerText || '').slice(0, 40).replace(/\n/g, '|');
+                            dbg += `p${i}[${el.tagName}]: "${t}"\n`;
+                        }
+                        kojimaUpdateStatus(dbg);
+                        await sleep(10000);
+                    }
                     cleanup();
-                    resolve(items);
+                    resolve([]);
                 } catch(e) {
                     kojimaUpdateStatus(`iframeエラー: ${e.message}`);
                     await sleep(3000);
