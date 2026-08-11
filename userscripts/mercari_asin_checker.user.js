@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.29
+// @version      3.30
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -9,6 +9,7 @@
 // @grant        unsafeWindow
 // @connect      localhost
 // @connect      jp.mercari.com
+// @connect      mercari-shops.com
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
@@ -364,7 +365,14 @@
         border-radius:6px; font-size:12px; display:none;
         max-width:280px; white-space:pre-wrap; line-height:1.4;
     `;
+    const kojimaDbgBtn = document.createElement('button');
+    kojimaDbgBtn.textContent = 'DBG';
+    kojimaDbgBtn.style.cssText = `
+        padding:6px 14px; background:#555; color:#fff;
+        border:none; border-radius:6px; font-size:12px; cursor:pointer;
+    `;
     kojimaWrap.appendChild(kojimaBtn);
+    kojimaWrap.appendChild(kojimaDbgBtn);
     kojimaWrap.appendChild(kojimaStatus);
     document.body.appendChild(kojimaWrap);
     document.body.appendChild(container);
@@ -856,7 +864,8 @@
     }
 
     // ========== コジマShopsウォッチ ==========
-    const KOJIMA_URL    = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
+    const KOJIMA_URL         = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
+    const KOJIMA_SHOPS_SEARCH = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&keyword=%E5%AE%B6%E9%9B%BB&in_stock=true';
     const KOJIMA_SERVER = 'http://localhost:8766/check-mercari';
     const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
     const KOJIMA_CONC   = 5;
@@ -1055,6 +1064,36 @@
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
     batchBtn.addEventListener('click', startBatch);
     kojimaBtn.addEventListener('click', runKojimaWatch);
+    kojimaDbgBtn.addEventListener('click', async () => {
+        kojimaDbgBtn.disabled = true;
+        kojimaUpdateStatus('mercari-shops.com取得中...');
+        await new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'GET', url: KOJIMA_SHOPS_SEARCH, timeout: 15000,
+                onload: res => {
+                    try {
+                        const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+                        const nd = doc.getElementById('__NEXT_DATA__');
+                        if (nd) {
+                            const data = JSON.parse(nd.textContent);
+                            const pp = data?.props?.pageProps || {};
+                            const items = pp.items || pp.searchResult?.items || pp.products || [];
+                            const preview = JSON.stringify(pp).substring(0, 300);
+                            console.log('[KOJIMA DBG] pageProps:', pp);
+                            kojimaUpdateStatus(`__NEXT_DATA__あり\nitems: ${items.length}件\n${preview}`);
+                        } else {
+                            console.log('[KOJIMA DBG] HTML(先頭1000):', res.responseText.substring(0, 1000));
+                            kojimaUpdateStatus('__NEXT_DATA__なし（CSR）\nコンソール確認');
+                        }
+                    } catch(e) { kojimaUpdateStatus(`解析エラー: ${e.message}`); }
+                    resolve();
+                },
+                onerror:   () => { kojimaUpdateStatus('取得エラー'); resolve(); },
+                ontimeout: () => { kojimaUpdateStatus('タイムアウト'); resolve(); },
+            });
+        });
+        kojimaDbgBtn.disabled = false;
+    });
     stopBtn.addEventListener('click',  () => {
         running = false;
         localStorage.removeItem('batchMode');
