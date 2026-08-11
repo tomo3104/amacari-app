@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.28
+// @version      3.29
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -940,13 +940,7 @@
             const urlItems = await collectKojimaItems();
             if (urlItems.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
 
-            // Step2: 最初の1件でog:titleが取れるか確認
-            kojimaUpdateStatus(`og:titleテスト中... (${urlItems[0].url.slice(-10)})`);
-            const testTitle = await fetchOgTitle(urlItems[0].url);
-            kojimaUpdateStatus(`og:title: "${testTitle.slice(0, 50)}"\n¥${urlItems[0].price}`);
-            await sleep(6000);
-
-            // Step3: 全件のog:titleを並列取得（concurrency 5）
+            // Step2: 全件のog:titleを並列取得（concurrency 5）
             kojimaUpdateStatus(`タイトル取得中: 0/${urlItems.length}件...`);
             const items = [];
             let done = 0;
