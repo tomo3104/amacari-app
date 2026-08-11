@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.19
+// @version      3.20
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -922,6 +922,10 @@
         try {
             const items = await collectKojimaItems();
             if (items.length === 0) { kojimaUpdateStatus('商品が取得できませんでした'); return; }
+            // デバッグ: 最初の3件を5秒表示
+            const sample = items.slice(0, 3).map(it => `¥${it.price} ${it.name.slice(0, 30)}`).join('\n');
+            kojimaUpdateStatus(`[DBG] ${items.length}件取得\n${sample}`);
+            await sleep(5000);
             kojimaUpdateStatus(`${items.length}件をサーバーへ送信中...`);
             await new Promise(resolve => {
                 GM_xmlhttpRequest({
