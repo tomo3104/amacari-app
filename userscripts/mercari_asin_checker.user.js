@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -1086,7 +1086,26 @@
                             const linkCount = doc.querySelectorAll('a[href*="/products/"], a[href*="/search/"]').length;
                             const allLinks = doc.querySelectorAll('a').length;
                             const info = `buildId: ${buildId}\npage: ${page}\nquery: ${JSON.stringify(query)}\nppKeys: ${Object.keys(pp).join(',') || 'none'}\nlinks/a: ${linkCount}/${allLinks}`;
-                            kojimaUpdateStatus(`__NEXT_DATA__あり\n${info}`);
+                            kojimaUpdateStatus(`__NEXT_DATA__あり\n${info}\n_next/data試行中...`);
+                            // _next/data API試行
+                            const nextDataUrl = `https://mercari-shops.com/_next/data/${buildId}/search.json?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&keyword=%E5%AE%B6%E9%9B%BB&in_stock=true`;
+                            GM_xmlhttpRequest({
+                                method: 'GET', url: nextDataUrl, timeout: 10000,
+                                onload: res2 => {
+                                    try {
+                                        if (res2.status === 200) {
+                                            const d = JSON.parse(res2.responseText);
+                                            console.log('[KOJIMA DBG] _next/data:', d);
+                                            const keys = Object.keys(d?.pageProps || {}).join(',') || 'none';
+                                            kojimaUpdateStatus(`_next/data成功!\nstatus:200\nkeys:${keys}\n${JSON.stringify(d).substring(0,200)}`);
+                                        } else {
+                                            kojimaUpdateStatus(`_next/data: HTTP ${res2.status}\n→ App Router確定`);
+                                        }
+                                    } catch(e2) { kojimaUpdateStatus(`_next/data解析エラー: ${e2.message}`); }
+                                },
+                                onerror: () => kojimaUpdateStatus('_next/data: 接続エラー'),
+                                ontimeout: () => kojimaUpdateStatus('_next/data: タイムアウト'),
+                            });
                         } else {
                             console.log('[KOJIMA DBG] HTML(先頭2000):', res.responseText.substring(0, 2000));
                             kojimaUpdateStatus('__NEXT_DATA__なし（CSR）\nコンソール確認');
