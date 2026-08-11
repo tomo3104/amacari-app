@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.30
+// @version      3.31
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -1077,12 +1077,18 @@
                         if (nd) {
                             const data = JSON.parse(nd.textContent);
                             const pp = data?.props?.pageProps || {};
-                            const items = pp.items || pp.searchResult?.items || pp.products || [];
-                            const preview = JSON.stringify(pp).substring(0, 300);
-                            console.log('[KOJIMA DBG] pageProps:', pp);
-                            kojimaUpdateStatus(`__NEXT_DATA__あり\nitems: ${items.length}件\n${preview}`);
+                            console.log('[KOJIMA DBG] NEXT_DATA全体:', data);
+                            // _next/data APIを試す
+                            const buildId = data.buildId || '';
+                            const page = data.page || '';
+                            const query = data.query || {};
+                            // HTMLに商品リンクが含まれているか確認
+                            const linkCount = doc.querySelectorAll('a[href*="/products/"], a[href*="/search/"]').length;
+                            const allLinks = doc.querySelectorAll('a').length;
+                            const info = `buildId: ${buildId}\npage: ${page}\nquery: ${JSON.stringify(query)}\nppKeys: ${Object.keys(pp).join(',') || 'none'}\nlinks/a: ${linkCount}/${allLinks}`;
+                            kojimaUpdateStatus(`__NEXT_DATA__あり\n${info}`);
                         } else {
-                            console.log('[KOJIMA DBG] HTML(先頭1000):', res.responseText.substring(0, 1000));
+                            console.log('[KOJIMA DBG] HTML(先頭2000):', res.responseText.substring(0, 2000));
                             kojimaUpdateStatus('__NEXT_DATA__なし（CSR）\nコンソール確認');
                         }
                     } catch(e) { kojimaUpdateStatus(`解析エラー: ${e.message}`); }
