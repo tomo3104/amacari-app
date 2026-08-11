@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.37
+// @version      3.38
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -49,7 +49,7 @@
             const catIndex = parseInt(params.get('catindex') || '0', 10);
             const cat = KOJSHOPS_CATS[catIndex];
             const sleep2 = ms => new Promise(r => setTimeout(r, ms));
-            if (catIndex === 0) localStorage.removeItem('kojimaItems');
+            if (catIndex === 0) { localStorage.removeItem('kojimaSeenUrls'); localStorage.removeItem('kojimaTotalHits'); }
 
             const wrap = document.createElement('div');
             wrap.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;display:flex;flex-direction:column;gap:6px;align-items:flex-end;';
@@ -66,7 +66,8 @@
             let cancelled = false;
             stopBtn.addEventListener('click', () => {
                 cancelled = true;
-                localStorage.removeItem('kojimaItems');
+                localStorage.removeItem('kojimaSeenUrls');
+                localStorage.removeItem('kojimaTotalHits');
                 sd.textContent = '中止しました';
                 stopBtn.remove();
             });
@@ -84,8 +85,9 @@
                 }
                 if (cancelled) return;
 
-                const existing = JSON.parse(localStorage.getItem('kojimaItems') || '[]');
-                const seenUrls = new Set(existing.map(i => i.url));
+                // 重複排除しながら今カテゴリの新規アイテムを収集
+                const seenUrls = new Set(JSON.parse(localStorage.getItem('kojimaSeenUrls') || '[]'));
+                const items = [];
                 document.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
                     const url = a.href.split('?')[0];
                     if (seenUrls.has(url)) return;
@@ -94,36 +96,47 @@
                     const priceMatch = text.match(/[¥￥]\s*([\d,]+)/);
                     const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
                     const name = text.split('\n').map(l => l.trim()).filter(l => l && !/^[¥￥]/.test(l)).join(' ').trim();
-                    if (name) existing.push({ name, price, url });
+                    if (name) items.push({ name, price, url });
                 });
-                localStorage.setItem('kojimaItems', JSON.stringify(existing));
+                localStorage.setItem('kojimaSeenUrls', JSON.stringify([...seenUrls]));
 
+                const totalHits = parseInt(localStorage.getItem('kojimaTotalHits') || '0', 10);
                 const nextIndex = catIndex + 1;
-                if (nextIndex < KOJSHOPS_CATS.length) {
-                    sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}: 完了\n蓄積${existing.length}件 → 次へ...`;
-                    await sleep2(800);
-                    location.href = `${KOJSHOPS_BASE}&category_id=${KOJSHOPS_CATS[nextIndex].id}&autorun=1&catindex=${nextIndex}`;
-                } else {
-                    const allItems = JSON.parse(localStorage.getItem('kojimaItems') || '[]');
-                    localStorage.removeItem('kojimaItems');
-                    if (allItems.length === 0) { sd.textContent = '商品なし'; stopBtn.remove(); return; }
-                    sd.textContent = `全${KOJSHOPS_CATS.length}カテゴリ完了\n${allItems.length}件を送信中...`;
-                    stopBtn.remove();
-                    GM_xmlhttpRequest({
-                        method: 'POST', url: 'http://localhost:8766/check-mercari',
-                        headers: { 'Content-Type': 'application/json' },
-                        data: JSON.stringify({ items: allItems, source: 'shops' }),
-                        timeout: 180000,
-                        onload: res => {
-                            try {
-                                const r = JSON.parse(res.responseText);
-                                sd.textContent = `完了 — ${(r.matches || []).length}件ヒット`;
-                            } catch(_) { sd.textContent = '完了（解析失敗）'; }
-                        },
-                        onerror:   () => { sd.textContent = 'サーバー未起動'; },
-                        ontimeout: () => { sd.textContent = 'タイムアウト'; },
-                    });
-                }
+                const isLast = nextIndex >= KOJSHOPS_CATS.length;
+
+                const goNext = (hits) => {
+                    const newTotal = totalHits + hits;
+                    localStorage.setItem('kojimaTotalHits', String(newTotal));
+                    if (isLast) {
+                        localStorage.removeItem('kojimaSeenUrls');
+                        localStorage.removeItem('kojimaTotalHits');
+                        sd.textContent = `全${KOJSHOPS_CATS.length}カテゴリ完了\n累計ヒット: ${newTotal}件`;
+                        stopBtn.remove();
+                    } else {
+                        sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}: ヒット${hits}件\n累計${newTotal}件 → 次へ...`;
+                        setTimeout(() => {
+                            location.href = `${KOJSHOPS_BASE}&category_id=${KOJSHOPS_CATS[nextIndex].id}&autorun=1&catindex=${nextIndex}`;
+                        }, 1200);
+                    }
+                };
+
+                if (items.length === 0) { goNext(0); return; }
+
+                sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}\n${items.length}件を送信中...`;
+                GM_xmlhttpRequest({
+                    method: 'POST', url: 'http://localhost:8766/check-mercari',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ items, source: 'shops' }),
+                    timeout: 60000,
+                    onload: res => {
+                        try {
+                            const r = JSON.parse(res.responseText);
+                            goNext((r.matches || []).length);
+                        } catch(_) { goNext(0); }
+                    },
+                    onerror:   () => { sd.textContent = 'サーバー未起動'; stopBtn.remove(); },
+                    ontimeout: () => { goNext(0); },
+                });
             })();
         }
         return;
