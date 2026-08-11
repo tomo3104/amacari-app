@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.20
+// @version      3.21
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -897,9 +897,9 @@
                         // リンク内テキスト、なければ親要素のテキストを使う
                         const text = (a.innerText || a.parentElement?.innerText || '').trim();
                         if (KOJIMA_EXCL.some(w => text.includes(w))) return;
-                        const priceMatch = text.match(/¥([\d,]+)/) || text.match(/([\d,]+)円/);
+                        const priceMatch = text.match(/¥\s*([\d,]+)/) || text.match(/([\d,]+)円/);
                         const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
-                        const name = text.replace(/¥[\d,]+|[\d,]+円/g, '').replace(/\s+/g, ' ').trim();
+                        const name = text.replace(/¥\s*[\d,]+|[\d,]+円/g, '').replace(/\s+/g, ' ').trim();
                         if (name) items.push({ name, price, url });
                     });
                     kojimaUpdateStatus(`${items.length}件取得完了（重複除外後）`);
