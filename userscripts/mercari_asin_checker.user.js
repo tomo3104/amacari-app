@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.23
+// @version      3.24
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -887,20 +887,17 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // DOM構造デバッグ: 最初のアンカーから4段階さかのぼる
-                    const firstA = idoc.querySelector('a[href*="/shops/product/"]');
-                    if (firstA) {
-                        let dbg = `a: "${(firstA.innerText || '').slice(0, 25).replace(/\n/g,'|')}"\n`;
-                        let el = firstA;
-                        for (let i = 1; i <= 4; i++) {
-                            el = el.parentElement;
-                            if (!el || el === idoc.body) break;
-                            const t = (el.innerText || '').slice(0, 40).replace(/\n/g, '|');
-                            dbg += `p${i}[${el.tagName}]: "${t}"\n`;
-                        }
-                        kojimaUpdateStatus(dbg);
-                        await sleep(10000);
-                    }
+                    // DOM構造デバッグ: 同一URLの全アンカーのテキストを表示
+                    const allLinks = idoc.querySelectorAll('a[href*="/shops/product/"]');
+                    const firstUrl = allLinks[0]?.href.split('?')[0] || '';
+                    const sameUrl = [...allLinks].filter(a => a.href.split('?')[0] === firstUrl);
+                    let dbg = `総リンク:${allLinks.length} / 同URL:${sameUrl.length}件\n`;
+                    sameUrl.slice(0, 5).forEach((a, i) => {
+                        const t = (a.innerText || '').slice(0, 30).replace(/\n/g, '|');
+                        dbg += `[${i}] "${t}"\n`;
+                    });
+                    kojimaUpdateStatus(dbg);
+                    await sleep(10000);
                     cleanup();
                     resolve([]);
                 } catch(e) {
