@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.24
+// @version      3.25
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -887,17 +887,25 @@
                         if (count === prev) break;
                         prev = count;
                     }
-                    // DOM構造デバッグ: 同一URLの全アンカーのテキストを表示
-                    const allLinks = idoc.querySelectorAll('a[href*="/shops/product/"]');
-                    const firstUrl = allLinks[0]?.href.split('?')[0] || '';
-                    const sameUrl = [...allLinks].filter(a => a.href.split('?')[0] === firstUrl);
-                    let dbg = `総リンク:${allLinks.length} / 同URL:${sameUrl.length}件\n`;
-                    sameUrl.slice(0, 5).forEach((a, i) => {
-                        const t = (a.innerText || '').slice(0, 30).replace(/\n/g, '|');
-                        dbg += `[${i}] "${t}"\n`;
-                    });
-                    kojimaUpdateStatus(dbg);
-                    await sleep(10000);
+                    // DOM構造デバッグ: アンカー属性・img alt・兄弟要素を確認
+                    const firstA = idoc.querySelector('a[href*="/shops/product/"]');
+                    if (firstA) {
+                        const attrs = [...firstA.attributes].map(a => `${a.name}="${a.value.slice(0,30)}"`).join(' ');
+                        const imgAlt = firstA.querySelector('img')?.alt || '(なし)';
+                        // 兄弟要素に非価格テキストがあるか確認
+                        let siblingText = '(なし)';
+                        for (let el = firstA.parentElement; el && el !== idoc.body; el = el.parentElement) {
+                            for (const s of el.parentElement?.children || []) {
+                                if (s === el) continue;
+                                const t = (s.innerText || '').replace(/¥\s*[\d,]+/g, '').trim();
+                                if (t.length > 3) { siblingText = t.slice(0, 40).replace(/\n/g,'|'); break; }
+                            }
+                            if (siblingText !== '(なし)') break;
+                        }
+                        let dbg = `attrs: ${attrs.slice(0,60)}\nimg.alt: "${imgAlt.slice(0,40)}"\n兄弟テキスト: "${siblingText}"`;
+                        kojimaUpdateStatus(dbg);
+                        await sleep(10000);
+                    }
                     cleanup();
                     resolve([]);
                 } catch(e) {
