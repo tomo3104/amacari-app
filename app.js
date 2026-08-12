@@ -876,6 +876,7 @@ function renderArchive(items) {
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
+             <button data-action="not-purchased">結局買わなかった</button>
              <button data-action="reject-archive">却下に戻す</button>`}
       </div>
     </li>
@@ -907,17 +908,23 @@ function renderRejected(items) {
 
 // ---------- 実績集計 ----------
 
+const STATS_ROUTE_ORDER = ["精査", "RT", "発掘", "フリマ"];
+
 function aggregateBy(items, keyFn) {
   const map = new Map();
   items.forEach(item => {
     const key = keyFn(item.date);
     if (!key) return;
-    if (!map.has(key)) map.set(key, { key, count: 0, sales: 0, cost: 0, profit: 0 });
+    if (!map.has(key)) map.set(key, { key, count: 0, sales: 0, cost: 0, profit: 0, routes: {} });
     const a = map.get(key);
     a.count += 1;
-    a.sales += num(item.amazon_price);
-    a.cost += num(item.mercari_price);
-    a.profit += num(item.real_profit);
+    if (item.has_amount) {
+      a.sales += num(item.amazon_price);
+      a.cost += num(item.mercari_price);
+      a.profit += num(item.real_profit);
+    }
+    const r = item.route || "不明";
+    a.routes[r] = (a.routes[r] || 0) + 1;
   });
   return Array.from(map.values()).sort((a, b) => a.key < b.key ? 1 : -1);
 }
@@ -930,11 +937,15 @@ function num(v) {
 function renderStatRow(agg, label) {
   const margin = agg.sales ? agg.profit / agg.sales * 100 : 0;
   const roi = agg.cost ? agg.profit / agg.cost * 100 : 0;
+  const routeText = STATS_ROUTE_ORDER
+    .filter(r => agg.routes[r])
+    .map(r => `${r}${agg.routes[r]}`)
+    .join("・");
   return `
     <li class="stats-row">
       <div class="stats-row-head">
         <span class="stats-date">${escapeHtml(label)}</span>
-        <span class="stats-count">${agg.count}件</span>
+        <span class="stats-count">${agg.count}件${routeText ? `（${escapeHtml(routeText)}）` : ""}</span>
       </div>
       <div class="stats-row-grid">
         <div><span>見込売上</span>¥${agg.sales.toLocaleString()}</div>
@@ -976,6 +987,8 @@ els.archiveList.addEventListener("click", async e => {
   try {
     if (action === "purchased") {
       await gasPost("purchased", { row });
+    } else if (action === "not-purchased") {
+      await gasPost("judge", { row, judgment: "却下", reason: "未購入" });
     } else if (action === "reject-archive") {
       await gasPost("judge", { row, judgment: "却下", reason: "キャンセル" });
     }
@@ -1020,6 +1033,14 @@ document.getElementById("log-stats-toggle").addEventListener("click", () => {
   section.classList.toggle("hidden");
   btn.textContent = isHidden ? "▲ 実績を閉じる" : "📊 実績を見る";
   if (isHidden) loadStats();
+});
+
+document.getElementById("stats-daily-toggle").addEventListener("click", () => {
+  const list = els.statsDailyList;
+  const btn = document.getElementById("stats-daily-toggle");
+  const isHidden = list.classList.contains("hidden");
+  list.classList.toggle("hidden");
+  btn.textContent = isHidden ? "日別を閉じる ▴" : "日別を見る ▾";
 });
 
 // ---------- タブ切り替え ----------
