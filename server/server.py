@@ -167,6 +167,43 @@ def save_realtime_log(collected, matched, hits, new_cands):
         print(f"realtime_log保存失敗: {e}")
 
 
+AUCTION_LOG_SHEET  = "auction_test"
+AUCTION_LOG_HEADER = ["検知日時", "商品名", "現在価格", "bidDeadline(生値)", "URL"]
+
+def save_auction_log(items):
+    """オークション観測用（本番マッチングとは無関係）。件数・価格帯・bidDeadlineの形式を把握する目的の一時ログ。"""
+    try:
+        service = get_sheets_service()
+        meta  = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        names = [s["properties"]["title"] for s in meta["sheets"]]
+        if AUCTION_LOG_SHEET not in names:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=SPREADSHEET_ID,
+                body={"requests": [{"addSheet": {"properties": {"title": AUCTION_LOG_SHEET}}}]},
+            ).execute()
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{AUCTION_LOG_SHEET}!A1",
+                valueInputOption="RAW",
+                body={"values": [AUCTION_LOG_HEADER]},
+            ).execute()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [
+            [now, it.get("name", ""), it.get("price", 0), str(it.get("bid_deadline", "")), it.get("url", "")]
+            for it in items
+        ]
+        service.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{AUCTION_LOG_SHEET}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": rows},
+        ).execute()
+        print(f"  → {AUCTION_LOG_SHEET}: {len(rows)}件記録")
+    except Exception as e:
+        print(f"{AUCTION_LOG_SHEET}保存失敗: {e}")
+
+
 def ensure_hits_sheet(service):
     meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
     names = [s["properties"]["title"] for s in meta["sheets"]]
@@ -484,6 +521,25 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
             except Exception as e:
                 print(f"log-timing エラー: {e}")
+                self.send_response(500)
+                self.end_headers()
+            return
+
+        if self.path == "/auction-log":
+            length = int(self.headers.get("Content-Length", 0))
+            body   = self.rfile.read(length)
+            try:
+                data  = json.loads(body)
+                items = data.get("items", [])
+                if items:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [オークション観測] {len(items)}件検知")
+                    import threading
+                    threading.Thread(target=save_auction_log, args=(items,), daemon=True).start()
+                self.send_response(200)
+                self._cors()
+                self.end_headers()
+            except Exception as e:
+                print(f"auction-log エラー: {e}")
                 self.send_response(500)
                 self.end_headers()
             return
