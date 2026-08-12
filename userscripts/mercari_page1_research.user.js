@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.15
-// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト
+// @version      3.16
+// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -361,7 +361,30 @@
 
     // ── アイテム処理・サーバー送信 ────────────────────────────────────────────
 
+    // オークション観測用（本番マッチングとは別枠。件数・価格帯・bidDeadline形式の把握が目的の一時ログ）
+    async function reportAuctionItems(items) {
+        const payload = items.map(item => ({
+            name:         item.name || '',
+            price:        parseInt(item.price, 10) || 0,
+            url:          `https://jp.mercari.com/item/${item.id}`,
+            bid_deadline: item.auction && item.auction.bidDeadline,
+        }));
+        try {
+            await fetch('http://localhost:8766/auction-log', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ items: payload }),
+            });
+        } catch (e) {}
+    }
+
     async function processItems(items) {
+        const auctionItems = items.filter(item => item.auction && item.auction.bidDeadline);
+        if (auctionItems.length > 0) {
+            p1Log(`  ●オークション検知 ${auctionItems.length}件`);
+            reportAuctionItems(auctionItems);
+        }
+
         const formatted = items
             .map(item => ({
                 name:  '[R] ' + (item.name || ''),
