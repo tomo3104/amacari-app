@@ -908,7 +908,7 @@ function renderRejected(items) {
 
 // ---------- 実績集計 ----------
 
-const STATS_ROUTE_ORDER = ["精査", "RT", "発掘", "フリマ"];
+const STATS_ROUTE_ORDER = ["AR", "RT", "MR", "FR"];
 
 function aggregateBy(items, keyFn) {
   const map = new Map();
