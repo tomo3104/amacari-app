@@ -351,6 +351,8 @@ body {
   min-height: 0;
 }
 
+.archive-list.hidden { display: none; }
+
 .archive-item {
   display: flex;
   gap: 12px;
