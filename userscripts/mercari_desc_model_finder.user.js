@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.63
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式）
+// @version      2.64
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ追加）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -24,6 +24,8 @@
     const RESULT_KEY      = 'desc_model_results';
     const PROCESSED_KEY     = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
+    const DESC_HEARTBEAT      = 'desc_finder_hb';        // ウォッチドッグ用ハートビート
+    const DESC_WD_TIMEOUT     = 300000;                  // ウォッチドッグ5分（フリーズ検知→自動リロード）
     const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
@@ -132,6 +134,7 @@
         runItemPageMode(itemMatch[1]);
     } else {
         if (window !== window.top) return; // iframeの中ではクローラー/起動モードを動かさない
+        startWatchdog();
         // キュー実行中にエラーページへリダイレクトされた場合、自動スキップして再開
         const _qStr = localStorage.getItem(QUEUE_KEY);
         if (_qStr) {
@@ -770,6 +773,24 @@
         _diagLog.push(line);
         console.log('[desc-finder]', line);
         try { localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog)); } catch(e) { console.warn('[desc-finder] dlog storage err:', e); }
+        try { localStorage.setItem(DESC_HEARTBEAT, String(Date.now())); } catch(e) {}
+    }
+
+    // クローラー実行中に一定時間ハートビートが更新されなければフリーズとみなし、
+    // 現在のページをリロードして復帰させる（状態はlocalStorageにあるので再開可能）
+    function startWatchdog() {
+        setInterval(() => {
+            const crawlerStr = localStorage.getItem(CRAWLER_KEY);
+            if (!crawlerStr) return;
+            try {
+                if (!JSON.parse(crawlerStr).running) return;
+            } catch (e) { return; }
+            const lastHb = parseInt(localStorage.getItem(DESC_HEARTBEAT) || '0', 10);
+            if (lastHb > 0 && Date.now() - lastHb > DESC_WD_TIMEOUT) {
+                dlog('watchdog: フリーズ検知 → リロードして復帰');
+                location.reload();
+            }
+        }, 30000);
     }
 
     // __NEXT_DATA__ JSON を再帰探索して description フィールドを探す
