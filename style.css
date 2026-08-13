@@ -150,6 +150,7 @@ body {
   padding: 10px 14px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .card-name {
@@ -347,6 +348,7 @@ body {
   padding: 0;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .archive-item {
