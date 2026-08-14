@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.64
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ追加）
+// @version      2.65
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・セット二重表示修正）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -99,6 +99,16 @@
         }
         if (fallback.length === 0) return [];
         return [fallback.reduce((a, b) => a.length >= b.length ? a : b)];
+    }
+
+    // 検証用：型番が見つかった箇所の前後を抜粋（全文は保存しない＝データ量を抑える）
+    function extractExcerpt(text, model) {
+        const idx = text.toUpperCase().indexOf(model.toUpperCase());
+        const clean = s => s.replace(/\s+/g, ' ').trim();
+        if (idx === -1) return clean(text.slice(0, 150));
+        const start = Math.max(0, idx - 60);
+        const end   = Math.min(text.length, idx + model.length + 60);
+        return (start > 0 ? '…' : '') + clean(text.slice(start, end)) + (end < text.length ? '…' : '');
     }
 
     // ===== ステータスUI（全ページ共通） =====
@@ -258,8 +268,9 @@
                     const item    = items[idx];
                     const tag     = isBundle ? '【セット】' : '';
                     models.forEach(model => {
-                        const label = isBundle ? `【セット】${item.name} ${model}` : `${item.name} ${model}`;
-                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image });
+                        // 【セット】タグはサーバー側(find_matches)が名前を見て一括付与するため、ここでは付けない（二重表示防止）
+                        const label = `${item.name} ${model}`;
+                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model) });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     showStatus(`[${idx + 1}/${total}] ${tag}型番取得: ${models.join(', ')}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
@@ -964,8 +975,9 @@
                 if (models.length > 0) {
                     const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
                     models.forEach(model => {
-                        const label = isBundle ? `【セット】${item.name} ${model}` : `${item.name} ${model}`;
-                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image });
+                        // 【セット】タグはサーバー側(find_matches)が名前を見て一括付与するため、ここでは付けない（二重表示防止）
+                        const label = `${item.name} ${model}`;
+                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model) });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     const tag = isBundle ? '【セット】' : '';
