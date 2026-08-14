@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.65
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・セット二重表示修正）
+// @version      2.66
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・セット二重表示修正・実験ログモード追加）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -99,6 +99,25 @@
         }
         if (fallback.length === 0) return [];
         return [fallback.reduce((a, b) => a.length >= b.length ? a : b)];
+    }
+
+    // ===== 実験ログモード（一時検証用。console で localStorage.setItem('desc_experiment_mode','1') で有効化） =====
+    const EXPERIMENT_KEY = 'desc_experiment_mode';
+    function isExperimentMode() { return localStorage.getItem(EXPERIMENT_KEY) === '1'; }
+    let _experimentBuffer = [];
+    function logExperiment(entry) {
+        if (!isExperimentMode()) return;
+        _experimentBuffer.push(entry);
+        if (_experimentBuffer.length >= 20) flushExperimentLog();
+    }
+    function flushExperimentLog() {
+        if (_experimentBuffer.length === 0) return;
+        const batch = _experimentBuffer.splice(0, _experimentBuffer.length);
+        fetch('http://localhost:8766/desc-experiment-log', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ items: batch }),
+        }).catch(() => {});
     }
 
     // 検証用：型番が見つかった箇所の前後を抜粋（全文は保存しない＝データ量を抑える）
@@ -511,6 +530,14 @@
         const itemList     = Object.values(allItems);
         const processedSet = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
         const noModelItems = itemList.filter(i => !hasModelInTitle(i.name) && !processedSet.has(i.id));
+
+        if (isExperimentMode()) {
+            itemList.forEach(i => {
+                if (hasModelInTitle(i.name)) {
+                    logExperiment({ maker: maker.name, title: i.name, url: i.url, has_model_in_title: true, desc_fetched: '', desc: '', extracted: '' });
+                }
+            });
+        }
 
         showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${itemList.length}件収集 / 未処理型番なし: ${noModelItems.length}件`);
         dlog(`[${makerIdx + 1}/${makersTotal}] ${maker.name}: ${itemList.length}件収集 / 型番なし未処理: ${noModelItems.length}件`);
@@ -969,6 +996,7 @@
                 nullCount = 0;
                 const models    = extractModelsFromDesc(desc);
                 dlog(`models: ${JSON.stringify(models)}`);
+                logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: true, desc, extracted: models.join(',') });
                 const SET_WORDS = ['セット', 'まとめ', 'まとめ売', 'セット売', '個セット', '台セット', '点セット', '本セット'];
                 const isBundle  = SET_WORDS.some(w => item.name.includes(w) || desc.includes(w));
 
@@ -994,11 +1022,13 @@
                 nullCount++;
                 const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                 showStatus(`${prefix}[${i + 1}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
+                logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: false, desc: '', extracted: '' });
             }
 
             await sleep(300);
         }
 
+        flushExperimentLog();
         stopBtn.remove();
         // logBtnは残す（クリックしていつでもコピー可能）
         logBtn.textContent = 'ログコピー✓';
