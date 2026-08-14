@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.66
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・セット二重表示修正・実験ログモード追加）
+// @version      2.67
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善(ダッシュ後数字のみ対応・全角ダッシュ対応)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -33,17 +33,18 @@
     let _crawlerPauseBtn = null;  // 一時停止ボタン参照（複数箇所から削除できるように）
 
     // タイトルに型番が含まれるか判定
-    // ダッシュ後は英字＋数字の両方を含む必要あり（Wi-Fi / PC-12台 などの誤検知を防ぐ）
-    const HAS_MODEL_RE = /\b(?:[A-Z]{2,}-(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
+    // ダッシュ後は数字のみでも型番として認める（PZ-860・TV-5100等）。英字必須にしていたのを緩和（2026-08-15）
+    const HAS_MODEL_RE = /\b(?:[A-Z]{2,}-(?=[A-Z0-9]*[0-9])[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
 
     // 説明文から型番を抽出（ラベルあり・全件取得）
     const DESC_LABEL_RE = /(?:【)?(?:型番|品番|型式|型名|モデル(?:番号|名)?|製品番号|商品番号)(?:】)?[：:\s]+([A-Za-z][A-Za-z0-9\-\/\.]{3,24})/gi;
-    // フォールバック: ダッシュ後に英字と数字の両方を含む（Wi-Fi / USB-C 等を排除）
-    const DESC_FALLBACK_RE = /\b([A-Za-z]{2,5}-(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{3,20})\b/gi;
+    // フォールバック: ダッシュ後に数字を含む（Wi-Fi等の英字のみは_NON_MODELで別途除外）
+    const DESC_FALLBACK_RE = /\b([A-Za-z]{2,5}-(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{3,20})\b/gi;
 
     // 型番候補の除外セット・パターン
     const _NON_MODEL = new Set(['WI-FI','USB-A','USB-B','USB-C','TYPE-A','TYPE-B','TYPE-C','HDMI','AC-DC','DC-AC']);
-    const _NON_MODEL_RE = /^(?:AC-\d|DC-\d|USB-\d|WI-FI\d|TV-\d|LAN-\d|PC-\d{1,2}$)/i;
+    // 各パターンに$を付けて短い汎用表記のみ除外（TV-5100等の実型番を巻き込まないよう2026-08-15修正）
+    const _NON_MODEL_RE = /^(?:AC-\d{1,2}|DC-\d{1,2}|USB-\d{1,2}|WI-FI\d{1,2}|TV-\d{1,2}|LAN-\d{1,2}|PC-\d{1,2})$/i;
     function _isValidModel(s) {
         if (s.length < 4 || s.length > 25) return false;
         if (_NON_MODEL.has(s)) return false;
@@ -76,10 +77,14 @@
         } catch(e) { return null; }
     }
 
-    function hasModelInTitle(title) { return HAS_MODEL_RE.test(title); }
+    // 全角ダッシュ「ー」等をASCIIハイフンに正規化してからマッチさせる（NTNー64A等の対策・2026-08-15）
+    function _normalizeDash(s) { return s.replace(/[ー－―‐]/g, '-'); }
+
+    function hasModelInTitle(title) { return HAS_MODEL_RE.test(_normalizeDash(title)); }
 
     // 複数の型番候補を返す（ラベルあり：最大3件、フォールバック：最長1件）
     function extractModelsFromDesc(text) {
+        text = _normalizeDash(text);
         const labeled = [];
         let m;
         const re = new RegExp(DESC_LABEL_RE.source, 'gi');
