@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.69
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善(ダッシュ後数字のみ対応・全角ダッシュ対応)・診断ログのO(n²)化を修正(直近200件のみ保持)・50件ごとの処理速度計測を追加）
+// @version      2.67
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善(ダッシュ後数字のみ対応・全角ダッシュ対応)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -810,13 +810,10 @@
     // ========================================================
     //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
     // ========================================================
-    const DIAG_LOG_MAX = 200; // _diagLogを無制限に貯めるとJSON.stringifyが件数に比例して重くなり続け、長時間実行でUIスレッドを圧迫するため直近N件のみ保持
-
     function dlog(msg) {
         const t = new Date().toTimeString().slice(0,8);
         const line = `[${t}] ${msg}`;
         _diagLog.push(line);
-        if (_diagLog.length > DIAG_LOG_MAX) _diagLog = _diagLog.slice(-DIAG_LOG_MAX);
         console.log('[desc-finder]', line);
         try { localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog)); } catch(e) { console.warn('[desc-finder] dlog storage err:', e); }
         try { localStorage.setItem(DESC_HEARTBEAT, String(Date.now())); } catch(e) {}
@@ -980,7 +977,6 @@
 
         let nullCount = 0;
         let makerHits = 0;
-        let _batchStart = Date.now(); // 処理が長時間にわたって重くなっていないかを確認するための簡易計測（dlog修正の効果検証用）
 
         for (let i = 0; i < total; i++) {
             if (_abortFetch) break;
@@ -1035,13 +1031,6 @@
             }
 
             await sleep(300);
-
-            // 50件ごとに直近バッチの平均処理時間を記録（件数が増えても重くなっていないかの確認用）
-            if ((i + 1) % 50 === 0) {
-                const batchMs = Date.now() - _batchStart;
-                dlog(`[計測] ${i + 1}件目まで処理 / 直近50件の平均: ${(batchMs / 50).toFixed(0)}ms/件`);
-                _batchStart = Date.now();
-            }
         }
 
         flushExperimentLog();
