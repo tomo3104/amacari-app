@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.70
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善(ダッシュ後数字のみ対応・全角ダッシュ対応)・診断ログのO(n²)化を修正(直近200件のみ保持)・50件ごとの処理速度計測を追加・markProcessedのメーカー横断O(n)蓄積バグを修正(Setキャッシュ化)）
+// @version      2.71
+// @description  【検証用】markProcessed修正のみ有効・dlogのO(n²)修正は切り分けのため一時的に元に戻し（タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合・同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -832,13 +832,10 @@
     // ========================================================
     //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
     // ========================================================
-    const DIAG_LOG_MAX = 200; // _diagLogを無制限に貯めるとJSON.stringifyが件数に比例して重くなり続け、長時間実行でUIスレッドを圧迫するため直近N件のみ保持
-
     function dlog(msg) {
         const t = new Date().toTimeString().slice(0,8);
         const line = `[${t}] ${msg}`;
         _diagLog.push(line);
-        if (_diagLog.length > DIAG_LOG_MAX) _diagLog = _diagLog.slice(-DIAG_LOG_MAX);
         console.log('[desc-finder]', line);
         try { localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog)); } catch(e) { console.warn('[desc-finder] dlog storage err:', e); }
         try { localStorage.setItem(DESC_HEARTBEAT, String(Date.now())); } catch(e) {}
