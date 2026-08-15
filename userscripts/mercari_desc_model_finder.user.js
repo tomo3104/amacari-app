@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.71
-// @description  【検証用】markProcessed修正のみ有効・dlogのO(n²)修正は切り分けのため一時的に元に戻し（タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合・同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善）
+// @version      2.72
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正(クローラーモードの早期returnで未初期化のまま参照されていた)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -27,6 +27,8 @@
     const DESC_HEARTBEAT      = 'desc_finder_hb';        // ウォッチドッグ用ハートビート
     const DESC_WD_TIMEOUT     = 300000;                  // ウォッチドッグ5分（フリーズ検知→自動リロード）
     const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
+    const DIAG_LOG_MAX        = 200;                     // _diagLog上限（dlog()参照用。クローラーモードのページは冒頭で早期returnするため、
+                                                           // この定数は他のconstと同じ場所（早期returnより前）で必ず初期化しておく必要がある
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     let _pauseRequested  = false; // 一時停止フラグ
@@ -836,6 +838,7 @@
         const t = new Date().toTimeString().slice(0,8);
         const line = `[${t}] ${msg}`;
         _diagLog.push(line);
+        if (_diagLog.length > DIAG_LOG_MAX) _diagLog = _diagLog.slice(-DIAG_LOG_MAX);
         console.log('[desc-finder]', line);
         try { localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog)); } catch(e) { console.warn('[desc-finder] dlog storage err:', e); }
         try { localStorage.setItem(DESC_HEARTBEAT, String(Date.now())); } catch(e) {}
