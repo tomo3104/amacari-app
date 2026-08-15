@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Purchase Extract
 // @namespace    http://tampermonkey.net/
-// @version      2.2
-// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・待ち時間延長(約24秒)＋診断ログ追加）
+// @version      2.3
+// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・待ち時間延長(約24秒)＋診断ログ追加・出品者名欄の遅延読み込み対策で自動スクロール追加）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -257,6 +257,9 @@
         document.body.appendChild(abortBtn);
 
         const doExtract = (retries) => {
+            // 出品者名の欄（メッセージ側パネル）は遅延読み込みされることがあるためスクロールして促す
+            window.scrollTo(0, document.body.scrollHeight / 3);
+
             const bodyText = document.body.innerText || '';
             const hasHeading = bodyText.includes('取引情報');
             const info = hasHeading ? extractFromDoc(document) : { price: '', day: '', seller: '', tracking: '' };
