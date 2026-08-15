@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Purchase Extract
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する
+// @version      2.0
+// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -14,9 +14,14 @@
 (function () {
     'use strict';
 
+    // ========================================================
+    //  定数（早期returnより必ず前に置く。TDZバグ再発防止のため一箇所にまとめる）
+    // ========================================================
     const SERVER_URL     = 'http://localhost:8769/purchase-extract';
     const PROCESSED_KEY  = 'sales_purchase_processed'; // 処理済み取引IDの蓄積（重複抽出防止）
     const PROCESSED_MAX  = 2000;
+    const QUEUE_KEY       = 'sales_purchase_queue';     // 巡回中の状態（実ページ遷移で使う）
+    const RESULT_KEY      = 'sales_purchase_results';   // 巡回中に貯める抽出結果
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -28,7 +33,9 @@
         }
     }
 
-    function saveProcessedSet(set) {
+    function addProcessed(id) {
+        const set = getProcessedSet();
+        set.add(id);
         let arr = Array.from(set);
         if (arr.length > PROCESSED_MAX) arr = arr.slice(-PROCESSED_MAX);
         localStorage.setItem(PROCESSED_KEY, JSON.stringify(arr));
@@ -48,7 +55,7 @@
         statusEl.textContent = msg;
     }
 
-    // 取引ページ（同一オリジンiframe）から必要な4項目を抽出
+    // 取引ページのdocumentから必要な4項目を抽出
     function extractFromDoc(doc) {
         const result = { tracking: '', day: '', seller: '', price: '' };
 
@@ -86,61 +93,6 @@
         return result;
     }
 
-    // 同一オリジンiframeで取引ページを読み込み、必要な4項目が揃うまでポーリング
-    function fetchTransaction(transactionId) {
-        const url = `https://jp.mercari.com/transaction/${transactionId}`;
-        return new Promise(resolve => {
-            const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
-            document.body.appendChild(iframe);
-
-            let done = false;
-            const finish = result => {
-                if (done) return;
-                done = true;
-                try { iframe.remove(); } catch (e) {}
-                resolve(result);
-            };
-
-            const hardTimer = setTimeout(() => finish(null), 8000);
-
-            iframe.onload = () => {
-                let tries = 0;
-                const poll = setInterval(() => {
-                    try {
-                        const doc = iframe.contentDocument;
-                        if (!doc || !doc.body) return;
-
-                        const bodyText = doc.body.innerText || '';
-                        if (bodyText.includes('このページは存在しません') || bodyText.includes('取引情報')) {
-                            const info = extractFromDoc(doc);
-                            // 価格・日付・出品者が全部揃うまで待つ（追跡番号は未発送だと無いこともある）
-                            if (info.price && info.day && info.seller) {
-                                clearInterval(poll);
-                                clearTimeout(hardTimer);
-                                finish(info);
-                                return;
-                            }
-                        }
-                    } catch (e) {
-                        clearInterval(poll);
-                        clearTimeout(hardTimer);
-                        finish(null);
-                        return;
-                    }
-                    if (++tries > 40) { // 40 x 200ms = 8秒
-                        clearInterval(poll);
-                        clearTimeout(hardTimer);
-                        finish(null);
-                    }
-                }, 200);
-            };
-
-            iframe.onerror = () => { clearTimeout(hardTimer); finish(null); };
-            iframe.src = url;
-        });
-    }
-
     function sendToServer(items) {
         return new Promise(resolve => {
             GM_xmlhttpRequest({
@@ -170,7 +122,10 @@
         return ids;
     }
 
-    async function runExtract(forceAll) {
+    // ========================================================
+    //  購入履歴ページモード：ボタン表示 → キュー作成 → 1件目へ遷移
+    // ========================================================
+    function startExtract(forceAll) {
         showStatus('購入履歴を読み込み中...');
         const allIds = collectTransactionIds();
         const processedSet = forceAll ? new Set() : getProcessedSet();
@@ -178,41 +133,17 @@
 
         if (targetIds.length === 0) {
             showStatus(`新規の購入はありませんでした（表示中${allIds.length}件、すべて処理済み）`, 'rgba(0,70,120,0.88)');
-            await sleep(3000);
-            statusEl.style.display = 'none';
             return;
         }
 
-        showStatus(`対象: ${targetIds.length}件 / 抽出中...`);
-        const results = [];
-        for (let i = 0; i < targetIds.length; i++) {
-            const id = targetIds[i];
-            showStatus(`[${i + 1}/${targetIds.length}] ${id} 抽出中...`);
-            const info = await fetchTransaction(id);
-            if (info) {
-                results.push(info);
-                processedSet.add(id);
-            } else {
-                showStatus(`[${i + 1}/${targetIds.length}] ${id} 抽出失敗（未発送等でスキップ、次回再試行）`);
-                await sleep(1500);
-            }
-            await sleep(500);
-        }
+        const queue = { ids: targetIds, currentIdx: 0, running: true };
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+        localStorage.setItem(RESULT_KEY, JSON.stringify([]));
 
-        if (results.length > 0) {
-            showStatus(`${results.length}件をシートへ送信中...`);
-            const ok = await sendToServer(results);
-            if (ok) {
-                saveProcessedSet(processedSet);
-                showStatus(`完了: ${results.length}件をメルカリ抽出シートに追記しました`, 'rgba(0,110,0,0.88)');
-            } else {
-                showStatus('送信失敗（サーバー起動確認: localhost:8769）', 'rgba(160,0,0,0.88)');
-            }
-        } else {
-            showStatus('抽出できた件数が0件でした', 'rgba(160,80,0,0.88)');
-        }
-        await sleep(4000);
-        statusEl.style.display = 'none';
+        showStatus(`対象: ${targetIds.length}件 → 巡回開始...`);
+        setTimeout(() => {
+            window.location.href = `https://jp.mercari.com/transaction/${targetIds[0]}`;
+        }, 800);
     }
 
     function runPurchasesPageMode() {
@@ -224,7 +155,7 @@
             border:none; border-radius:6px; font-size:14px;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
-        btn.onclick = () => { runExtract(false); };
+        btn.onclick = () => { startExtract(false); };
         document.body.appendChild(btn);
 
         const forceBtn = document.createElement('button');
@@ -237,16 +168,112 @@
         `;
         forceBtn.onclick = () => {
             if (confirm('表示中の購入履歴を全件、処理済みかどうかに関わらず再抽出します（重複が増える可能性があります）。よろしいですか？')) {
-                runExtract(true);
+                startExtract(true);
             }
         };
         document.body.appendChild(forceBtn);
+
+        // 巡回が中断されて戻ってきた場合の再開ボタン
+        const queueStr = localStorage.getItem(QUEUE_KEY);
+        if (queueStr) {
+            try {
+                const q = JSON.parse(queueStr);
+                if (q.running) {
+                    const resumeBtn = document.createElement('button');
+                    resumeBtn.textContent = `巡回を再開 (${q.currentIdx + 1}/${q.ids.length}件目から)`;
+                    resumeBtn.style.cssText = `
+                        position:fixed; bottom:70px; left:20px; z-index:99999;
+                        padding:10px 16px; background:#1565C0; color:#fff;
+                        border:none; border-radius:6px; font-size:13px;
+                        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+                    `;
+                    resumeBtn.onclick = () => {
+                        window.location.href = `https://jp.mercari.com/transaction/${q.ids[q.currentIdx]}`;
+                    };
+                    document.body.appendChild(resumeBtn);
+                }
+            } catch (e) {}
+        }
     }
 
     // ========================================================
-    //  モード判定（購入履歴ページでのみボタン表示）
+    //  取引ページモード：抽出 → 処理済み記録 → 次へ遷移 or 完了送信
     // ========================================================
-    if (location.pathname === '/mypage/purchases') {
+    function runTransactionPageMode(currentId) {
+        const queueStr = localStorage.getItem(QUEUE_KEY);
+        if (!queueStr) return; // 巡回中でなければ何もしない
+
+        let queue;
+        try { queue = JSON.parse(queueStr); } catch (e) { return; }
+        if (!queue.running) return;
+
+        const idx = queue.ids.indexOf(currentId);
+        if (idx === -1) return; // このタブは巡回対象外の取引ページ（手動で見ているだけ）
+
+        const total = queue.ids.length;
+        showStatus(`[${idx + 1}/${total}] 抽出中...`);
+
+        const doExtract = (retries) => {
+            const bodyText = document.body.innerText || '';
+            if (bodyText.includes('取引情報')) {
+                const info = extractFromDoc(document);
+                if (info.price && info.day && info.seller) {
+                    const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+                    results.push(info);
+                    localStorage.setItem(RESULT_KEY, JSON.stringify(results));
+                    addProcessed(currentId);
+                    showStatus(`[${idx + 1}/${total}] 抽出成功: ${info.seller} / ¥${info.price}`, 'rgba(0,110,0,0.88)');
+                    goNext();
+                    return;
+                }
+            }
+            if (retries > 0) {
+                setTimeout(() => doExtract(retries - 1), 300);
+            } else {
+                showStatus(`[${idx + 1}/${total}] 抽出失敗（未発送等）→ スキップ`, 'rgba(160,80,0,0.88)');
+                setTimeout(goNext, 1000);
+            }
+        };
+
+        async function goNext() {
+            const nextIdx = idx + 1;
+            if (nextIdx < total) {
+                queue.currentIdx = nextIdx;
+                localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+                await sleep(800);
+                window.location.href = `https://jp.mercari.com/transaction/${queue.ids[nextIdx]}`;
+            } else {
+                localStorage.removeItem(QUEUE_KEY);
+                const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+                if (results.length > 0) {
+                    showStatus(`${results.length}件をシートへ送信中...`);
+                    const ok = await sendToServer(results);
+                    localStorage.removeItem(RESULT_KEY);
+                    if (ok) {
+                        showStatus(`完了: ${results.length}件をメルカリ抽出シートに追記しました`, 'rgba(0,110,0,0.88)');
+                    } else {
+                        showStatus('送信失敗（サーバー起動確認: localhost:8769）', 'rgba(160,0,0,0.88)');
+                    }
+                } else {
+                    showStatus('抽出できた件数が0件でした', 'rgba(160,80,0,0.88)');
+                }
+                await sleep(1500);
+                window.location.href = 'https://jp.mercari.com/mypage/purchases';
+            }
+        }
+
+        // DOMのレンダリングを待ちながら抽出（最大8秒 = 40 x 200ms）
+        setTimeout(() => doExtract(40), 200);
+    }
+
+    // ========================================================
+    //  モード判定
+    // ========================================================
+    const transactionMatch = location.pathname.match(/^\/transaction\/(m[A-Za-z0-9]+)/);
+
+    if (transactionMatch) {
+        runTransactionPageMode(transactionMatch[1]);
+    } else if (location.pathname === '/mypage/purchases') {
         runPurchasesPageMode();
     }
 })();
