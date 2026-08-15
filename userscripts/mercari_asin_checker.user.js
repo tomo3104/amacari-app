@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.38
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に）
+// @version      3.39
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -689,6 +689,15 @@
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
+
+        // 自動起動（?auto_research=）経由だった場合、完了後に発掘リサーチへ自動チェーン
+        if (localStorage.getItem('autoResearch') === 'true') {
+            localStorage.removeItem('autoResearch');
+            updateStatus('→ 発掘リサーチへ自動移行中...');
+            setTimeout(() => {
+                window.location.href = 'https://jp.mercari.com/?start_desc=ALL';
+            }, 3000);
+        }
     }
 
     // ========== 収集 ==========

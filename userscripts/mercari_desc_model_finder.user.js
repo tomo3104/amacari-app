@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.72
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正(クローラーモードの早期returnで未初期化のまま参照されていた)）
+// @version      2.73
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加(夜間自動化オーケストレーター連携用)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -678,6 +678,15 @@
     //  起動ページモード：ボタン表示 → 収集開始
     // ========================================================
     function runLaunchMode() {
+        // 自動起動（タスクスケジューラ・夜間自動化オーケストレーター用）
+        // URLに ?start_desc=ALL を付けて開くと、プロンプト無しで発掘クローラーが自動開始する
+        const _autoDescGroup = new URLSearchParams(location.search).get('start_desc');
+        if (_autoDescGroup) {
+            showStatus(`発掘クローラー自動開始準備中... (グループ: ${_autoDescGroup})`);
+            setTimeout(() => { startCrawler(_autoDescGroup.trim().toUpperCase()); }, 3000);
+            return;
+        }
+
         const btnContainer = document.createElement('div');
         btnContainer.style.cssText = `
             position:fixed; bottom:130px; left:20px; z-index:99999;
