@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Purchase Extract
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため）
+// @version      2.1
+// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -43,7 +43,7 @@
 
     const statusEl = document.createElement('div');
     statusEl.style.cssText = `
-        position:fixed; bottom:20px; right:20px; z-index:99999;
+        position:fixed; top:70px; right:20px; z-index:99999;
         background:rgba(0,0,0,0.80); color:#fff; padding:8px 16px;
         border-radius:8px; font-size:13px; display:none;
         max-width:360px; font-family:sans-serif; line-height:1.5;
@@ -150,7 +150,7 @@
         const btn = document.createElement('button');
         btn.textContent = '購入履歴を抽出';
         btn.style.cssText = `
-            position:fixed; bottom:20px; left:20px; z-index:99999;
+            position:fixed; top:110px; right:20px; z-index:99999;
             padding:12px 18px; background:#00A968; color:#fff;
             border:none; border-radius:6px; font-size:14px;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
@@ -161,7 +161,7 @@
         const forceBtn = document.createElement('button');
         forceBtn.textContent = '強制再抽出（表示中の全件）';
         forceBtn.style.cssText = `
-            position:fixed; bottom:20px; left:170px; z-index:99999;
+            position:fixed; top:155px; right:20px; z-index:99999;
             padding:12px 18px; background:#E65100; color:#fff;
             border:none; border-radius:6px; font-size:14px;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
@@ -173,7 +173,7 @@
         };
         document.body.appendChild(forceBtn);
 
-        // 巡回が中断されて戻ってきた場合の再開ボタン
+        // 巡回が中断されて戻ってきた場合の再開・破棄ボタン
         const queueStr = localStorage.getItem(QUEUE_KEY);
         if (queueStr) {
             try {
@@ -182,7 +182,7 @@
                     const resumeBtn = document.createElement('button');
                     resumeBtn.textContent = `巡回を再開 (${q.currentIdx + 1}/${q.ids.length}件目から)`;
                     resumeBtn.style.cssText = `
-                        position:fixed; bottom:70px; left:20px; z-index:99999;
+                        position:fixed; top:200px; right:20px; z-index:99999;
                         padding:10px 16px; background:#1565C0; color:#fff;
                         border:none; border-radius:6px; font-size:13px;
                         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
@@ -191,6 +191,23 @@
                         window.location.href = `https://jp.mercari.com/transaction/${q.ids[q.currentIdx]}`;
                     };
                     document.body.appendChild(resumeBtn);
+
+                    const discardBtn = document.createElement('button');
+                    discardBtn.textContent = '中断した巡回を破棄';
+                    discardBtn.style.cssText = `
+                        position:fixed; top:245px; right:20px; z-index:99999;
+                        padding:8px 14px; background:#B71C1C; color:#fff;
+                        border:none; border-radius:6px; font-size:12px;
+                        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+                    `;
+                    discardBtn.onclick = () => {
+                        localStorage.removeItem(QUEUE_KEY);
+                        localStorage.removeItem(RESULT_KEY);
+                        resumeBtn.remove();
+                        discardBtn.remove();
+                        showStatus('中断していた巡回を破棄しました', 'rgba(160,80,0,0.88)');
+                    };
+                    document.body.appendChild(discardBtn);
                 }
             } catch (e) {}
         }
@@ -212,6 +229,32 @@
 
         const total = queue.ids.length;
         showStatus(`[${idx + 1}/${total}] 抽出中...`);
+
+        const abortBtn = document.createElement('button');
+        abortBtn.textContent = '中止';
+        abortBtn.style.cssText = `
+            position:fixed; top:110px; right:20px; z-index:99999;
+            padding:10px 16px; background:#B71C1C; color:#fff;
+            border:none; border-radius:6px; font-size:13px;
+            cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        abortBtn.onclick = async () => {
+            abortBtn.disabled = true;
+            abortBtn.textContent = '中止処理中...';
+            localStorage.removeItem(QUEUE_KEY);
+            const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+            if (results.length > 0) {
+                showStatus(`中止: それまでの${results.length}件をシートへ送信中...`, 'rgba(160,80,0,0.88)');
+                const ok = await sendToServer(results);
+                localStorage.removeItem(RESULT_KEY);
+                showStatus(ok ? `中止しました（${results.length}件は送信済み）` : '中止（送信失敗）', 'rgba(160,80,0,0.88)');
+            } else {
+                showStatus('中止しました（送信対象なし）', 'rgba(160,80,0,0.88)');
+            }
+            await sleep(1500);
+            window.location.href = 'https://jp.mercari.com/mypage/purchases';
+        };
+        document.body.appendChild(abortBtn);
 
         const doExtract = (retries) => {
             const bodyText = document.body.innerText || '';
