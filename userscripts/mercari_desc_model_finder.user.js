@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.69
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善(ダッシュ後数字のみ対応・全角ダッシュ対応)・診断ログのO(n²)化を修正(直近200件のみ保持)・50件ごとの処理速度計測を追加）
+// @version      2.70
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善(ダッシュ後数字のみ対応・全角ダッシュ対応)・診断ログのO(n²)化を修正(直近200件のみ保持)・50件ごとの処理速度計測を追加・markProcessedのメーカー横断O(n)蓄積バグを修正(Setキャッシュ化)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -61,13 +61,32 @@
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    function markProcessed(id) {
-        const arr = JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]');
-        if (!arr.includes(id)) {
-            arr.push(id);
-            if (arr.length > 10000) arr.splice(0, arr.length - 10000);
-            localStorage.setItem(PROCESSED_KEY, JSON.stringify(arr));
+    // 処理済みIDのSetをページ読み込み時に一度だけlocalStorageから読み込みキャッシュする。
+    // 以前は商品1件処理するたびに配列全体をJSON.parse/includes線形探索/JSON.stringifyしており、
+    // このIDリストはメーカーをまたいで（ページ遷移をまたいで）最大1万件まで蓄積するため、
+    // 巡回が進むほど1件あたりの処理が線形に重くなっていた（2026-08-15発見）。
+    function _getProcessedSet() {
+        if (!_processedSetCache) {
+            _processedSetCache = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
         }
+        return _processedSetCache;
+    }
+
+    function markProcessed(id) {
+        const set = _getProcessedSet();
+        if (!set.has(id)) {
+            set.add(id);
+            _processedDirty = true;
+        }
+    }
+
+    // キャッシュ済みSetをlocalStorageへ書き戻す（ページ離脱前・一定間隔ごとに呼ぶ）
+    function flushProcessed() {
+        if (!_processedDirty || !_processedSetCache) return;
+        let arr = Array.from(_processedSetCache);
+        if (arr.length > 10000) arr = arr.slice(-10000);
+        localStorage.setItem(PROCESSED_KEY, JSON.stringify(arr));
+        _processedDirty = false;
     }
 
     function _getSharedTpl() {
@@ -157,6 +176,8 @@
     // ========================================================
     var _abortFetch = false;
     var _diagLog    = [];
+    var _processedSetCache = null; // markProcessed高速化用（ページ読み込み時に一度だけlocalStorageから読み込みSetでキャッシュ）
+    var _processedDirty    = false;
 
     // ========================================================
     //  モード判定
@@ -444,6 +465,7 @@
                 localStorage.removeItem(QUEUE_KEY);
                 localStorage.removeItem(_SHARED_TPL_KEY);
                 localStorage.removeItem(PROCESSED_KEY);
+                _processedSetCache = null; _processedDirty = false; // キャッシュも合わせてリセット
                 // desc_last_run_* をリセット（前回実行カットオフを解除して全件収集）
                 Object.keys(localStorage).filter(k => k.startsWith('desc_last_run_')).forEach(k => localStorage.removeItem(k));
                 showStatus(`発掘クローラー開始 — ${makers.length}メーカー (グループ: ${group})`);
@@ -533,7 +555,7 @@
         }
 
         const itemList     = Object.values(allItems);
-        const processedSet = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
+        const processedSet = _getProcessedSet();
         const noModelItems = itemList.filter(i => !hasModelInTitle(i.name) && !processedSet.has(i.id));
 
         if (isExperimentMode()) {
@@ -777,7 +799,7 @@
             }
 
             const itemList      = Object.values(allItems);
-            const processedSet  = new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY) || '[]'));
+            const processedSet  = _getProcessedSet();
             const allNoModelItems = itemList.filter(item => !hasModelInTitle(item.name));
             const noModelItems  = allNoModelItems.filter(item => !processedSet.has(item.id));
             const skippedCount  = allNoModelItems.length - noModelItems.length;
@@ -1041,9 +1063,11 @@
                 const batchMs = Date.now() - _batchStart;
                 dlog(`[計測] ${i + 1}件目まで処理 / 直近50件の平均: ${(batchMs / 50).toFixed(0)}ms/件`);
                 _batchStart = Date.now();
+                flushProcessed(); // 途中リロード・強制終了に備えて定期的に書き戻す
             }
         }
 
+        flushProcessed(); // ページ遷移前に必ず書き戻す
         flushExperimentLog();
         stopBtn.remove();
         // logBtnは残す（クリックしていつでもコピー可能）
