@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Purchase Extract
 // @namespace    http://tampermonkey.net/
-// @version      2.4
-// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・出品者名セレクタ修正(aria-labelから抽出)）
+// @version      2.5
+// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・出品者名セレクタ修正(aria-labelから抽出)・シートへの書き込み順を古い順に変更）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -248,7 +248,7 @@
             abortBtn.disabled = true;
             abortBtn.textContent = '中止処理中...';
             localStorage.removeItem(QUEUE_KEY);
-            const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+            const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').reverse(); // 新しい順に処理しているため、古い順になるよう反転
             if (results.length > 0) {
                 showStatus(`中止: それまでの${results.length}件をシートへ送信中...`, 'rgba(160,80,0,0.88)');
                 const ok = await sendToServer(results);
@@ -299,7 +299,7 @@
                 window.location.href = `https://jp.mercari.com/transaction/${queue.ids[nextIdx]}`;
             } else {
                 localStorage.removeItem(QUEUE_KEY);
-                const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
+                const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').reverse(); // 新しい順に処理しているため、古い順になるよう反転
                 if (results.length > 0) {
                     showStatus(`${results.length}件をシートへ送信中...`);
                     const ok = await sendToServer(results);
