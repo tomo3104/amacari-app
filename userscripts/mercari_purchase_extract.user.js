@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Purchase Extract
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加）
+// @version      2.2
+// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・待ち時間延長(約24秒)＋診断ログ追加）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -258,8 +258,10 @@
 
         const doExtract = (retries) => {
             const bodyText = document.body.innerText || '';
-            if (bodyText.includes('取引情報')) {
-                const info = extractFromDoc(document);
+            const hasHeading = bodyText.includes('取引情報');
+            const info = hasHeading ? extractFromDoc(document) : { price: '', day: '', seller: '', tracking: '' };
+            console.log(`[purchase-extract] retries=${retries} hasHeading=${hasHeading} info=`, JSON.stringify(info));
+            if (hasHeading) {
                 if (info.price && info.day && info.seller) {
                     const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
                     results.push(info);
@@ -271,9 +273,10 @@
                 }
             }
             if (retries > 0) {
-                setTimeout(() => doExtract(retries - 1), 300);
+                setTimeout(() => doExtract(retries - 1), 400);
             } else {
-                showStatus(`[${idx + 1}/${total}] 抽出失敗（未発送等）→ スキップ`, 'rgba(160,80,0,0.88)');
+                console.log(`[purchase-extract] 抽出失敗 id=${currentId} 最終info=`, JSON.stringify(info));
+                showStatus(`[${idx + 1}/${total}] ${currentId} 抽出失敗（未発送等）→ スキップ`, 'rgba(160,80,0,0.88)');
                 setTimeout(goNext, 1000);
             }
         };
@@ -306,7 +309,8 @@
         }
 
         // DOMのレンダリングを待ちながら抽出（最大8秒 = 40 x 200ms）
-        setTimeout(() => doExtract(40), 200);
+        // 最大 500ms + 60 x 400ms = 約24.5秒待つ（フルページ読み込み+データ取得の余裕を持たせる）
+        setTimeout(() => doExtract(60), 500);
     }
 
     // ========================================================
