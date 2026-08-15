@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Purchase Extract
 // @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・待ち時間延長(約24秒)＋診断ログ追加・出品者名欄の遅延読み込み対策で自動スクロール追加）
+// @version      2.4
+// @description  購入履歴（/mypage/purchases）から追跡番号・日付・出品者名・商品代金を抽出し「メルカリ抽出」シートに追記する（実ページ遷移方式・取引画面はiframe埋め込み不可のため・ボタンを右上に集約・中止ボタン追加・出品者名セレクタ修正(aria-labelから抽出)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -62,8 +62,14 @@
         const trackingEl = doc.querySelector('[data-partner-id="tracking-number"] a[data-testid="tracking-url"]');
         if (trackingEl) result.tracking = trackingEl.textContent.trim();
 
-        const sellerEl = doc.querySelector('a[data-testid="seller-link"] p');
-        if (sellerEl) result.seller = sellerEl.textContent.trim();
+        // 出品者名: data-testid="seller-link"はaria-hidden付きのdivについており、
+        // 実際にクリックできる<a>側は aria-label="出品者名, N件のレビュー, ..." という形式を持つ
+        const sellerLinkEl = doc.querySelector('a[data-location="transaction:seller_info"]');
+        if (sellerLinkEl) {
+            const ariaLabel = sellerLinkEl.getAttribute('aria-label') || '';
+            const name = ariaLabel.split(',')[0].trim();
+            if (name) result.seller = name;
+        }
 
         function findRowValue(labelText) {
             const spans = doc.querySelectorAll('span');
