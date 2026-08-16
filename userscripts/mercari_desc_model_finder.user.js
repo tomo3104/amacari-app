@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.73
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加(夜間自動化オーケストレーター連携用)）
+// @version      2.74
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -1073,6 +1073,18 @@
                 dlog(`[計測] ${i + 1}件目まで処理 / 直近50件の平均: ${(batchMs / 50).toFixed(0)}ms/件`);
                 _batchStart = Date.now();
                 flushProcessed(); // 途中リロード・強制終了に備えて定期的に書き戻す
+            }
+
+            // 1メーカー内で100件処理するごとに、フリーズする前に予防的にページをリロードする。
+            // メーカーをまたぐ通常の遷移自体がページを作り直すのでリセットになるが、1メーカー内で
+            // 商品数が多い場合はiframeの生成・破棄がページ遷移を挟まず蓄積し続けるため、その安全網。
+            // リロード後は処理済みIDにより自動的に続きから再開する（ウォッチドッグと同じ復帰経路）。
+            if ((i + 1) % 100 === 0) {
+                dlog(`[予防リロード] ${i + 1}件処理 → メモリ負荷対策のためページを再読み込みします`);
+                flushProcessed();
+                await sleep(500);
+                location.reload();
+                return;
             }
         }
 
