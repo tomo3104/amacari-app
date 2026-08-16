@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.39
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加）
+// @version      3.40
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -599,6 +599,21 @@
         return allItems;
     }
 
+    // 自動起動（?auto_research=）経由だった場合、クローラーリサーチがどのルート（正常完了・
+    // テンプレート再取得失敗・エラー連続3回）で終わっても発掘リサーチへ自動チェーンする。
+    // 以前は正常完了ルートにしか無く、エラー終了だと発掘リサーチが始まらなかった（2026-08-15修正）。
+    function chainToDescFinderIfAuto() {
+        if (localStorage.getItem('autoResearch') === 'true') {
+            localStorage.removeItem('autoResearch');
+            updateStatus('→ 発掘リサーチへ自動移行中...');
+            setTimeout(() => {
+                window.location.href = 'https://jp.mercari.com/?start_desc=ALL';
+            }, 3000);
+            return true;
+        }
+        return false;
+    }
+
     async function runBatchFetch(mfrs, selected) {
         const targets = selected.map(s => s.toUpperCase());
         const allMfrs = [...mfrs, ...STATIC_CATEGORIES];
@@ -658,7 +673,9 @@
                     }
                     updateStatus('テンプレート再取得失敗 → 中断');
                     await postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
-                    running = false; setRunningUI(false); return;
+                    running = false; setRunningUI(false);
+                    chainToDescFinderIfAuto();
+                    return;
                 }
                 errors++;
                 updateStatus(`[${i+1}/${filtered.length}] ${name} エラー(${errors}): ${e.message}`);
@@ -673,6 +690,7 @@
                     await sleep(2000);
                     running = false;
                     setRunningUI(false);
+                    chainToDescFinderIfAuto();
                     return;
                 }
                 await sleep(2000);
@@ -689,15 +707,7 @@
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
-
-        // 自動起動（?auto_research=）経由だった場合、完了後に発掘リサーチへ自動チェーン
-        if (localStorage.getItem('autoResearch') === 'true') {
-            localStorage.removeItem('autoResearch');
-            updateStatus('→ 発掘リサーチへ自動移行中...');
-            setTimeout(() => {
-                window.location.href = 'https://jp.mercari.com/?start_desc=ALL';
-            }, 3000);
-        }
+        chainToDescFinderIfAuto();
     }
 
     // ========== 収集 ==========
