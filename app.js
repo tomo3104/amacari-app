@@ -526,18 +526,48 @@ els.stack.addEventListener("click", e => {
 
 // ---------- コピー操作 ----------
 
+// navigator.clipboardが使えない/失敗する環境向けのフォールバック
+// （iOSのホーム画面PWA=standaloneモードでnavigator.clipboardが使えないケースがあるため2026-08-17追加）
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.top = "0";
+  ta.style.left = "0";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
 els.stack.addEventListener("click", async e => {
   const btn = e.target.closest(".copy-btn");
   if (!btn) return;
   e.stopPropagation();
   const text = btn.dataset.copy || "";
+  let ok = false;
   try {
-    await navigator.clipboard.writeText(text);
-    const original = btn.textContent;
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) ok = legacyCopy(text);
+
+  if (ok) {
+    // btn.textContentだとSVGアイコンの中身が拾えず空文字になり、元アイコンが消えて
+    // 二度と表示されなくなるバグがあったため、innerHTMLで元のマークアップごと保存する
+    const original = btn.innerHTML;
     btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2e7d32" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
     btn.disabled = true;
     setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1200);
-  } catch (e) {
+  } else {
     alert("コピーに失敗しました。");
   }
 });
