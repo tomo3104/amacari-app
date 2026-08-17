@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.5
+// @version      6.6
 // @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -396,6 +396,7 @@
 
         const sp       = new URLSearchParams(new URL(mfrUrl).search);
         const keyword  = sp.get('keyword') || '';
+        const excludeKeyword = sp.get('exclude_keyword') || '';
         const brandIds = sp.get('brand_id') ? sp.get('brand_id').split(',').map(Number) : null;
         const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
         const apiStatus = statusMap[sp.get('status') || 'sold_out'] || 'STATUS_SOLD_OUT';
@@ -409,6 +410,7 @@
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
             sc.keyword = keyword;
+            sc.excludeKeyword = excludeKeyword;
             sc.status  = [apiStatus];
             if (brandIds) sc.brandId = brandIds; else delete sc.brandId;
             const categoryId = sp.get('category_id');

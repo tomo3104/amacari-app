@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.40
+// @version      3.41
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -533,6 +533,7 @@
 
         const sp = new URLSearchParams(new URL(mfrUrl).search);
         const keyword = sp.get('keyword') || '';
+        const excludeKeyword = sp.get('exclude_keyword') || '';
         const brandId = sp.get('brand_id');
         const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
         const apiStatus = statusMap[sp.get('status') || 'on_sale'] || 'STATUS_ON_SALE';
@@ -544,6 +545,7 @@
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
             sc.keyword = keyword;
+            sc.excludeKeyword = excludeKeyword;
             sc.status = [apiStatus];
             const categoryId = sp.get('category_id');
             if (categoryId) { sc.categoryId = categoryId.split(',').map(Number); } else { delete sc.categoryId; }
@@ -614,7 +616,16 @@
         return false;
     }
 
-    async function runBatchFetch(mfrs, selected) {
+    // 「未開封」で絞り込む場合、URLのkeywordパラメータを強制的に上書きする。
+    // メルカリの検索キーワードはタイトルだけでなく商品説明文も対象になるため、
+    // タイトルに書いていない「隠れ未開封品」も拾える（2026-08-17追加）
+    function withUnopenedKeyword(url) {
+        const u = new URL(url);
+        u.searchParams.set('keyword', '未開封');
+        return u.toString();
+    }
+
+    async function runBatchFetch(mfrs, selected, unopenedOnly) {
         const targets = selected.map(s => s.toUpperCase());
         const allMfrs = [...mfrs, ...STATIC_CATEGORIES];
         const filtered = targets.includes('ALL') ? allMfrs : allMfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
@@ -644,7 +655,8 @@
             if (!running) break;
             const mfr = filtered[i];
             const name = mfr.name || mfr;
-            const url = mfr.url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(name)}&${BATCH_CONDITIONS}`;
+            let url = mfr.url || `https://jp.mercari.com/search?keyword=${encodeURIComponent(name)}&${BATCH_CONDITIONS}`;
+            if (unopenedOnly) url = withUnopenedKeyword(url);
             updateStatus(`[${i+1}/${filtered.length}] ${name} fetch中...`);
 
             const mfrStart = Date.now();
@@ -942,6 +954,17 @@
         });
         box.appendChild(list);
 
+        const unopenedWrap = document.createElement('label');
+        unopenedWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:#555; cursor:pointer; margin-bottom:14px; padding-top:8px; border-top:1px solid #eee;';
+        const unopenedCheckbox = document.createElement('input');
+        unopenedCheckbox.type = 'checkbox';
+        unopenedCheckbox.id = 'unopened-only-check';
+        unopenedWrap.appendChild(unopenedCheckbox);
+        const unopenedSpan = document.createElement('span');
+        unopenedSpan.textContent = '「未開封」のみで絞り込む（本文一致も拾う）';
+        unopenedWrap.appendChild(unopenedSpan);
+        box.appendChild(unopenedWrap);
+
         // ALLを選んだら個別グループは自動解除、個別グループを選んだらALLは自動解除
         const allCheckbox = allCheckEl.querySelector('input');
         const groupCheckboxes = groupEls.map(el => el.querySelector('input'));
@@ -980,8 +1003,9 @@
         okBtn.onclick = () => {
             const checked = Array.from(list.querySelectorAll('.group-picker-check:checked')).map(c => c.value);
             const selected = checked.length > 0 ? checked : ['ALL'];
+            const unopenedOnly = unopenedCheckbox.checked;
             overlay.remove();
-            runBatchFetch(mfrs, selected);
+            runBatchFetch(mfrs, selected, unopenedOnly);
         };
     }
 
