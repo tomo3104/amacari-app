@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.41
+// @version      3.49-debug2
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -499,8 +499,72 @@
     kojimaWrap.appendChild(kojimaBtn);
     kojimaWrap.appendChild(kojimaDbgBtn);
     kojimaWrap.appendChild(kojimaStatus);
-    document.body.appendChild(kojimaWrap);
-    document.body.appendChild(container);
+
+    // ページ初期化直後（広告枠の初期化タイミング）に一度だけ、
+    // 見慣れないDOM要素を巻き込んで消す処理が走ることがあるため、
+    // 「見張り役」の要素で危険な時間帯が過ぎるのを確認してから本体を設置する
+    (function mountAfterDangerWindow() {
+        const watch = [
+            ['kojimaWrap', kojimaWrap], ['kojimaBtn', kojimaBtn], ['kojimaDbgBtn', kojimaDbgBtn],
+            ['container', container], ['startBtn', startBtn], ['batchBtn', batchBtn], ['stopBtn', stopBtn],
+        ];
+        let mounted = false;
+
+        // removeChild/MutationObserverでの検知は設置前後どちらでも仕込んでおく（無害）
+        const origRemoveChild = Node.prototype.removeChild;
+        Node.prototype.removeChild = function (child) {
+            const hit = watch.find(([, n]) => n === child);
+            if (hit) { console.warn(`[DEBUG2] removeChildで${hit[0]}が削除 mounted=${mounted}`, performance.now()); console.trace(); }
+            return origRemoveChild.call(this, child);
+        };
+        const mo2 = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                for (const removed of m.removedNodes) {
+                    const hit = watch.find(([, n]) => n === removed);
+                    if (hit) { console.warn(`[DEBUG2][MO] ${hit[0]}がDOMから削除 mounted=${mounted}`, performance.now()); console.trace(); }
+                }
+            }
+        });
+        mo2.observe(document.body, { childList: true, subtree: true });
+
+        // 設置完了後だけ、生存確認ログを出す（設置前の「まだ無い」は正常なので出さない）
+        setInterval(() => {
+            if (!mounted) return;
+            for (const [name, n] of watch) {
+                if (!document.body.contains(n)) console.warn(`[DEBUG2] 生存確認NG: ${name}`, performance.now());
+            }
+        }, 2000);
+
+        const sentinel = document.createElement('div');
+        sentinel.style.cssText = 'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+        document.body.appendChild(sentinel);
+
+        function mountReal() {
+            if (mounted) return;
+            mounted = true;
+            document.body.appendChild(kojimaWrap);
+            document.body.appendChild(container);
+            console.warn('[DEBUG2] 本体を設置しました', performance.now());
+        }
+
+        const mo = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if ([...m.removedNodes].includes(sentinel)) {
+                    mo.disconnect();
+                    setTimeout(mountReal, 500); // 消えたのを確認できたら少し余裕を見て本体を設置
+                    return;
+                }
+            }
+        });
+        mo.observe(document.body, { childList: true });
+
+        // 見張り役が一定時間消えなければ、危険な時間帯は無かったとみなして設置する
+        setTimeout(() => {
+            mo.disconnect();
+            if (document.body.contains(sentinel)) sentinel.remove();
+            mountReal();
+        }, 6000);
+    })();
 
     // ========== 状態 ==========
     let running = false;

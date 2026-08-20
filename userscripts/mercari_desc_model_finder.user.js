@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.74
+// @version      2.75
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -180,6 +180,36 @@
     var _diagLog    = [];
     var _processedSetCache = null; // markProcessed高速化用（ページ読み込み時に一度だけlocalStorageから読み込みSetでキャッシュ）
     var _processedDirty    = false;
+
+    // ページ初期化直後（広告枠の初期化タイミング）に一度だけ、見慣れないDOM要素を
+    // 巻き込んで消す処理が走ることがあるため、「見張り役」で危険な時間帯が
+    // 過ぎるのを確認してからボタン設置処理を呼ぶ（mercari_asin_checker.user.jsと同じ方式）
+    function waitPastDangerWindow(cb) {
+        const sentinel = document.createElement('div');
+        sentinel.style.cssText = 'position:fixed;bottom:0;right:2px;width:1px;height:1px;opacity:0;pointer-events:none;';
+        document.body.appendChild(sentinel);
+        let done = false;
+        function run() {
+            if (done) return;
+            done = true;
+            cb();
+        }
+        const mo = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if ([...m.removedNodes].includes(sentinel)) {
+                    mo.disconnect();
+                    setTimeout(run, 500);
+                    return;
+                }
+            }
+        });
+        mo.observe(document.body, { childList: true });
+        setTimeout(() => {
+            mo.disconnect();
+            if (document.body.contains(sentinel)) sentinel.remove();
+            run();
+        }, 6000);
+    }
 
     // ========================================================
     //  モード判定
@@ -781,7 +811,7 @@
 
         btnContainer.appendChild(searchBtn);
         btnContainer.appendChild(crawlerBtn);
-        document.body.appendChild(btnContainer);
+        waitPastDangerWindow(() => document.body.appendChild(btnContainer));
 
         searchBtn.addEventListener('click', async () => {
             const tpl = _getSharedTpl();
