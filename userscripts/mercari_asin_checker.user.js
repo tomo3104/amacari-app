@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.53-debug
+// @version      3.54
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -152,51 +152,24 @@
     // 死んでいれば/mark-deadでサーバーに通知して該当行を自動却下させる。
     // fire-and-forgetの非同期チェックなので、クローラーの応答速度には影響しない。
     const _origGMXHR = GM_xmlhttpRequest;
-    // HTML内に文言が含まれるかだけで判定すると、生きているページのJSバンドルに
-    // 同じ文言（別の場所で使われるエラーメッセージ等）がたまたま含まれているだけで
-    // 誤って「削除済み」と判定してしまう事故が2026-08-22実機で発生した。
-    // __NEXT_DATA__内の商品データ（item）が実際に取れるかどうかで判定する方が確実
-    // なため、それを優先し、__NEXT_DATA__自体が無い場合のみ文言検索にフォールバックする
-    // （freshness_check.pyのcheck_mercari_status()と同じ考え方）。
-    const DEAD_PAGE_MARKERS = ['このページは存在しません', '商品が見つかりません', 'ページが見つかりません'];
-
-    // (dead, why) を返す。whyは誤判定時の切り分け用デバッグ情報。
-    function _isDeadHtml(html) {
-        const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-        if (!m) {
-            const hit = DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
-            return [hit, 'NEXT_DATA無し' + (hit ? '+文言一致' : '')];
-        }
-        try {
-            const data = JSON.parse(m[1]);
-            const pp   = (data.props || {}).pageProps || {};
-            const item = pp.item || ((pp.initialState || {}).item || {}).detail || {};
-            if (item && Object.keys(item).length > 0) return [false, 'item取得OK(' + Object.keys(item).length + 'キー)'];
-            const hit = DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
-            return [hit, 'item空' + (hit ? '+文言一致' : '')];
-        } catch (e) {
-            const hit = DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
-            return [hit, 'JSON解析失敗:' + e.message + (hit ? '+文言一致' : '')];
-        }
+    // 2026-08-22実機検証で判明：
+    // ・「商品が見つかりません」等の文言はページ全体のJSバンドルに汎用的に埋め込まれて
+    //   おり、生きているページでも100%ヒットする＝判定材料として使えない（廃止）
+    // ・__NEXT_DATA__はメルカリの現行フロントエンドにはもう存在しない（廃止）
+    // ・本物の削除済みページはHTTPステータスが本物の404で、かつ<html id="__next_error__">
+    //   というNext.jsのエラーページ専用マーカーが付く。これが唯一信頼できる判定材料。
+    function _isDeadHtml(status, html) {
+        return status === 404 || html.includes('id="__next_error__"');
     }
 
     function _checkAndMarkDead(mercariUrl) {
         if (!mercariUrl) return;
         // 同一オリジン(jp.mercari.com)への通常のfetchなら、このブラウザの
-        // ログインCookieが確実に付与される（GM_xmlhttpRequestだと乗らない
-        // 場合があるのではという疑いがあるため、2026-08-22に切り替えて検証中）。
+        // ログインCookieが確実に付与される。
         fetch(mercariUrl, { credentials: 'include' })
             .then(res => res.text().then(html => ({ status: res.status, html })))
             .then(({ status, html }) => {
-                const [dead, why] = _isDeadHtml(html);
-                const isDead = status === 404 || dead;
-                const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/);
-                const ogTitleMatch = html.match(/property="og:title"\s+content="([^"]*)"/) ||
-                                     html.match(/content="([^"]*)"\s+property="og:title"/);
-                const matchedMarker = DEAD_PAGE_MARKERS.filter(marker => html.includes(marker));
-                console.log(`[生死確認][診断] title=${titleMatch ? titleMatch[1] : '(無し)'} ogTitle=${ogTitleMatch ? ogTitleMatch[1] : '(無し)'} hasNextData=${html.includes('__NEXT_DATA__')} matchedMarkers=${JSON.stringify(matchedMarker)}`);
-                console.log(`[生死確認] ${mercariUrl} status=${status} dead=${isDead} (${why})`);
-                if (!isDead) return;
+                if (!_isDeadHtml(status, html)) return;
                 _origGMXHR({
                     method: 'POST',
                     url: 'http://localhost:8766/mark-dead',
