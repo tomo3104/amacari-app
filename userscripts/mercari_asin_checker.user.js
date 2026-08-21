@@ -189,8 +189,12 @@
             .then(res => res.text().then(html => ({ status: res.status, html })))
             .then(({ status, html }) => {
                 const [dead, why] = _isDeadHtml(html);
-                console.log(`[生死確認][診断] len=${html.length} 冒頭300字=${html.slice(0, 300)}`);
                 const isDead = status === 404 || dead;
+                const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/);
+                const ogTitleMatch = html.match(/property="og:title"\s+content="([^"]*)"/) ||
+                                     html.match(/content="([^"]*)"\s+property="og:title"/);
+                const matchedMarker = DEAD_PAGE_MARKERS.filter(marker => html.includes(marker));
+                console.log(`[生死確認][診断] title=${titleMatch ? titleMatch[1] : '(無し)'} ogTitle=${ogTitleMatch ? ogTitleMatch[1] : '(無し)'} hasNextData=${html.includes('__NEXT_DATA__')} matchedMarkers=${JSON.stringify(matchedMarker)}`);
                 console.log(`[生死確認] ${mercariUrl} status=${status} dead=${isDead} (${why})`);
                 if (!isDead) return;
                 _origGMXHR({
