@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.50
+// @version      3.51
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -144,6 +144,57 @@
     // ========== ここから jp.mercari.com ==========
 
     const SERVER_URL   = 'http://localhost:8766/check-mercari';
+
+    // ===== 生死確認（ブラウザ側・実ログイン済みセッション）2026-08-22 =====
+    // Python側でChromeの実行中Cookieを読む方式は管理者権限が必要で無人実行の夜間
+    // 自動化と相性が悪く断念した（asin-tools/mercari_cookies.py参照）。代わりに、
+    // ヒット確定直後にこのブラウザ自身（既にログイン済み）でページを開いて生死確認し、
+    // 死んでいれば/mark-deadでサーバーに通知して該当行を自動却下させる。
+    // fire-and-forgetの非同期チェックなので、クローラーの応答速度には影響しない。
+    const _origGMXHR = GM_xmlhttpRequest;
+    const DEAD_PAGE_MARKERS = ['このページは存在しません', '商品が見つかりません', 'ページが見つかりません'];
+
+    function _checkAndMarkDead(mercariUrl) {
+        if (!mercariUrl) return;
+        _origGMXHR({
+            method: 'GET',
+            url: mercariUrl,
+            headers: { 'Accept': 'text/html' },
+            onload: (res) => {
+                const isDead = res.status === 404 ||
+                    DEAD_PAGE_MARKERS.some(marker => (res.responseText || '').includes(marker));
+                if (!isDead) return;
+                _origGMXHR({
+                    method: 'POST',
+                    url: 'http://localhost:8766/mark-dead',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ mercari_url: mercariUrl }),
+                    onload: () => {},
+                    onerror: () => {},
+                });
+            },
+            onerror: () => {}, // ネットワーク一時失敗等は安全側（生きている扱い）に倒して何もしない
+        });
+    }
+
+    // /check-mercariへのPOST呼び出しは複数箇所にあるため、GM_xmlhttpRequest自体を
+    // ラップして一箇所で横断的にフックする（各呼び出し元は変更不要）。
+    GM_xmlhttpRequest = function (opts) {
+        if (opts && opts.method === 'POST' && typeof opts.url === 'string' && opts.url.includes('/check-mercari')) {
+            const origOnload = opts.onload;
+            opts = Object.assign({}, opts, {
+                onload: function (res) {
+                    try {
+                        const result = JSON.parse(res.responseText);
+                        (result.matches || []).forEach(m => _checkAndMarkDead(m.mercari_url));
+                    } catch (e) {}
+                    if (origOnload) origOnload(res);
+                }
+            });
+        }
+        return _origGMXHR(opts);
+    };
+
     // メルカリ検索条件（クローラーリサーチ用）
     const BATCH_CONDITIONS = 'status=on_sale&item_condition_id=1&shipping_payer_id=2';
 
