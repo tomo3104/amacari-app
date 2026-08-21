@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.51
+// @version      3.52
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -152,7 +152,27 @@
     // 死んでいれば/mark-deadでサーバーに通知して該当行を自動却下させる。
     // fire-and-forgetの非同期チェックなので、クローラーの応答速度には影響しない。
     const _origGMXHR = GM_xmlhttpRequest;
+    // HTML内に文言が含まれるかだけで判定すると、生きているページのJSバンドルに
+    // 同じ文言（別の場所で使われるエラーメッセージ等）がたまたま含まれているだけで
+    // 誤って「削除済み」と判定してしまう事故が2026-08-22実機で発生した。
+    // __NEXT_DATA__内の商品データ（item）が実際に取れるかどうかで判定する方が確実
+    // なため、それを優先し、__NEXT_DATA__自体が無い場合のみ文言検索にフォールバックする
+    // （freshness_check.pyのcheck_mercari_status()と同じ考え方）。
     const DEAD_PAGE_MARKERS = ['このページは存在しません', '商品が見つかりません', 'ページが見つかりません'];
+
+    function _isDeadHtml(html) {
+        const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+        if (!m) {
+            return DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+        }
+        try {
+            const data = JSON.parse(m[1]);
+            const pp   = (data.props || {}).pageProps || {};
+            const item = pp.item || ((pp.initialState || {}).item || {}).detail || {};
+            if (item && Object.keys(item).length > 0) return false; // 商品データが取れた＝生きている
+        } catch (e) { /* パース失敗時は下の文言検索にフォールバック */ }
+        return DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+    }
 
     function _checkAndMarkDead(mercariUrl) {
         if (!mercariUrl) return;
@@ -161,8 +181,7 @@
             url: mercariUrl,
             headers: { 'Accept': 'text/html' },
             onload: (res) => {
-                const isDead = res.status === 404 ||
-                    DEAD_PAGE_MARKERS.some(marker => (res.responseText || '').includes(marker));
+                const isDead = res.status === 404 || _isDeadHtml(res.responseText || '');
                 if (!isDead) return;
                 _origGMXHR({
                     method: 'POST',
