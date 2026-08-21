@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.54
+// @version      3.55
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -169,7 +169,9 @@
         fetch(mercariUrl, { credentials: 'include' })
             .then(res => res.text().then(html => ({ status: res.status, html })))
             .then(({ status, html }) => {
-                if (!_isDeadHtml(status, html)) return;
+                const isDead = _isDeadHtml(status, html);
+                console.log(`[生死確認] ${mercariUrl} status=${status} dead=${isDead}`);
+                if (!isDead) return;
                 _origGMXHR({
                     method: 'POST',
                     url: 'http://localhost:8766/mark-dead',
