@@ -189,6 +189,7 @@
             .then(res => res.text().then(html => ({ status: res.status, html })))
             .then(({ status, html }) => {
                 const [dead, why] = _isDeadHtml(html);
+                console.log(`[生死確認][診断] len=${html.length} 冒頭300字=${html.slice(0, 300)}`);
                 const isDead = status === 404 || dead;
                 console.log(`[生死確認] ${mercariUrl} status=${status} dead=${isDead} (${why})`);
                 if (!isDead) return;
