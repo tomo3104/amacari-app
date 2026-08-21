@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.52
+// @version      3.53-debug
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -160,28 +160,37 @@
     // （freshness_check.pyのcheck_mercari_status()と同じ考え方）。
     const DEAD_PAGE_MARKERS = ['このページは存在しません', '商品が見つかりません', 'ページが見つかりません'];
 
+    // (dead, why) を返す。whyは誤判定時の切り分け用デバッグ情報。
     function _isDeadHtml(html) {
         const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
         if (!m) {
-            return DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+            const hit = DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+            return [hit, 'NEXT_DATA無し' + (hit ? '+文言一致' : '')];
         }
         try {
             const data = JSON.parse(m[1]);
             const pp   = (data.props || {}).pageProps || {};
             const item = pp.item || ((pp.initialState || {}).item || {}).detail || {};
-            if (item && Object.keys(item).length > 0) return false; // 商品データが取れた＝生きている
-        } catch (e) { /* パース失敗時は下の文言検索にフォールバック */ }
-        return DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+            if (item && Object.keys(item).length > 0) return [false, 'item取得OK(' + Object.keys(item).length + 'キー)'];
+            const hit = DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+            return [hit, 'item空' + (hit ? '+文言一致' : '')];
+        } catch (e) {
+            const hit = DEAD_PAGE_MARKERS.some(marker => html.includes(marker));
+            return [hit, 'JSON解析失敗:' + e.message + (hit ? '+文言一致' : '')];
+        }
     }
 
     function _checkAndMarkDead(mercariUrl) {
         if (!mercariUrl) return;
-        _origGMXHR({
-            method: 'GET',
-            url: mercariUrl,
-            headers: { 'Accept': 'text/html' },
-            onload: (res) => {
-                const isDead = res.status === 404 || _isDeadHtml(res.responseText || '');
+        // 同一オリジン(jp.mercari.com)への通常のfetchなら、このブラウザの
+        // ログインCookieが確実に付与される（GM_xmlhttpRequestだと乗らない
+        // 場合があるのではという疑いがあるため、2026-08-22に切り替えて検証中）。
+        fetch(mercariUrl, { credentials: 'include' })
+            .then(res => res.text().then(html => ({ status: res.status, html })))
+            .then(({ status, html }) => {
+                const [dead, why] = _isDeadHtml(html);
+                const isDead = status === 404 || dead;
+                console.log(`[生死確認] ${mercariUrl} status=${status} dead=${isDead} (${why})`);
                 if (!isDead) return;
                 _origGMXHR({
                     method: 'POST',
@@ -191,9 +200,8 @@
                     onload: () => {},
                     onerror: () => {},
                 });
-            },
-            onerror: () => {}, // ネットワーク一時失敗等は安全側（生きている扱い）に倒して何もしない
-        });
+            })
+            .catch(() => {}); // ネットワーク一時失敗等は安全側（生きている扱い）に倒して何もしない
     }
 
     // /check-mercariへのPOST呼び出しは複数箇所にあるため、GM_xmlhttpRequest自体を
