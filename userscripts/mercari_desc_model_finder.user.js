@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.76
+// @version      2.77
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -51,6 +51,12 @@
     // ③数字を含むかの判定は正規表現の先読みではなく_isValidModel側の桁数依存チェックに一本化
     // （「TTV437B-D」のように数字がハイフン前だけにあるケースを取りこぼしていたため）。
     const DESC_FALLBACK_RE = /\b([A-Za-z][A-Za-z0-9]{0,7}-[A-Za-z0-9\-]{1,20})\b/gi;
+    // 2026-08-23：ハイフンを含まない型番（例:DRD100・Q413HN）は、タイトル判定の
+    // HAS_MODEL_RE には既に対応パターンがあったが説明文側に無かったため取りこぼして
+    // いた。同じ安全実績のあるパターン（英字1〜3文字+数字3桁以上+英数字）を説明文にも
+    // 適用する。ハイフン前が数字から始まるパターン（電話番号等と紛らわしい）は
+    // 誤爆リスクが高いため今回は見送った。
+    const DESC_FALLBACK_NOHYPHEN_RE = /\b([A-Za-z]{1,3}[0-9]{3,}[A-Za-z0-9]*)\b/g;
 
     // 2026-08-23：「適応機種」「洗濯機型番」等、売られている商品自体ではなく
     // 対応・互換先の別ユニットの型番を示す文脈を検出し、そこに現れるコードは
@@ -88,7 +94,9 @@
     // 型番候補の除外セット・パターン
     const _NON_MODEL = new Set(['WI-FI','USB-A','USB-B','USB-C','TYPE-A','TYPE-B','TYPE-C','HDMI','AC-DC','DC-AC']);
     // 各パターンに$を付けて短い汎用表記のみ除外（TV-5100等の実型番を巻き込まないよう2026-08-15修正）
-    const _NON_MODEL_RE = /^(?:AC-\d{1,2}|DC-\d{1,2}|USB-\d{1,2}|WI-FI\d{1,2}|TV-\d{1,2}|LAN-\d{1,2}|PC-\d{1,2})$/i;
+    // 2026-08-23：ハイフン緩和・ハイフン無し型番の追加に伴い、電圧/電流表記（AC100-240V等）と
+    // 寸法表記（W300XD22XH220MM等）が型番として誤って拾われる実害を確認したため追加。
+    const _NON_MODEL_RE = /^(?:AC-\d{1,2}|DC-\d{1,2}|USB-\d{1,2}|WI-FI\d{1,2}|TV-\d{1,2}|LAN-\d{1,2}|PC-\d{1,2}|AC\d{2,4}(?:-\d{1,4})?V?|DC\d{1,4}V?|\d+MAH|[A-Z]?\d+X[A-Z]?\d+X[A-Z]?\d+\S*|[WDHL]\d{2,4}(?:MM|CM))$/i;
     function _isValidModel(s) {
         if (s.length < 4 || s.length > 25) return false;
         if (_NON_MODEL.has(s)) return false;
@@ -159,15 +167,24 @@
         }
         if (labeled.length > 0) return labeled;
 
-        // フォールバック（最長一致1件のみ）
+        // フォールバック（ハイフンあり・最長一致1件のみ）
         const fbRe = new RegExp(DESC_FALLBACK_RE.source, 'gi');
         const fallback = [];
         while ((m = fbRe.exec(text)) !== null) {
             const c = m[1].toUpperCase();
             if (_isValidModel(c) && !excluded.has(c) && !fallback.includes(c)) fallback.push(c);
         }
-        if (fallback.length === 0) return [];
-        return [fallback.reduce((a, b) => a.length >= b.length ? a : b)];
+        if (fallback.length > 0) return [fallback.reduce((a, b) => a.length >= b.length ? a : b)];
+
+        // フォールバック（ハイフン無し・最長一致1件のみ）
+        const fbNoHyphenRe = new RegExp(DESC_FALLBACK_NOHYPHEN_RE.source, 'g');
+        const fallbackNoHyphen = [];
+        while ((m = fbNoHyphenRe.exec(text)) !== null) {
+            const c = m[1].toUpperCase();
+            if (_isValidModel(c) && !excluded.has(c) && !fallbackNoHyphen.includes(c)) fallbackNoHyphen.push(c);
+        }
+        if (fallbackNoHyphen.length === 0) return [];
+        return [fallbackNoHyphen.reduce((a, b) => a.length >= b.length ? a : b)];
     }
 
     // ===== 実験ログモード（一時検証用。console で localStorage.setItem('desc_experiment_mode','1') で有効化） =====
