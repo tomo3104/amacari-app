@@ -1028,7 +1028,8 @@ function renderStats(items) {
 
   const monthly = aggregateBy(items, date => date.slice(0, 7));
   const daily = aggregateBy(items, date => date.slice(0, 10));
-  renderGoalProgress(monthly);
+  const purchasedOnly = items.filter(item => item.judgment === "購入済み");
+  renderGoalProgress(aggregateBy(purchasedOnly, date => date.slice(0, 7)));
 
   els.statsMonthlyList.innerHTML = monthly.map(agg =>
     renderStatRow(agg, agg.key.replace("-", "年") + "月")
