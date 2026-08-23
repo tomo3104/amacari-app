@@ -412,6 +412,33 @@ body {
   padding: 0;
 }
 
+.goal-progress-bar {
+  background: #e6e9ef;
+  border-radius: 999px;
+  height: 14px;
+  overflow: hidden;
+}
+
+.goal-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4caf50, #8bc34a);
+  border-radius: 999px;
+  width: 0%;
+  transition: width 0.4s ease;
+}
+
+.goal-progress-fill.goal-achieved {
+  background: linear-gradient(90deg, #ff9800, #ffc107);
+}
+
+.goal-progress-text {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--navy);
+  text-align: right;
+}
+
 .stats-row {
   background: white;
   border-radius: 12px;

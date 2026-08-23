@@ -9,7 +9,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
 <header class="topbar">
@@ -100,6 +100,13 @@
     <button id="log-stats-toggle" class="ghost-btn">📊 実績を見る</button>
   </div>
   <div id="log-stats-section" class="hidden">
+    <section class="stats-section">
+      <h2 class="stats-heading">今月の目標</h2>
+      <div class="goal-progress">
+        <div class="goal-progress-bar"><div id="goal-progress-fill" class="goal-progress-fill"></div></div>
+        <div id="goal-progress-text" class="goal-progress-text"></div>
+      </div>
+    </section>
     <section class="stats-section">
       <h2 class="stats-heading">月別累計</h2>
       <ul id="stats-monthly-list" class="stats-list"></ul>
@@ -225,6 +232,6 @@
 
 </style>
 
-<script src="app.js?v=29"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>

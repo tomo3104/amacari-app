@@ -61,6 +61,8 @@ const els = {
   statsMonthlyList: document.getElementById("stats-monthly-list"),
   statsDailyList: document.getElementById("stats-daily-list"),
   statsEmpty: document.getElementById("stats-empty"),
+  goalProgressFill: document.getElementById("goal-progress-fill"),
+  goalProgressText: document.getElementById("goal-progress-text"),
   furimaView: document.getElementById("furima-view"),
   furimaStack: document.getElementById("furima-card-stack"),
   furimaEmpty: document.getElementById("furima-empty-message"),
@@ -939,6 +941,25 @@ function renderRejected(items) {
 // ---------- 実績集計 ----------
 
 const STATS_ROUTE_ORDER = ["AR", "RT", "MR", "FR"];
+const MONTHLY_PROFIT_GOAL = 250000;
+
+function currentMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function renderGoalProgress(monthly) {
+  const key = currentMonthKey();
+  const current = monthly.find(agg => agg.key === key);
+  const profit = current ? current.profit : 0;
+  const pct = Math.min(100, Math.max(0, profit / MONTHLY_PROFIT_GOAL * 100));
+  els.goalProgressFill.style.width = `${pct}%`;
+  els.goalProgressFill.classList.toggle("goal-achieved", profit >= MONTHLY_PROFIT_GOAL);
+  const remain = MONTHLY_PROFIT_GOAL - profit;
+  const remainText = remain > 0 ? `（残り¥${remain.toLocaleString()}）` : "（達成！🎉）";
+  els.goalProgressText.textContent =
+    `¥${profit.toLocaleString()} / ¥${MONTHLY_PROFIT_GOAL.toLocaleString()}（${pct.toFixed(1)}%）${remainText}`;
+}
 
 function aggregateBy(items, keyFn) {
   const map = new Map();
@@ -992,12 +1013,14 @@ function renderStats(items) {
   if (items.length === 0) {
     els.statsEmpty.textContent = "購入済みの商品はまだありません。";
     els.statsEmpty.style.display = "block";
+    renderGoalProgress([]);
     return;
   }
   els.statsEmpty.style.display = "none";
 
   const monthly = aggregateBy(items, date => date.slice(0, 7));
   const daily = aggregateBy(items, date => date.slice(0, 10));
+  renderGoalProgress(monthly);
 
   els.statsMonthlyList.innerHTML = monthly.map(agg =>
     renderStatRow(agg, agg.key.replace("-", "年") + "月")
