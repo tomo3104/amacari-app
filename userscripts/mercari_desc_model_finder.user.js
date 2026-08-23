@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.78
+// @version      2.79
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -1003,6 +1003,11 @@
 
     // 同一オリジンのiframeで商品ページを読み込み、DOMから説明文を取得
     // fetchでは取れない（サーバーがナビゲーションリクエストにのみRSCデータを返すため）
+    // 2026-08-23：戻り値を{desc, reason}に変更し、失敗理由（タイムアウト/削除済み/
+    // クロスオリジン/説明文が短すぎる等）を区別できるようにした。発掘リサーチの
+    // 精度分析で「説明文取得失敗」がメーカーによって極端に偏っている（データシステム93%等）
+    // ことが判明したが、原因が「本当にiframe取得が機能していない」のか「そのメーカーの
+    // 出品は元々説明文がほぼ空欄なだけ」なのか、この理由の区別が無いと切り分けられなかった。
     function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
         dlog(`fetchItemDesc(iframe): ${itemId}`);
@@ -1012,15 +1017,19 @@
             document.body.appendChild(iframe);
 
             let done = false;
-            const finish = result => {
+            let lastSeenShortText = ''; // タイムアウト時、要素はあったが短すぎた場合の最後のテキスト（原因切り分け用）
+            const finish = (desc, reason) => {
                 if (done) return;
                 done = true;
                 try { iframe.remove(); } catch(_) {}
-                resolve(result);
+                resolve({ desc, reason });
             };
 
             // 最大8秒でタイムアウト
-            const hardTimer = setTimeout(() => { dlog(`iframe timeout: ${itemId}`); finish(null); }, 8000);
+            const hardTimer = setTimeout(() => {
+                dlog(`iframe timeout: ${itemId}`);
+                finish(null, lastSeenShortText ? 'desc_too_short' : 'timeout_no_element');
+            }, 8000);
 
             iframe.onload = () => {
                 let tries = 0;
@@ -1036,9 +1045,10 @@
                             clearTimeout(hardTimer);
                             const desc = el.innerText.trim();
                             dlog(`iframe desc: ${desc.slice(0, 50)}`);
-                            finish(desc);
+                            finish(desc, 'ok');
                             return;
                         }
+                        if (el && el.innerText) lastSeenShortText = el.innerText.trim();
 
                         // エラーページ（商品削除）
                         const bodyText = doc.body.innerText || '';
@@ -1046,26 +1056,26 @@
                             clearInterval(poll);
                             clearTimeout(hardTimer);
                             dlog(`iframe: 削除済み商品`);
-                            finish(null);
+                            finish(null, 'deleted');
                             return;
                         }
                     } catch(e) {
                         clearInterval(poll);
                         clearTimeout(hardTimer);
                         dlog(`iframe crossorigin: ${e.message}`);
-                        finish(null);
+                        finish(null, 'crossorigin');
                         return;
                     }
                     if (++tries > 40) { // 40 × 200ms = 8秒
                         clearInterval(poll);
                         clearTimeout(hardTimer);
                         dlog(`iframe: desc待機タイムアウト`);
-                        finish(null);
+                        finish(null, lastSeenShortText ? 'desc_too_short' : 'timeout_no_element');
                     }
                 }, 200);
             };
 
-            iframe.onerror = () => { clearTimeout(hardTimer); dlog(`iframe onerror`); finish(null); };
+            iframe.onerror = () => { clearTimeout(hardTimer); dlog(`iframe onerror`); finish(null, 'onerror'); };
             iframe.src = url;
         });
     }
@@ -1113,7 +1123,7 @@
             showStatus(`${prefix}[${i + 1}/${total}] 説明文フェッチ中...`);
             markProcessed(item.id);
 
-            const desc = await fetchItemDesc(item.url);
+            const { desc, reason } = await fetchItemDesc(item.url);
 
             if (desc && _fetchDiag) {
                 showStatus(`[診断OK] iframe取得成功:「${desc.slice(0, 40)}…」`, 'rgba(0,100,0,0.9)');
@@ -1155,7 +1165,7 @@
                 nullCount++;
                 const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                 showStatus(`${prefix}[${i + 1}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
-                logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: false, desc: '', extracted: '' });
+                logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: false, desc: '', extracted: '', fail_reason: reason });
             }
 
             await sleep(300);
