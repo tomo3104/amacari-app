@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.75
+// @version      2.76
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -39,9 +39,51 @@
     const HAS_MODEL_RE = /\b(?:[A-Z]{2,}-(?=[A-Z0-9]*[0-9])[A-Z0-9]{2,}|[A-Z]{1,3}[0-9]{3,}[A-Z0-9]*)\b/i;
 
     // 説明文から型番を抽出（ラベルあり・全件取得）
-    const DESC_LABEL_RE = /(?:【)?(?:型番|品番|型式|型名|モデル(?:番号|名)?|製品番号|商品番号)(?:】)?[：:\s]+([A-Za-z][A-Za-z0-9\-\/\.]{3,24})/gi;
-    // フォールバック: ダッシュ後に数字を含む（Wi-Fi等の英字のみは_NON_MODELで別途除外）
-    const DESC_FALLBACK_RE = /\b([A-Za-z]{2,5}-(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{3,20})\b/gi;
+    // 2026-08-23：「形式」を追加（「型式」の表記ゆれ・実データで発見）。
+    // 型番の直前に#等の記号が付くケース（例:「型番：#A-1991」）に対応するため、
+    // ラベルと型番本体の間に任意の記号(#等)を許容する。
+    const DESC_LABEL_RE = /(?:【)?(?:型番|品番|型式|形式|型名|モデル(?:番号|名)?|製品番号|商品番号)(?:】)?[：:\s]+[#＃]?([A-Za-z][A-Za-z0-9\-\/\.]{3,24})/gi;
+    // フォールバック: ダッシュを含む型番らしき文字列（Wi-Fi等の英字のみは_NON_MODELで別途除外）
+    // 2026-08-23：①ハイフン前を「英字2〜5文字のみ」から「先頭は英字・以降は英数字混在可・最大8文字」に
+    // 緩和（LIXIL/INAX等の部品番号「A-1991」の英字1文字プレフィックスや、「TTV437B-D」のように
+    // 英字と数字が混在するプレフィックスを取りこぼしていたため）。②ハイフン後（接尾辞）にも
+    // ハイフンを許可し複数区切り（「A-4199-1」等）を1つの型番として取れるようにした。
+    // ③数字を含むかの判定は正規表現の先読みではなく_isValidModel側の桁数依存チェックに一本化
+    // （「TTV437B-D」のように数字がハイフン前だけにあるケースを取りこぼしていたため）。
+    const DESC_FALLBACK_RE = /\b([A-Za-z][A-Za-z0-9]{0,7}-[A-Za-z0-9\-]{1,20})\b/gi;
+
+    // 2026-08-23：「適応機種」「洗濯機型番」等、売られている商品自体ではなく
+    // 対応・互換先の別ユニットの型番を示す文脈を検出し、そこに現れるコードは
+    // 商品自身の型番として採用しない。付属品・消耗品の説明文に本体の型番が
+    // 参考情報として書かれているだけなのに、それを商品自体の型番として誤抽出し、
+    // 高額な本体のASINと誤って紐づく実害を発掘リサーチ精度分析（2026-08-23）で確認した。
+    const COMPAT_CONTEXT_RE = /(?:適応|適合|対応)(?:機種|本体|型番|品番)|(?:洗濯機|冷蔵庫|エアコン|除湿機|加湿器|掃除機|扇風機|レンジ|炊飯器|プリンター|カメラ)(?:型番|品番)/i;
+    const CODE_IN_CONTEXT_RE = /[A-Za-z][A-Za-z0-9\-\/]{2,20}/g;
+
+    // 2026-08-23：当初はトリガー句から200文字先までを一律で除外対象にしていたが、
+    // 「対応機種：iPhone 16 / 15」のすぐ数行後（別の箇条書き）に商品自体の
+    // 「型番：PM-A24AFLGDC」が書かれているケースまで巻き込んで誤って除外してしまう
+    // 実害を確認した。対応機種の一覧は「同じ行」または「トリガー語だけで行が終わり
+    // 中身が次の行に続く」場合に限って次の1行までに限定することで、数行先の
+    // 別の箇条書き（商品自体の型番）を巻き込まないようにした。
+    function _getCompatExcludedCodes(text) {
+        const excluded = new Set();
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const m = COMPAT_CONTEXT_RE.exec(lines[i]);
+            if (!m) continue;
+            let scanText = lines[i].slice(m.index + m[0].length);
+            if (!/[A-Za-z0-9]{3,}/.test(scanText) && i + 1 < lines.length) {
+                scanText += '\n' + lines[i + 1];
+            }
+            const codeRe = new RegExp(CODE_IN_CONTEXT_RE.source, 'g');
+            let cm;
+            while ((cm = codeRe.exec(scanText)) !== null) {
+                excluded.add(cm[0].toUpperCase());
+            }
+        }
+        return excluded;
+    }
 
     // 型番候補の除外セット・パターン
     const _NON_MODEL = new Set(['WI-FI','USB-A','USB-B','USB-C','TYPE-A','TYPE-B','TYPE-C','HDMI','AC-DC','DC-AC']);
@@ -106,12 +148,13 @@
     // 複数の型番候補を返す（ラベルあり：最大3件、フォールバック：最長1件）
     function extractModelsFromDesc(text) {
         text = _normalizeDash(text);
+        const excluded = _getCompatExcludedCodes(text);
         const labeled = [];
         let m;
         const re = new RegExp(DESC_LABEL_RE.source, 'gi');
         while ((m = re.exec(text)) !== null) {
             const c = m[1].toUpperCase();
-            if (_isValidModel(c) && !labeled.includes(c)) labeled.push(c);
+            if (_isValidModel(c) && !excluded.has(c) && !labeled.includes(c)) labeled.push(c);
             if (labeled.length >= 3) break;
         }
         if (labeled.length > 0) return labeled;
@@ -121,7 +164,7 @@
         const fallback = [];
         while ((m = fbRe.exec(text)) !== null) {
             const c = m[1].toUpperCase();
-            if (_isValidModel(c) && !fallback.includes(c)) fallback.push(c);
+            if (_isValidModel(c) && !excluded.has(c) && !fallback.includes(c)) fallback.push(c);
         }
         if (fallback.length === 0) return [];
         return [fallback.reduce((a, b) => a.length >= b.length ? a : b)];
