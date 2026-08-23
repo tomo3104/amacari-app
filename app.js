@@ -1009,6 +1009,14 @@ function renderStatRow(agg, label) {
   `;
 }
 
+const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
+
+function formatDailyLabel(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return `${m}月${d}日（${WEEKDAY_JA[date.getDay()]}）`;
+}
+
 function renderStats(items) {
   if (items.length === 0) {
     els.statsEmpty.textContent = "購入済みの商品はまだありません。";
@@ -1025,7 +1033,7 @@ function renderStats(items) {
   els.statsMonthlyList.innerHTML = monthly.map(agg =>
     renderStatRow(agg, agg.key.replace("-", "年") + "月")
   ).join("");
-  els.statsDailyList.innerHTML = daily.map(agg => renderStatRow(agg, agg.key)).join("");
+  els.statsDailyList.innerHTML = daily.map(agg => renderStatRow(agg, formatDailyLabel(agg.key))).join("");
 }
 
 els.archiveList.addEventListener("click", async e => {
