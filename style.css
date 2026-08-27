@@ -306,7 +306,7 @@ body {
 .link-monotracer  { background: #1976d2; color: white; }
 .link-keepa       { background: #333; color: white; }
 .link-asin-fix    { background: #5c6bc0; color: white; }
-.link-reload      { background: #2e7d32; color: white; }
+.link-check-restriction { background: #ff8f00; color: white; border: none; cursor: pointer; }
 
 .swipe-flag {
   position: absolute;

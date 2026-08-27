@@ -356,7 +356,7 @@ function buildCardEl(card) {
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix no-swipe" data-row="${card.row}">ASIN修正</button>
-        <button class="link-btn link-reload no-swipe">リロード</button>
+        <button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
@@ -411,6 +411,7 @@ function buildFurimaCardEl(card) {
     links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>`);
     links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>`);
     links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
+    links.push(`<button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>`);
   }
 
   el.innerHTML = `
@@ -734,13 +735,39 @@ function finishVerticalSwipe(el, card, direction, source) {
   }, 220);
 }
 
-// ---------- リロード ----------
+// ---------- 出品制限確認 ----------
 
-els.stack.addEventListener("click", e => {
-  if (!e.target.closest(".link-reload")) return;
+async function handleCheckRestrictionClick(e) {
+  const btn = e.target.closest(".link-check-restriction");
+  if (!btn) return;
   e.stopPropagation();
-  loadCards();
-});
+  const asin = btn.dataset.asin;
+  if (!asin) { alert("ASINが取得できませんでした。"); return; }
+  const original = btn.textContent;
+  btn.textContent = "確認中…";
+  btn.disabled = true;
+  try {
+    const res = await fetch(gasUrl("checkRestriction", { asin }));
+    const data = await res.json();
+    if (!data.ok) {
+      alert("確認に失敗しました：" + (data.error || "不明なエラー"));
+    } else if (data.restricted) {
+      alert(`⚠️ 出品制限あり\n理由：${data.reasonCode || "不明"}\n${data.message || ""}`);
+    } else {
+      alert("✅ 出品制限なし（出品可能）");
+    }
+  } catch (err) {
+    alert("確認に失敗しました。通信状況を確認してください。");
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+}
+
+els.stack.addEventListener("click", handleCheckRestrictionClick);
+els.rtStack.addEventListener("click", handleCheckRestrictionClick);
+els.descStack.addEventListener("click", handleCheckRestrictionClick);
+els.furimaStack.addEventListener("click", handleCheckRestrictionClick);
 
 // ---------- ASIN修正 ----------
 
