@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.55
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正）
+// @version      3.56
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -679,6 +679,7 @@
                     price: String(item.price),
                     url: `https://jp.mercari.com/item/${id}`,
                     image: (item.thumbnails && item.thumbnails[0]) || '',
+                    _page: page + 1,
                 };
             });
 
@@ -758,7 +759,7 @@
                 const itemList = Object.values(items);
                 updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
                 totalCollected += itemList.length;
-                const result = await new Promise(resolve => sendToServer(itemList, resolve));
+                const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: name }));
                 totalMatched  += result.n_model_match || 0;
                 totalHits     += (result.matches || []).length;
                 totalNewCands += result.new_candidates_count || 0;
@@ -932,12 +933,12 @@
     }
 
     // ========== サーバー送信 ==========
-    function sendToServer(itemList, onDone) {
+    function sendToServer(itemList, onDone, extra) {
         GM_xmlhttpRequest({
             method:  'POST',
             url:     SERVER_URL,
             headers: { 'Content-Type': 'application/json' },
-            data:    JSON.stringify({ items: itemList }),
+            data:    JSON.stringify(Object.assign({ items: itemList }, extra || {})),
             timeout: 120000,
             onload: function(res) {
                 let result = {};
@@ -1300,7 +1301,7 @@
                     sendToServer(itemList, () => {
                         localStorage.setItem('batchIndex', String(index + 1));
                         setTimeout(goNextBatch, 500);
-                    });
+                    }, { maker: mfr });
                 };
             }, 2000);
         });
