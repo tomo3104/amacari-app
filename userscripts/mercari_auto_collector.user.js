@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.8
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一）
+// @version      6.9
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -65,6 +65,14 @@
         display:none; line-height:1.7; box-shadow:0 2px 10px rgba(0,0,0,0.4);
     `;
     document.body.appendChild(logPanel);
+    // 2026-08-31修正：mountUI関数の本体が書かれておらず「mountUI is not defined」で
+    // ここから後ろの全コード（自動起動チェック・ボタンのクリック登録含む）が実行されなく
+    // なっていた（2026-08-21のコミットで関数呼び出しだけ追加され本体を書き忘れていたバグ）。
+    // 広告の初期化処理でボタン/ログパネルがDOMから消された場合に再設置する。
+    function mountUI() {
+        if (!document.body.contains(container)) document.body.appendChild(container);
+        if (!document.body.contains(logPanel)) document.body.appendChild(logPanel);
+    }
     setInterval(mountUI, 1500);
 
     function addLog(msg, color) {
