@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.57
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加）
+// @version      3.58
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -506,37 +506,48 @@
     const MAX_SCROLL  = 90000;
 
     // ========== UI ==========
+    // 2026-08-30追加：mercari_page1_research.user.js・mercari_desc_model_finder.user.js
+    // それぞれが個別にposition:fixedでボタンを置いていたため、左下に固定ピクセル位置の
+    // ボタンが積み重なり見た目が乱れていた。3スクリプト共通の入れ物（他スクリプトが
+    // 先に作っていればそれを再利用）に集約し、flexboxの自動積み上げに任せることで解消する。
+    function _amacariGetStack() {
+        let el = document.getElementById('amacari-fixed-stack-bl');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'amacari-fixed-stack-bl';
+            el.style.cssText = `
+                position:fixed; bottom:20px; left:20px; z-index:99999;
+                display:flex; flex-direction:column; align-items:flex-start; gap:8px;
+            `;
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
     const container = document.createElement('div');
     container.style.cssText = `
-        position:fixed; bottom:20px; left:20px; z-index:99999;
         display:flex; flex-direction:column; align-items:flex-start; gap:8px;
+        order:30;
     `;
     const statusEl = document.createElement('div');
     statusEl.style.cssText = `
         background:rgba(0,0,0,0.78); color:#fff; padding:6px 14px;
         border-radius:6px; font-size:13px; display:none; max-width:300px; text-align:left;
     `;
+    const _amacariBtnBase = `
+        padding:11px 20px; color:#fff; border:none; border-radius:8px;
+        font-size:14px; font-weight:600; cursor:pointer;
+        box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    `;
     const startBtn = document.createElement('button');
     startBtn.textContent = 'リサーチ';
-    startBtn.style.cssText = `
-        padding:12px 22px; background:#2196F3; color:#fff;
-        border:none; border-radius:6px; font-size:16px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
+    startBtn.style.cssText = _amacariBtnBase + 'background:#2196F3;';
     const stopBtn = document.createElement('button');
     stopBtn.textContent = '中止';
-    stopBtn.style.cssText = `
-        padding:12px 22px; background:#f44336; color:#fff;
-        border:none; border-radius:6px; font-size:16px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3); display:none;
-    `;
+    stopBtn.style.cssText = _amacariBtnBase + 'background:#f44336; display:none;';
     const batchBtn = document.createElement('button');
     batchBtn.textContent = 'クローラーリサーチ';
-    batchBtn.style.cssText = `
-        padding:12px 22px; background:#9C27B0; color:#fff;
-        border:none; border-radius:6px; font-size:14px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
+    batchBtn.style.cssText = _amacariBtnBase + 'background:#9C27B0;';
     container.appendChild(statusEl);
     container.appendChild(startBtn);
     container.appendChild(batchBtn);
@@ -584,7 +595,7 @@
             if (mounted) return;
             mounted = true;
             document.body.appendChild(kojimaWrap);
-            document.body.appendChild(container);
+            _amacariGetStack().appendChild(container);
         }
 
         const mo = new MutationObserver((mutations) => {

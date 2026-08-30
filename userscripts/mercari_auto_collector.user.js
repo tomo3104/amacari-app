@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.7
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知）
+// @version      6.8
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -35,27 +35,20 @@
         background:rgba(0,0,0,0.78); color:#fff; padding:6px 14px;
         border-radius:6px; font-size:13px; display:none; max-width:280px;
     `;
+    const _amacariBtnBase = `
+        padding:11px 20px; color:#fff; border:none; border-radius:8px;
+        font-size:14px; font-weight:600; cursor:pointer;
+        box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    `;
     const startBtn = document.createElement('button');
     startBtn.textContent = 'コレクト';
-    startBtn.style.cssText = `
-        padding:12px 20px; background:#4CAF50; color:#fff;
-        border:none; border-radius:6px; font-size:16px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
+    startBtn.style.cssText = _amacariBtnBase + 'background:#4CAF50;';
     const crawlerBtn = document.createElement('button');
     crawlerBtn.textContent = 'クローラーコレクト';
-    crawlerBtn.style.cssText = `
-        padding:12px 20px; background:#FF6F00; color:#fff;
-        border:none; border-radius:6px; font-size:14px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
+    crawlerBtn.style.cssText = _amacariBtnBase + 'background:#FF6F00;';
     const stopBtn = document.createElement('button');
     stopBtn.textContent = '中止';
-    stopBtn.style.cssText = `
-        padding:12px 20px; background:#f44336; color:#fff;
-        border:none; border-radius:6px; font-size:16px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3); display:none;
-    `;
+    stopBtn.style.cssText = _amacariBtnBase + 'background:#f44336; display:none;';
     container.appendChild(statusEl);
     container.appendChild(startBtn);
     container.appendChild(crawlerBtn);

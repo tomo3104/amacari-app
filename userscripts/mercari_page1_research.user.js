@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.20
-// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加
+// @version      3.21
+// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -612,6 +612,24 @@
 
     // ── UI ───────────────────────────────────────────────────────────────────
 
+    // 2026-08-30追加：mercari_asin_checker.user.js・mercari_desc_model_finder.user.js
+    // それぞれ個別にposition:fixedでボタンを置いていたため、左下に固定ピクセル位置の
+    // ボタンが積み重なり見た目が乱れていた。3スクリプト共通の入れ物（他スクリプトが
+    // 先に作っていればそれを再利用）に集約し、flexboxの自動積み上げに任せることで解消する。
+    function _amacariGetStack() {
+        let el = document.getElementById('amacari-fixed-stack-bl');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'amacari-fixed-stack-bl';
+            el.style.cssText = `
+                position:fixed; bottom:20px; left:20px; z-index:99999;
+                display:flex; flex-direction:column; align-items:flex-start; gap:8px;
+            `;
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
     let $status = null;
 
     function showStatus(msg, bg) {
@@ -691,12 +709,11 @@
             const btn = document.createElement('button');
             btn.id            = 'p1r-btn';
             btn.style.cssText = [
-                'position:fixed', 'bottom:220px', 'left:8px', 'z-index:99998',
-                'padding:7px 12px', 'border:none', 'border-radius:6px',
-                'cursor:pointer', 'font-size:12px', 'font-weight:bold',
-                'color:#fff', 'box-shadow:0 2px 6px rgba(0,0,0,.4)',
+                'padding:9px 16px', 'border:none', 'border-radius:8px',
+                'cursor:pointer', 'font-size:13px', 'font-weight:600',
+                'color:#fff', 'box-shadow:0 2px 6px rgba(0,0,0,.4)', 'order:10',
             ].join(';');
-            document.body.appendChild(btn);
+            _amacariGetStack().appendChild(btn);
 
             const active = ls.get(P1_MODE) === 'search';
             updateBtn(active);

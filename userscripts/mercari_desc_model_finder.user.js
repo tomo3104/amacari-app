@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.80
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充）
+// @version      2.81
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -231,15 +231,32 @@
         return (start > 0 ? '…' : '') + clean(text.slice(start, end)) + (end < text.length ? '…' : '');
     }
 
+    // 2026-08-30追加：mercari_asin_checker.user.js・mercari_page1_research.user.jsと
+    // それぞれ個別にposition:fixedでボタン/ステータスを置いていたため、左下に固定ピクセル
+    // 位置の要素が積み重なり見た目が乱れていた。3スクリプト共通の入れ物（他スクリプトが
+    // 先に作っていればそれを再利用）に集約し、flexboxの自動積み上げに任せることで解消する。
+    function _amacariGetStack() {
+        let el = document.getElementById('amacari-fixed-stack-bl');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'amacari-fixed-stack-bl';
+            el.style.cssText = `
+                position:fixed; bottom:20px; left:20px; z-index:99999;
+                display:flex; flex-direction:column; align-items:flex-start; gap:8px;
+            `;
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
     // ===== ステータスUI（全ページ共通） =====
     const statusEl = document.createElement('div');
     statusEl.style.cssText = `
-        position:fixed; bottom:20px; left:20px; z-index:99999;
         background:rgba(0,0,0,0.80); color:#fff; padding:8px 16px;
         border-radius:8px; font-size:13px; display:none;
-        max-width:360px; font-family:sans-serif; line-height:1.5;
+        max-width:360px; font-family:sans-serif; line-height:1.5; order:20;
     `;
-    document.body.appendChild(statusEl);
+    _amacariGetStack().appendChild(statusEl);
 
     function showStatus(msg, bg) {
         statusEl.style.display = 'block';
@@ -368,10 +385,9 @@
         const stopBtn = document.createElement('button');
         stopBtn.textContent = '照合して終了';
         stopBtn.style.cssText = `
-            position:fixed; bottom:110px; left:20px; z-index:99999;
-            padding:8px 16px; background:#1976D2; color:#fff;
-            border:none; border-radius:6px; font-size:13px; cursor:pointer;
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            padding:9px 16px; background:#1976D2; color:#fff;
+            border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         stopBtn.onclick = () => {
             localStorage.removeItem(CRAWLER_KEY); // クローラーモードも停止
@@ -379,7 +395,7 @@
             stopBtn.remove();
             finishAndSend(null);
         };
-        document.body.appendChild(stopBtn);
+        _amacariGetStack().appendChild(stopBtn);
 
         showStatus(`[${idx + 1}/${total}] 説明文を読み込み中...`);
 
@@ -596,10 +612,9 @@
         const abortBtn = document.createElement('button');
         abortBtn.textContent = 'クローラー中止';
         abortBtn.style.cssText = `
-            position:fixed; bottom:80px; left:20px; z-index:99999;
-            padding:8px 14px; background:#B71C1C; color:#fff;
-            border:none; border-radius:6px; font-size:12px; cursor:pointer;
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            padding:9px 16px; background:#B71C1C; color:#fff;
+            border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         abortBtn.onclick = () => {
             localStorage.removeItem(CRAWLER_KEY);
@@ -608,17 +623,16 @@
             if (_crawlerPauseBtn) { _crawlerPauseBtn.remove(); _crawlerPauseBtn = null; }
             finishAndSend(null);
         };
-        document.body.appendChild(abortBtn);
+        _amacariGetStack().appendChild(abortBtn);
 
         // 一時停止ボタン（現メーカー完了後に停止・CRAWLER_KEYは保持→再開可能）
         _pauseRequested  = false;
         _crawlerPauseBtn = document.createElement('button');
         _crawlerPauseBtn.textContent = '一時停止';
         _crawlerPauseBtn.style.cssText = `
-            position:fixed; bottom:120px; left:20px; z-index:99999;
-            padding:8px 14px; background:#E65100; color:#fff;
-            border:none; border-radius:6px; font-size:12px; cursor:pointer;
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            padding:9px 16px; background:#E65100; color:#fff;
+            border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         _crawlerPauseBtn.onclick = () => {
             _pauseRequested = true;
@@ -626,7 +640,7 @@
             _crawlerPauseBtn.disabled = true;
             _crawlerPauseBtn.style.background = '#9E9E9E';
         };
-        document.body.appendChild(_crawlerPauseBtn);
+        _amacariGetStack().appendChild(_crawlerPauseBtn);
 
         showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — テンプレート待機中...`);
 
@@ -794,15 +808,15 @@
 
         const btnContainer = document.createElement('div');
         btnContainer.style.cssText = `
-            position:fixed; bottom:130px; left:20px; z-index:99999;
             display:flex; flex-direction:column; align-items:flex-start; gap:8px;
+            order:20;
         `;
 
         const searchBtn = document.createElement('button');
         searchBtn.textContent = '説明文リサーチ（現在の検索）';
         searchBtn.style.cssText = `
-            padding:12px 18px; background:#C49A00; color:#fff;
-            border:none; border-radius:6px; font-size:14px;
+            padding:11px 20px; background:#C49A00; color:#fff;
+            border:none; border-radius:8px; font-size:14px; font-weight:600;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
 
@@ -820,7 +834,7 @@
                     resumeBtn.textContent = `途中から再開 (${resumeIdx + 1}/${totalItems}件目 取得済:${savedResults}件)`;
                     resumeBtn.style.cssText = `
                         padding:10px 16px; background:#1565C0; color:#fff;
-                        border:none; border-radius:6px; font-size:13px;
+                        border:none; border-radius:8px; font-size:13px; font-weight:600;
                         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
                     `;
                     resumeBtn.onclick = () => {
@@ -841,7 +855,7 @@
             retryBtn.textContent = `照合して送信（保存済み${savedResults.length}件）`;
             retryBtn.style.cssText = `
                 padding:10px 16px; background:#B71C1C; color:#fff;
-                border:none; border-radius:6px; font-size:13px;
+                border:none; border-radius:8px; font-size:13px; font-weight:600;
                 cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
             `;
             retryBtn.onclick = () => { retryBtn.remove(); finishAndSend(null); };
@@ -851,8 +865,8 @@
         const crawlerBtn = document.createElement('button');
         crawlerBtn.textContent = '発掘クローラー（全メーカー巡回）';
         crawlerBtn.style.cssText = `
-            padding:12px 18px; background:#6A1B9A; color:#fff;
-            border:none; border-radius:6px; font-size:14px;
+            padding:11px 20px; background:#6A1B9A; color:#fff;
+            border:none; border-radius:8px; font-size:14px; font-weight:600;
             cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
         `;
         crawlerBtn.addEventListener('click', () => {
@@ -872,7 +886,7 @@
                     resumeCrawlerBtn.textContent = `クローラー再開 (${ec.currentIdx + 1}/${ec.makers.length}件目: ${ec.makers[ec.currentIdx].name})`;
                     resumeCrawlerBtn.style.cssText = `
                         padding:10px 16px; background:#4A148C; color:#fff;
-                        border:none; border-radius:6px; font-size:13px;
+                        border:none; border-radius:8px; font-size:13px; font-weight:600;
                         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
                     `;
                     resumeCrawlerBtn.onclick = () => {
@@ -886,7 +900,7 @@
 
         btnContainer.appendChild(searchBtn);
         btnContainer.appendChild(crawlerBtn);
-        waitPastDangerWindow(() => document.body.appendChild(btnContainer));
+        waitPastDangerWindow(() => _amacariGetStack().appendChild(btnContainer));
 
         searchBtn.addEventListener('click', async () => {
             const tpl = _getSharedTpl();
@@ -1103,26 +1117,24 @@
         const stopBtn = document.createElement('button');
         stopBtn.textContent = '中止';
         stopBtn.style.cssText = `
-            position:fixed; bottom:80px; left:20px; z-index:99999;
-            padding:8px 14px; background:#B71C1C; color:#fff;
-            border:none; border-radius:6px; font-size:12px; cursor:pointer;
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            padding:9px 16px; background:#B71C1C; color:#fff;
+            border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         stopBtn.onclick = () => { _abortFetch = true; stopBtn.remove(); logBtn.remove(); };
-        document.body.appendChild(stopBtn);
+        _amacariGetStack().appendChild(stopBtn);
 
         const logBtn = document.createElement('button');
         logBtn.textContent = 'ログコピー';
         logBtn.style.cssText = `
-            position:fixed; bottom:120px; left:20px; z-index:99999;
-            padding:6px 12px; background:#333; color:#fff;
-            border:none; border-radius:6px; font-size:11px; cursor:pointer;
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            padding:7px 14px; background:#333; color:#fff;
+            border:none; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         logBtn.onclick = () => {
             navigator.clipboard.writeText(_diagLog.join('\n')).then(() => { logBtn.textContent = 'コピー済!'; });
         };
-        document.body.appendChild(logBtn);
+        _amacariGetStack().appendChild(logBtn);
 
         let nullCount = 0;
         let makerHits = 0;
