@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.7
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示
+// @version      1.8
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -58,19 +58,30 @@
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     // ===== PayPayフリマ API fetch（出品中・新品・価格帯はmfrURLから取得）=====
-    async function fetchPayPayItems(mfrName, priceMin, priceMax) {
+    // 2026-08-31追加：yahooBrandIdが分かっているメーカーはbrandIds指定で検索する
+    // （キーワード検索だと同名異業種の商品が混入するため。実測でASIN不一致率が
+    // メルカリの約3倍だった精度問題への対策）。無ければ従来のキーワード検索にフォールバック。
+    // sort=openTime&order=desc（新着順）も追加：指定無しだと新着優先にならず、
+    // 取得件数の上限内で古い出品ばかり拾ってしまうことが実測で判明したため。
+    async function fetchPayPayItems(mfrName, priceMin, priceMax, yahooBrandId) {
         const allItems = {};
         let offset = 0;
         let totalAvailable = null;
 
         for (let page = 0; page < MAX_PAGE; page++) {
             const params = new URLSearchParams({
-                query:    mfrName,
                 minPrice: String(priceMin),
                 maxPrice: String(priceMax),
                 results:  '100',
                 offset:   String(offset),
+                sort:     'openTime',
+                order:    'desc',
             });
+            if (yahooBrandId) {
+                params.append('brandIds', yahooBrandId);
+            } else {
+                params.append('query', mfrName);
+            }
             params.append('itemStatuses', 'NEW');
             params.append('statuses', 'OPEN');
             const url = `https://paypayfleamarket.yahoo.co.jp/api/v1/search?${params}`;
@@ -216,7 +227,7 @@
             updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ¥${priceMin}〜¥${priceMax} fetch中...`);
 
             try {
-                const fetched = await fetchPayPayItems(mfr.name, priceMin, priceMax);
+                const fetched = await fetchPayPayItems(mfr.name, priceMin, priceMax, mfr.yahoo_brand_id);
                 errors = 0;
                 const itemList = Object.values(fetched);
                 totalCollected += itemList.length;
