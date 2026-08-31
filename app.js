@@ -8,11 +8,25 @@ function gasUrl(action, params) {
 
 // GASはCORSプリフライト(OPTIONS)を処理できないため、
 // POSTは text/plain で送ってブラウザに preflight を発生させない
-function gasPost(action, body) {
-  return fetch(gasUrl(action), {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+//
+// 2026-08-31追加：スマホでのスワイプ中に画面ロック・回線切替（WiFi⇔4G）等で
+// fetch自体が失敗するケースがあり、以前はリトライなしで即「保存に失敗しました」
+// 表示になっていた。writeJudgment側は毎回シートの現在値を読んでから書き込む
+// 作りのため多重送信しても壊れない。ここで最大2回まで自動再送してから諦める。
+async function gasPost(action, body, attempt) {
+  attempt = attempt || 1;
+  try {
+    return await fetch(gasUrl(action), {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (attempt < 3) {
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      return gasPost(action, body, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 const state = {
