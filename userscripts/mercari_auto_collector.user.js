@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.10
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加）
+// @version      6.11
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -476,7 +476,13 @@
 
             (data.items || []).forEach(item => {
                 const id = item.id || item.itemId;
-                if (id && item.name && item.price != null) allItems[id] = { name: item.name, price: String(item.price) };
+                if (id && item.name && item.price != null) {
+                    // 2026-08-31追加：新規メーカー自動発掘のため、APIが返すitemBrand(id/name)も
+                    // 一緒に保持しておく（_testFetchBrand調査で存在を確認済み）
+                    const b = item.itemBrand;
+                    const brand = (b && b.id) ? { id: String(b.id), name: b.name || '' } : null;
+                    allItems[id] = { name: item.name, price: String(item.price), brand };
+                }
             });
 
             const cnt = Object.keys(allItems).length;
@@ -542,7 +548,8 @@
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
                 // サーバーに進捗通知（新規型番候補カウント用にitemsも送る）
-                const itemsForLog = Object.values(fetched).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
+                // 2026-08-31追加：brandも送信し、新規メーカー自動発掘（brand_discovery.json）に使う
+                const itemsForLog = Object.values(fetched).map(it => ({ name: it.name, price: Number(it.price) || 0, brand: it.brand || null }));
                 GM_xmlhttpRequest({
                     method: 'POST', url: 'http://localhost:8765/log-progress',
                     headers: { 'Content-Type': 'application/json' },
