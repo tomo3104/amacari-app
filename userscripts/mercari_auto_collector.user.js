@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.9
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消）
+// @version      6.10
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -391,6 +391,37 @@
             return s ? JSON.parse(s) : null;
         } catch(e) { return null; }
     }
+
+    // 2026-08-31追加：メルカリ検索APIのレスポンスに商品ごとのブランド情報(brand.id等)が
+    // 含まれているかを調査するための一時的なテスト関数。ブラウザのコンソールから
+    // 手動で _testFetchBrand(3908) のように呼び出して使う（3908=エレコムの実績あるbrand_id）。
+    // 調査が終わったら削除してよい。
+    _uw._testFetchBrand = async function(brandId) {
+        const tpl = _getSharedTpl();
+        if (!tpl) {
+            console.log('[_testFetchBrand] テンプレート未取得。先にクローラーコレクトを1回動かすか、少し待ってから再実行してください。');
+            return;
+        }
+        const bodyObj = JSON.parse(tpl.body);
+        bodyObj.searchCondition = bodyObj.searchCondition || {};
+        bodyObj.searchCondition.brandId = [Number(brandId)];
+        bodyObj.searchCondition.status = ['STATUS_SOLD_OUT'];
+        delete bodyObj.searchCondition.categoryId;
+        delete bodyObj.searchCondition.priceMin;
+        delete bodyObj.searchCondition.priceMax;
+        bodyObj.pageToken = '';
+        bodyObj.pageSize = 3;
+        const res = await fetch(tpl.url, {
+            method: tpl.method,
+            headers: tpl.headers,
+            credentials: 'include',
+            body: JSON.stringify(bodyObj),
+        });
+        const data = await res.json();
+        console.log('[_testFetchBrand] items件数:', (data.items || []).length);
+        console.log('[_testFetchBrand] 1件目の生データ（この中にbrandという項目があるか確認）:');
+        console.log(JSON.stringify(data.items && data.items[0], null, 2));
+    };
 
     async function fetchCollectorItems(mfrUrl, ctx) {
         const tpl = _getSharedTpl();
