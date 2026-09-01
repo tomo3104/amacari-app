@@ -35,6 +35,8 @@ const state = {
   lastRejected: null,   // 巻き戻し用：直前に却下したカード
   pendingReject: null,  // 理由選択待ちのカード
   pendingRejectSource: "amacari", // 理由選択待ちカードの種類："amacari" or "furima"
+  pendingPurchase: null,  // 仕入れ状況選択待ちのカード（2026-09-02追加：右スワイプ時に仕入確定/仕入候補/キャンセルを選ばせる）
+  pendingPurchaseSource: "amacari",
   skipStack: [],        // 後回し（上スワイプ）したカードのスタック：下スワイプで呼び戻す
   swipeBlocked: false,  // 理由選択中はスワイプ不可
   pendingAsinFix: null, // ASIN修正待ちのカード
@@ -641,7 +643,9 @@ function attachSwipe(el, card, source) {
     const threshold = 100;
     const absX = Math.abs(dx), absY = Math.abs(dy);
     if (absX >= absY && absX > threshold) {
-      if (dx < 0) state.swipeBlocked = true; // 左スワイプ確定→理由選択まで次をブロック
+      // 2026-09-02修正：右スワイプも仕入れ状況モーダルが出るようになったため、
+      // 左右どちらも選択が終わるまで次のスワイプをブロックする
+      state.swipeBlocked = true;
       finishSwipe(el, card, dx > 0 ? "right" : "left", source);
     } else if (absY > absX && absY > threshold) {
       const dir = dy < 0 ? "up" : "down";
@@ -701,7 +705,7 @@ function finishSwipe(el, card, direction, source) {
       state.cards = state.cards.filter(c => c.row !== card.row);
     }
     if (direction === "right") {
-      judge(card, "仕入れ対象", "", source);
+      openPurchaseModal(card, source);
     } else {
       openReasonModal(card, source);
     }
@@ -924,6 +928,53 @@ els.otherSubmit.addEventListener("click", () => {
   const text = els.otherText.value.trim() || "その他";
   closeReasonModal();
   if (card) judge(card, "却下", text, source);
+});
+
+// ---------- 仕入れ状況モーダル（2026-09-02追加） ----------
+// 右スワイプ直後に「仕入確定／仕入候補／キャンセル」を選ばせる。
+// 「儲かりそうだが即決できない」商品が却下理由(利益少ない等)に紛れ込んでいた問題への対応。
+// 仕入確定→即「購入済み」、仕入候補→「仕入れ対象」＋理由欄に「仕入候補」タグを付与し、
+// 仕入候補タブ側で後から見分けられるようにする。既存のjudge()をそのまま使うため
+// GAS側の変更は不要（judgment/reason列に書き込むだけの汎用APIのため）。
+
+function openPurchaseModal(card, source) {
+  state.pendingPurchase = card;
+  state.pendingPurchaseSource = source || "amacari";
+  document.getElementById("purchase-modal").classList.remove("hidden");
+}
+
+function closePurchaseModal() {
+  state.pendingPurchase = null;
+  state.swipeBlocked = false;
+  document.getElementById("purchase-modal").classList.add("hidden");
+}
+
+document.getElementById("purchase-confirm-btn").addEventListener("click", () => {
+  const card = state.pendingPurchase;
+  const source = state.pendingPurchaseSource;
+  closePurchaseModal();
+  if (card) judge(card, "購入済み", "", source);
+});
+
+document.getElementById("purchase-candidate-btn").addEventListener("click", () => {
+  const card = state.pendingPurchase;
+  const source = state.pendingPurchaseSource;
+  closePurchaseModal();
+  if (card) judge(card, "仕入れ対象", "仕入候補", source);
+});
+
+document.getElementById("purchase-cancel-btn").addEventListener("click", () => {
+  const card = state.pendingPurchase;
+  const source = state.pendingPurchaseSource;
+  closePurchaseModal();
+  if (!card) return;
+  // 判定せずカードを山の先頭に戻す
+  const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : "cards";
+  state[cardsKey].unshift(card);
+  if (source === "furima") renderFurimaStack();
+  else if (source === "desc") renderDescStack();
+  else if (source === "rt") renderRtStack();
+  else renderStack();
 });
 
 // ---------- アーカイブ ----------
