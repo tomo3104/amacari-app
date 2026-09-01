@@ -516,6 +516,37 @@ body {
   padding: 10px;
 }
 
+/* 仕入れ状況モーダル（2026-09-02追加：却下理由の小さいグリッドをそのまま
+   流用したら2個だけ配置されて余白が中途半端＋色も却下用グレーで違和感があった
+   ため専用スタイルに分離） */
+.purchase-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.purchase-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.purchase-btn--confirm {
+  background: #2e7d32;
+  border: none;
+  color: white;
+}
+
+.purchase-btn--candidate {
+  background: #fff3e0;
+  border: 1.5px solid #ffb74d;
+  color: #e65100;
+}
+
 .reason-cancel-btn {
   display: block;
   width: 100%;
