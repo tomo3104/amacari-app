@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.82
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加）
+// @version      2.83
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe取得を3並列化して所要時間短縮を試験）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -1163,23 +1163,34 @@
         let makerHits = 0;
         let _batchStart = Date.now(); // 処理が長時間にわたって重くなっていないかを確認するための簡易計測（dlog修正の効果検証用）
 
-        for (let i = 0; i < total; i++) {
-            if (_abortFetch) break;
+        // 2026-09-02追加：iframe1件ずつの逐次処理が所要時間の支配的要因だったため、
+        // DESC_WORKERS件を並列で処理するワーカープール方式に変更（体感3倍程度を狙う）。
+        // ・markProcessed/bumpDescStats/results書き込みはいずれもawaitを挟まない同期処理なので
+        //   JSのシングルスレッド特性上、複数ワーカーが「同時に」実行しても競合しない
+        // ・_fetchDiag診断表示だけは元コードがフラグ反転をawait後に行っていたため、並列実行だと
+        //   複数ワーカーが同時に診断表示に入ってしまう潜在バグがあった。反転をawaitより前に
+        //   移動して対処（このタイミングで気づいたので併せて修正）
+        // ・100件ごとの予防的リロードは、他ワーカーの処理中アイテムを打ち切らないよう、
+        //   全ワーカーが「次のアイテムを取らずに」自然停止してからリロードする方式にした
+        const DESC_WORKERS = 3;
+        let completedCount = 0;
+        let nextIndex = 0;
+        let stopReason = null; // null | 'abort' | 'reload'
 
-            const item = noModelItems[i];
-            showStatus(`${prefix}[${i + 1}/${total}] 説明文フェッチ中...`);
+        async function processOne(item, displayIndex) {
+            showStatus(`${prefix}[${displayIndex}/${total}] 説明文フェッチ中...`);
             markProcessed(item.id);
 
             const { desc, reason } = await fetchItemDesc(item.url);
 
             if (desc && _fetchDiag) {
+                _fetchDiag = false; // 先に倒してから表示（並列実行時の二重発火防止）
                 showStatus(`[診断OK] iframe取得成功:「${desc.slice(0, 40)}…」`, 'rgba(0,100,0,0.9)');
                 await sleep(2000);
-                _fetchDiag = false;
             } else if (!desc && _fetchDiag) {
+                _fetchDiag = false;
                 showStatus(`[診断] iframeで取得失敗（CSPブロックの可能性）`, '#b71c1c');
                 await sleep(2000);
-                _fetchDiag = false;
             }
 
             if (desc) {
@@ -1201,28 +1212,29 @@
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     const tag = isBundle ? '【セット】' : '';
                     makerHits++;
-                    showStatus(`${prefix}[${i + 1}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
-                    dlog(`▶ ヒット [${i + 1}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${results.length}件`);
+                    showStatus(`${prefix}[${displayIndex}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
+                    dlog(`▶ ヒット [${displayIndex}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${results.length}件`);
                     if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL), makerName);
                     await sleep(isCrawlerMode ? 500 : 2000); // クローラー時は短縮
                 } else {
                     const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                    showStatus(`${prefix}[${i + 1}/${total}] 型番なし（累計: ${cnt}件）`);
+                    showStatus(`${prefix}[${displayIndex}/${total}] 型番なし（累計: ${cnt}件）`);
                 }
             } else {
                 nullCount++;
                 bumpDescStats({ fetchFail: 1 });
                 const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                showStatus(`${prefix}[${i + 1}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
+                showStatus(`${prefix}[${displayIndex}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
                 logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: false, desc: '', extracted: '', fail_reason: reason });
             }
 
             await sleep(300);
 
+            completedCount++;
             // 50件ごとに直近バッチの平均処理時間を記録（件数が増えても重くなっていないかの確認用）
-            if ((i + 1) % 50 === 0) {
+            if (completedCount % 50 === 0) {
                 const batchMs = Date.now() - _batchStart;
-                dlog(`[計測] ${i + 1}件目まで処理 / 直近50件の平均: ${(batchMs / 50).toFixed(0)}ms/件`);
+                dlog(`[計測] ${completedCount}件目まで処理 / 直近50件の平均: ${(batchMs / 50).toFixed(0)}ms/件`);
                 _batchStart = Date.now();
                 flushProcessed(); // 途中リロード・強制終了に備えて定期的に書き戻す
             }
@@ -1231,13 +1243,31 @@
             // メーカーをまたぐ通常の遷移自体がページを作り直すのでリセットになるが、1メーカー内で
             // 商品数が多い場合はiframeの生成・破棄がページ遷移を挟まず蓄積し続けるため、その安全網。
             // リロード後は処理済みIDにより自動的に続きから再開する（ウォッチドッグと同じ復帰経路）。
-            if ((i + 1) % 100 === 0) {
-                dlog(`[予防リロード] ${i + 1}件処理 → メモリ負荷対策のためページを再読み込みします`);
-                flushProcessed();
-                await sleep(500);
-                location.reload();
-                return;
+            // 並列化に伴い、ここでは即リロードせず「他ワーカーも次を取らない」フラグだけ立てる。
+            // 実際のリロードは全ワーカーが自然停止した後（Promise.all後）に行う。
+            if (completedCount % 100 === 0 && !stopReason) {
+                dlog(`[予防リロード] ${completedCount}件処理 → メモリ負荷対策のためページを再読み込みします`);
+                stopReason = 'reload';
             }
+        }
+
+        async function worker() {
+            while (true) {
+                if (_abortFetch) { stopReason = stopReason || 'abort'; return; }
+                if (stopReason) return;
+                const idx = nextIndex++;
+                if (idx >= total) return;
+                await processOne(noModelItems[idx], idx + 1);
+            }
+        }
+
+        await Promise.all(Array.from({ length: DESC_WORKERS }, worker));
+
+        if (stopReason === 'reload') {
+            flushProcessed();
+            await sleep(500);
+            location.reload();
+            return;
         }
 
         flushProcessed(); // ページ遷移前に必ず書き戻す
