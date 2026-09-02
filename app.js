@@ -1146,7 +1146,14 @@ els.archiveList.addEventListener("click", async e => {
     } else if (action === "reject-archive") {
       await gasPost("judge", { row, judgment: "却下", reason: "キャンセル" });
     }
-    loadArchive();
+    // 2026-09-02修正：判定ごとに一覧全体をloadArchive()で読み直していたため、
+    // 件数が増えるほど1件処理するたびに待たされていた。書き込みは既に成功しているので、
+    // 該当行だけDOMから消せば十分（サーバーへの再問い合わせ・全件再描画は不要）。
+    li.remove();
+    if (!els.archiveList.children.length) {
+      els.archiveEmpty.textContent = "アーカイブされた商品はまだありません。";
+      els.archiveEmpty.style.display = "block";
+    }
   } catch (e) {
     btn.disabled = false;
     btn.textContent = original;
@@ -1170,7 +1177,12 @@ els.autoRejectedList.addEventListener("click", async e => {
     } else if (action === "confirm") {
       await gasPost("confirmAutoRejected", { row, reason });
     }
-    loadRejected();
+    // 2026-09-02修正：archiveList側と同じ理由で、全件再読み込みではなく該当行の除去のみ
+    li.remove();
+    if (!els.autoRejectedList.children.length) {
+      els.archiveEmpty.textContent = "却下された商品はありません。";
+      els.archiveEmpty.style.display = "block";
+    }
   } catch (e) {
     btn.disabled = false;
     btn.textContent = original;
