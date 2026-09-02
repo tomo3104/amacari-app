@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.11
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応）
+// @version      6.12
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -481,7 +481,12 @@
                     // 一緒に保持しておく（_testFetchBrand調査で存在を確認済み）
                     const b = item.itemBrand;
                     const brand = (b && b.id) ? { id: String(b.id), name: b.name || '' } : null;
-                    allItems[id] = { name: item.name, price: String(item.price), brand };
+                    // 2026-09-02追加：クローラーリサーチ側と同じ「何ページ目で新規発見が尽きるか」の
+                    // 分析をコレクト側でも行うため、urlと_pageも保持する
+                    allItems[id] = {
+                        name: item.name, price: String(item.price), brand,
+                        url: `https://jp.mercari.com/item/${id}`, _page: page + 1,
+                    };
                 }
             });
 
@@ -549,7 +554,11 @@
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
                 // サーバーに進捗通知（新規型番候補カウント用にitemsも送る）
                 // 2026-08-31追加：brandも送信し、新規メーカー自動発掘（brand_discovery.json）に使う
-                const itemsForLog = Object.values(fetched).map(it => ({ name: it.name, price: Number(it.price) || 0, brand: it.brand || null }));
+                // 2026-09-02追加：url/_pageも送信し、クロール深度分析（[ページ深度]/[収集深度]）に使う
+                const itemsForLog = Object.values(fetched).map(it => ({
+                    name: it.name, price: Number(it.price) || 0, brand: it.brand || null,
+                    url: it.url || '', _page: it._page || 0,
+                }));
                 GM_xmlhttpRequest({
                     method: 'POST', url: 'http://localhost:8765/log-progress',
                     headers: { 'Content-Type': 'application/json' },
