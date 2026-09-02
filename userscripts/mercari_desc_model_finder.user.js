@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.83
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe取得を3並列化して所要時間短縮を試験）
+// @version      2.84
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe取得を3並列化して所要時間短縮を試験・実測に基づきiframeタイムアウトを8秒→5秒に短縮）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -1074,11 +1074,14 @@
                 resolve({ desc, reason });
             };
 
-            // 最大8秒でタイムアウト
+            // 2026-09-02実測：614件の並列テストで実際に説明文が取れたケースは
+            // ほぼ1〜5秒以内に返ってきており、8秒ギリギリまでかかって成功した例は
+            // 見当たらなかった（約3割がタイムアウトし、そのぶん並列化の効果を
+            // 大きく削っていた）。安全側に倒して5秒に短縮。
             const hardTimer = setTimeout(() => {
                 dlog(`iframe timeout: ${itemId}`);
                 finish(null, lastSeenShortText ? 'desc_too_short' : 'timeout_no_element');
-            }, 8000);
+            }, 5000);
 
             iframe.onload = () => {
                 let tries = 0;
