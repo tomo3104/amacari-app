@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.58
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消）
+// @version      3.59
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -656,7 +656,12 @@
         const allItems = {};
         let pageToken = '';
 
-        for (let page = 0; page < 20; page++) {
+        // 2026-09-02修正：140社・536回分の[ページ深度]ログを集計した結果、新規発見の
+        // 頭打ちページは中央値1ページ目・90パーセンタイルでも7ページ目だった（20ページ目まで
+        // 律儀に掘っても大半のメーカーで8ページ目以降はほぼ何も新規発見していなかった）。
+        // 所要時間短縮のため20→8ページに削減。
+        const MAX_PAGES_RESEARCH = 8;
+        for (let page = 0; page < MAX_PAGES_RESEARCH; page++) {
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
             sc.keyword = keyword;
