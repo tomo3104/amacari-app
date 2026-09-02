@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.81
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消）
+// @version      2.82
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -29,7 +29,19 @@
     const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
     const DIAG_LOG_MAX        = 200;                     // _diagLog上限（dlog()参照用。クローラーモードのページは冒頭で早期returnするため、
                                                            // この定数は他のconstと同じ場所（早期returnより前）で必ず初期化しておく必要がある
+    const DESC_STATS_KEY      = 'desc_crawler_stats';     // 2026-09-02追加：発掘クローラー全体の内訳（収集→型番なし候補→抽出成功→説明文取得失敗）を
+                                                           // メーカーをまたいで集計するためのカウンター。ページ遷移のたびに変数がリセットされるため
+                                                           // localStorageで永続化する（RESULT_KEY等と同じパターン）
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+    // 発掘クローラーの内訳カウンターを加算する（delta例：{collected:12, noModel:5}）
+    function bumpDescStats(delta) {
+        let s;
+        try { s = JSON.parse(localStorage.getItem(DESC_STATS_KEY) || '{}'); } catch (e) { s = {}; }
+        for (const k in delta) s[k] = (s[k] || 0) + delta[k];
+        localStorage.setItem(DESC_STATS_KEY, JSON.stringify(s));
+        return s;
+    }
 
     let _pauseRequested  = false; // 一時停止フラグ
     let _crawlerPauseBtn = null;  // 一時停止ボタン参照（複数箇所から削除できるように）
@@ -585,6 +597,7 @@
                 };
                 localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
                 localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+                localStorage.setItem(DESC_STATS_KEY, JSON.stringify({ collected: 0, noModel: 0, extracted: 0, fetchFail: 0 }));
                 localStorage.removeItem(QUEUE_KEY);
                 localStorage.removeItem(_SHARED_TPL_KEY);
                 localStorage.removeItem(PROCESSED_KEY);
@@ -678,6 +691,7 @@
         const itemList     = Object.values(allItems);
         const processedSet = _getProcessedSet();
         const noModelItems = itemList.filter(i => !hasModelInTitle(i.name) && !processedSet.has(i.id));
+        bumpDescStats({ collected: itemList.length, noModel: noModelItems.length });
 
         if (isExperimentMode()) {
             itemList.forEach(i => {
@@ -730,9 +744,18 @@
             const _summary = `全完了: ${total}メーカー / 開始${_startStr} / 所要時間${_mins}分${_secs}秒`;
             showStatus(`発掘クローラー全完了 (${total}メーカー) → list.jsonと照合中...`, 'rgba(0,70,160,0.88)');
             dlog(`===== ${_summary} =====`);
-            const _hits = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+            const _hits  = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+            // 2026-09-02追加：内訳（収集→型番なし候補→抽出成功→説明文取得失敗）も一緒に送る。
+            // 「対象範囲が狭いのか、抽出・照合の精度が悪いのか」を数字で切り分けられるようにするため。
+            let _stats;
+            try { _stats = JSON.parse(localStorage.getItem(DESC_STATS_KEY) || '{}'); } catch (e) { _stats = {}; }
+            dlog(`===== 内訳: 収集${_stats.collected||0}件 / 型番なし候補${_stats.noModel||0}件 / 抽出成功${_stats.extracted||0}件 / 説明文取得失敗${_stats.fetchFail||0}件 =====`);
             GM_xmlhttpRequest({ method: 'POST', url: TIMING_URL, headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ type: 'desc_end', group: crawlerState.group, total, elapsed_ms: _elapsed * 1000, hits: _hits }) });
+                data: JSON.stringify({
+                    type: 'desc_end', group: crawlerState.group, total, elapsed_ms: _elapsed * 1000, hits: _hits,
+                    collected: _stats.collected || 0, no_model: _stats.noModel || 0,
+                    extracted: _stats.extracted || 0, fetch_fail: _stats.fetchFail || 0,
+                }) });
             finishAndSend(null);
             return;
         }
@@ -1168,6 +1191,7 @@
                 const isBundle  = SET_WORDS.some(w => item.name.includes(w) || desc.includes(w));
 
                 if (models.length > 0) {
+                    bumpDescStats({ extracted: 1 });
                     const results = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]');
                     models.forEach(model => {
                         // 【セット】タグはサーバー側(find_matches)が名前を見て一括付与するため、ここでは付けない（二重表示防止）
@@ -1187,6 +1211,7 @@
                 }
             } else {
                 nullCount++;
+                bumpDescStats({ fetchFail: 1 });
                 const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
                 showStatus(`${prefix}[${i + 1}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
                 logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: false, desc: '', extracted: '', fail_reason: reason });
