@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.8
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応）
+// @version      1.9
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・mercari_asin_checker.user.jsと同様のクロール深度ログ(maker/_page送信)を追加、メルカリ側同様の深度分析に対応）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -104,6 +104,7 @@
                     price: String(item.price),
                     url:   `https://paypayfleamarket.yahoo.co.jp/item/${item.id}`,
                     image: item.thumbnailImageUrl || item.imageUrl || '',
+                    _page: page + 1,
                 };
             });
 
@@ -116,12 +117,14 @@
     }
 
     // ===== サーバー送信（照合） =====
-    function sendToServer(itemList, onDone) {
+    // 2026-09-03：mercari_asin_checker.user.jsと同様、maker名をextraで送ることで
+    // server.py側のtrack_page_depth()がクロール深度ログ（[ページ深度]）を出力できるようにした。
+    function sendToServer(itemList, onDone, extra) {
         GM_xmlhttpRequest({
             method:  'POST',
             url:     SERVER_URL,
             headers: { 'Content-Type': 'application/json' },
-            data:    JSON.stringify({ items: itemList }),
+            data:    JSON.stringify(Object.assign({ items: itemList }, extra || {})),
             timeout: 120000,
             onload: res => {
                 let result = {};
@@ -232,7 +235,7 @@
                 const itemList = Object.values(fetched);
                 totalCollected += itemList.length;
                 updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${itemList.length}件 → 照合中`);
-                const result = await new Promise(resolve => sendToServer(itemList, resolve));
+                const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: mfr.name }));
                 totalHits += (result.matches || []).length;
                 await sleep(500);
             } catch(e) {
