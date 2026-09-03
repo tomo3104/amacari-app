@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.12
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応）
+// @version      6.13
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -603,7 +603,10 @@
         addLog('-------------------------');
         addLog('収集完了: ' + grandTotal + '件 → 型番抽出中...', '#88ccff');
 
-        const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
+        // 2026-09-03追加：/collect-items側にもurlを送り、サーバー側でアイテムID単位の
+        // 重複排除ができるようにした（同じ売り切れ出品が毎回のクロールで再収集され、
+        // mercariシートの価格リストに同一価格が何十回も重複記録される問題を修正するため）。
+        const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0, url: it.url || '' }));
         const result = await new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'POST',
