@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      1.8
-// @description  PayPayフリマ売り切れ商品を全メーカー自動収集 → 型番抽出（8765サーバー連携・ブランドID指定検索＋新着順ソート対応）
+// @version      1.9
+// @description  PayPayフリマ売り切れ商品を全メーカー自動収集 → 型番抽出（8765サーバー連携・ブランドID指定検索＋新着順ソート対応・mercari_auto_collector.user.jsと同様url/_pageを送信しクロール深度計測に対応）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -116,7 +116,12 @@
                 if (item.itemStatus && item.itemStatus !== 'SOLD') return; // 売り切れのみ収集
                 if (item.isBulkPurchaseItem) return;
                 if (EXCLUDE_KW.some(kw => item.title.includes(kw))) return;
-                allItems[item.id] = { name: item.title, price: String(item.price || 0) };
+                allItems[item.id] = {
+                    name:  item.title,
+                    price: String(item.price || 0),
+                    url:   `https://paypayfleamarket.yahoo.co.jp/item/${item.id}`,
+                    _page: page + 1,
+                };
             });
 
             const returned = data.totalResultsReturned || pageItems.length;
@@ -177,7 +182,10 @@
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
 
-                const itemsForLog = Object.values(fetched).map(it => ({ name: it.name, price: Number(it.price) || 0 }));
+                const itemsForLog = Object.values(fetched).map(it => ({
+                    name: it.name, price: Number(it.price) || 0,
+                    url: it.url || '', _page: it._page || 0,
+                }));
                 GM_xmlhttpRequest({
                     method: 'POST', url: SERVER + '/log-progress',
                     headers: { 'Content-Type': 'application/json' },
