@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -268,8 +269,11 @@ def save_hits(matches):
         print(f"  → スプレッドシート書き込み失敗: {e}")
 
 
-_item_list_cache:    dict = {}   # list.jsonのキャッシュ（サーバー起動時に一度だけ読み込む）
+_item_list_cache:    dict = {}   # list.jsonのキャッシュ
 _pattern_cache:      dict = {}   # 型番→コンパイル済み正規表現のキャッシュ
+_list_mtime:         float = 0.0  # list.jsonの最終更新時刻（変化時に自動再読み込み）
+_last_reload_time:   float = 0.0  # 直近の実際の再読み込み時刻（RELOAD_COOLDOWN秒間隔に制限）
+RELOAD_COOLDOWN = 30  # list.json再読み込みの最短間隔（秒）
 _seen_hit_asins:     set  = set()  # ヒット済みASIN（サーバー起動中は重複記録しない）
 _seen_candidates:    set  = set()  # 候補記録済み型番（ファイルに永続化）
 
@@ -298,13 +302,30 @@ CAND_HEADER       = ['検知日時', '型番', '商品名', 'メルカリ価格'
 _model_extract_re = re.compile(r'\b[A-Z]{2,}[A-Z0-9\-\/\.]{3,}\b')
 
 def load_list():
-    global _item_list_cache, _pattern_cache
-    if _item_list_cache:
-        return _item_list_cache
+    """2026-09-07修正：以前は「サーバー起動時に一度だけ読み込む」実装で、
+    このサーバー（ミニPC・リアルタイムリサーチ用）はほぼ再起動せず24時間稼働
+    し続ける運用のため、型番収集・監査等でlist.jsonが更新されても、次にこの
+    サーバーを再起動するまでずっと古いキャッシュのまま照合し続けてしまう
+    不具合があった（メインPC側asin-tools/server.pyには既にmtime自動リロードが
+    入っていたが、このミニPC版には移植されていなかった）。ファイルのmtimeを
+    見て変更があれば自動的に再読み込みするよう修正。"""
+    global _item_list_cache, _pattern_cache, _list_mtime, _last_reload_time
     if not os.path.exists(LIST_FILE):
         return {}
+    try:
+        mtime = os.path.getmtime(LIST_FILE)
+    except OSError:
+        return _item_list_cache or {}
+    if _item_list_cache and mtime == _list_mtime:
+        return _item_list_cache
+    if _item_list_cache and time.time() - _last_reload_time < RELOAD_COOLDOWN:
+        return _item_list_cache
+    if _item_list_cache:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] list.json 更新検知 → キャッシュ再読み込み中...")
     with open(LIST_FILE, "r", encoding="utf-8") as f:
         _item_list_cache = json.load(f)
+    _list_mtime = mtime
+    _last_reload_time = time.time()
     _pattern_cache = {
         model.upper(): re.compile(r'(?<![A-Z0-9])' + re.escape(model.upper()) + r'(?![A-Z0-9])')
         for model in _item_list_cache if len(model) >= 5

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.21
-// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消
+// @version      3.22
+// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -215,9 +215,34 @@
         }
     }
 
+    // 2026-09-07追加：STATIC_MAKERSは手動で追記しない限りmanufacturersシートへの
+    // 新規追加が反映されない構造だった。自動リサーチ側(mercari_asin_checker.user.js)
+    // の固定配列と比較した結果、双方ともシート(実測286件)に追いつけておらず(それぞれ
+    // 144件・159件どまり)、「どちらかが遅れている」のではなく両方とも同じ構造的な
+    // 問題を抱えていたと判明。サーバーの/get-manufacturersからシートを正本として
+    // 動的取得し、シートが更新されれば次回実行時から自動的に反映されるようにする。
+    // サーバー未起動時は従来の内蔵リストにフォールバックする。
+    // このスクリプトは@grant noneのためGM_xmlhttpRequestが使えず、素のfetch()を使う
+    // （/get-manufacturersは既にCORSヘッダーを返す実装になっているため呼び出せる）。
+    function fetchDynamicMakers() {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        return fetch('http://localhost:8766/get-manufacturers', { signal: controller.signal })
+            .then(res => res.json())
+            .then(data => (data.manufacturers || []).filter(m => m.url))
+            .catch(() => null)
+            .finally(() => clearTimeout(timer));
+    }
+
     async function loadMakers() {
+        const dynamic = await fetchDynamicMakers();
+        if (dynamic && dynamic.length > 0) {
+            _searchUrls = dynamic.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
+            p1Log(`makers: ${_searchUrls.length}件（サーバーから動的取得）`);
+            return;
+        }
         _searchUrls = STATIC_MAKERS.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
-        p1Log(`makers: ${_searchUrls.length}件（内蔵リスト）`);
+        p1Log(`makers: ${_searchUrls.length}件（内蔵リスト・フォールバック）`);
     }
 
     // ── キャプチャデータ（ページ遷移を超えてlocalStorageで保持） ──────────────

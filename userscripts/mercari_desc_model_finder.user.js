@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.87
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)）
+// @version      2.90
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -22,6 +22,16 @@
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const QUEUE_KEY       = 'desc_model_queue';
     const RESULT_KEY      = 'desc_model_results';
+    // 2026-09-07追加：クローラーモードはRESULT_KEYを全メーカー完了まで一切トリムせず、
+    // しかもヒットの有無に関わらず毎回全件JSON.parseして件数表示に使っていたため、
+    // セッションが進むほど（配列が育つほど）1件あたりの処理が遅くなる問題があった
+    // （「動かし始めは快調、時間が経つと遅くなる」とユーザーが実機で発見・メインスレッドが
+    // 詰まってコンソールコマンドすら応答しなくなるほど悪化した事故で発覚）。
+    // 件数表示専用の軽量カウンターを分離し、表示のたびに配列全体を読まなくて済むようにする。
+    const RESULT_COUNT_KEY = 'desc_model_results_count';
+    function getResultCount()   { return parseInt(localStorage.getItem(RESULT_COUNT_KEY) || '0', 10); }
+    function incResultCount(by) { const n = getResultCount() + by; localStorage.setItem(RESULT_COUNT_KEY, String(n)); return n; }
+    function resetResultCount() { localStorage.setItem(RESULT_COUNT_KEY, '0'); }
     const PROCESSED_KEY     = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
     const DESC_HEARTBEAT      = 'desc_finder_hb';        // ウォッチドッグ用ハートビート
@@ -29,6 +39,17 @@
     const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
     const DIAG_LOG_MAX        = 200;                     // _diagLog上限（dlog()参照用。クローラーモードのページは冒頭で早期returnするため、
                                                            // この定数は他のconstと同じ場所（早期returnより前）で必ず初期化しておく必要がある
+    // 2026-09-06追加：フリーズ→ブラウザごと再起動した場合、localStorageに残っている
+    // はずの診断ログが（フリーズの状況によっては）復旧できないことがあった
+    // （実際にコンソールから確認しようとしたが空だった事故が発生）。localStorageだけに
+    // 頼らず、10回に1回サーバー側にも送って`asin-tools/desc_diag_log_live.json`として
+    // 保存しておくことで、次にフリーズしても直前の状態を追跡できるようにする。
+    // 2026-09-07修正：DIAG_LOG_MAXと同じ理由で、この変数もdlog()呼び出しより前の
+    // 早期return前に初期化しておく必要があったが、当初は離れた場所（dlog()の直前）に
+    // 置いてしまい、クローラーモードでdlog()を呼んだ瞬間に「初期化前にアクセスした」
+    // というTDZ(temporal dead zone)エラーで毎回即座に停止する事故を起こした
+    // （実機で「[1/52] エレコム...」の表示直後から一切進まなくなる形で発覚）。
+    let _dlogSendCounter = 0;
     const DESC_STATS_KEY      = 'desc_crawler_stats';     // 2026-09-02追加：発掘クローラー全体の内訳（収集→型番なし候補→抽出成功→説明文取得失敗）を
                                                            // メーカーをまたいで集計するためのカウンター。ページ遷移のたびに変数がリセットされるため
                                                            // localStorageで永続化する（RESULT_KEY等と同じパターン）
@@ -475,15 +496,15 @@
                         results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model) });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
-                    showStatus(`[${idx + 1}/${total}] ${tag}型番取得: ${models.join(', ')}\n取得済: ${results.length}件`, 'rgba(20,110,0,0.88)');
+                    const totalGot = incResultCount(models.length);
+                    showStatus(`[${idx + 1}/${total}] ${tag}型番取得: ${models.join(', ')}\n取得済: ${totalGot}件`, 'rgba(20,110,0,0.88)');
 
                     // 30件ごとにサーバーへ中間保存（クラッシュ対策）
                     if (results.length % SAVE_INTERVAL === 0) {
                         sendProgress(results.slice(-SAVE_INTERVAL));
                     }
                 } else {
-                    const gotSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                    showStatus(`[${idx + 1}/${total}] 型番なし → スキップ（取得済: ${gotSoFar}件）`);
+                    showStatus(`[${idx + 1}/${total}] 型番なし → スキップ（取得済: ${getResultCount()}件）`);
                 }
 
                 setTimeout(goNext, 500);
@@ -492,8 +513,7 @@
                 setTimeout(() => waitForDesc(retries - 1), 300);
             } else {
                 // タイムアウト → スキップ
-                const gotSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                showStatus(`[${idx + 1}/${total}] タイムアウト → スキップ（取得済: ${gotSoFar}件）`);
+                showStatus(`[${idx + 1}/${total}] タイムアウト → スキップ（取得済: ${getResultCount()}件）`);
                 setTimeout(goNext, 1000);
             }
         };
@@ -510,8 +530,7 @@
         // Reactのレンダリングが完了するまで待つ
         setTimeout(() => {
             if (isErrorPage()) {
-                const gotSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                showStatus(`[${idx + 1}/${total}] 商品削除済み → スキップ（取得済: ${gotSoFar}件）`);
+                showStatus(`[${idx + 1}/${total}] 商品削除済み → スキップ（取得済: ${getResultCount()}件）`);
                 setTimeout(goNext, 800);
             } else {
                 window.scrollTo(0, 400); // 説明文が画面内に入るようスクロール（遅延読み込み対策）
@@ -550,6 +569,7 @@
 
         if (results.length === 0) {
             localStorage.removeItem(RESULT_KEY);
+            resetResultCount();
             showStatus('説明文から型番を取得できた商品はありませんでした', 'rgba(100,80,0,0.88)');
             setTimeout(hideStatus, 6000);
             return;
@@ -565,6 +585,7 @@
             timeout: 120000,
             onload: res => {
                 localStorage.removeItem(RESULT_KEY);
+                resetResultCount();
                 try {
                     const result = JSON.parse(res.responseText);
                     showResults(result.matches || []);
@@ -574,6 +595,7 @@
             },
             ontimeout: () => {
                 localStorage.removeItem(RESULT_KEY);
+                resetResultCount();
                 showStatus('タイムアウト — ヒットはシートに保存済み', 'rgba(100,80,0,0.88)');
             },
             onerror: () => showStatus(
@@ -619,6 +641,7 @@
                 };
                 localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
                 localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+                resetResultCount();
                 localStorage.setItem(DESC_STATS_KEY, JSON.stringify({ collected: 0, noModel: 0, extracted: 0, fetchFail: 0 }));
                 localStorage.removeItem(QUEUE_KEY);
                 localStorage.removeItem(_SHARED_TPL_KEY);
@@ -766,7 +789,7 @@
             const _summary = `全完了: ${total}メーカー / 開始${_startStr} / 所要時間${_mins}分${_secs}秒`;
             showStatus(`発掘クローラー全完了 (${total}メーカー) → list.jsonと照合中...`, 'rgba(0,70,160,0.88)');
             dlog(`===== ${_summary} =====`);
-            const _hits  = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+            const _hits  = getResultCount();
             // 2026-09-02追加：内訳（収集→型番なし候補→抽出成功→説明文取得失敗）も一緒に送る。
             // 「対象範囲が狭いのか、抽出・照合の精度が悪いのか」を数字で切り分けられるようにするため。
             let _stats;
@@ -784,7 +807,7 @@
 
         localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
         const next = crawlerState.makers[done];
-        const _accum = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+        const _accum = getResultCount();
         showStatus(`[${done}/${total}完了] 次: ${next.name}`, 'rgba(0,70,120,0.88)');
         dlog(`[${done}/${total}完了] 累計ヒット: ${_accum}件 → 次: ${next.name}`);
         localStorage.removeItem(_SHARED_TPL_KEY);
@@ -808,7 +831,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     data: _buildPayload(),
                     timeout: 30000,
-                    onload: () => { localStorage.setItem(RESULT_KEY, JSON.stringify([])); dlog(`[中間保存完了] ${_interim.length}件`); _doPause(); },
+                    onload: () => { localStorage.setItem(RESULT_KEY, JSON.stringify([])); resetResultCount(); dlog(`[中間保存完了] ${_interim.length}件`); _doPause(); },
                     onerror:   () => { dlog('[中間保存失敗] ローカルに保持'); _doPause(); },
                     ontimeout: () => { dlog('[中間保存タイムアウト] ローカルに保持'); _doPause(); },
                 });
@@ -827,6 +850,7 @@
                 timeout: 30000,
                 onload: () => {
                     localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+                    resetResultCount();
                     dlog(`[中間保存完了] ${_interim.length}件`);
                     _doNavigate();
                 },
@@ -873,7 +897,7 @@
                 if (existingQueue.running && existingQueue.items && existingQueue.items.length > 0) {
                     const resumeIdx   = existingQueue.currentIdx || 0;
                     const totalItems  = existingQueue.items.length;
-                    const savedResults = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+                    const savedResults = getResultCount();
 
                     const resumeBtn = document.createElement('button');
                     resumeBtn.textContent = `途中から再開 (${resumeIdx + 1}/${totalItems}件目 取得済:${savedResults}件)`;
@@ -998,6 +1022,7 @@
             }
 
             localStorage.setItem(RESULT_KEY, JSON.stringify([]));
+            resetResultCount();
             showStatus(`${noModelItems.length}件の説明文をバックグラウンドで取得します（ページ移動なし）...`);
             await sleep(500);
             await processItemsWithFetch(noModelItems, false);
@@ -1007,6 +1032,14 @@
     // ========================================================
     //  商品説明文フェッチ（__NEXT_DATA__ パース方式 — ページ遷移なし）
     // ========================================================
+    function sendDiagLogToServer() {
+        fetch('http://localhost:8766/desc-diag-log', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ log: _diagLog }),
+        }).catch(() => {});
+    }
+
     function dlog(msg) {
         const t = new Date().toTimeString().slice(0,8);
         const line = `[${t}] ${msg}`;
@@ -1015,6 +1048,7 @@
         console.log('[desc-finder]', line);
         try { localStorage.setItem('desc_diag_log', JSON.stringify(_diagLog)); } catch(e) { console.warn('[desc-finder] dlog storage err:', e); }
         try { localStorage.setItem(DESC_HEARTBEAT, String(Date.now())); } catch(e) {}
+        if (++_dlogSendCounter % 10 === 0) sendDiagLogToServer();
     }
 
     // クローラー実行中に一定時間ハートビートが更新されなければフリーズとみなし、
@@ -1231,21 +1265,20 @@
                         results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model) });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
+                    const totalGot = incResultCount(models.length);
                     const tag = isBundle ? '【セット】' : '';
                     makerHits++;
-                    showStatus(`${prefix}[${displayIndex}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${results.length}件）`, 'rgba(20,110,0,0.88)');
-                    dlog(`▶ ヒット [${displayIndex}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${results.length}件`);
+                    showStatus(`${prefix}[${displayIndex}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${totalGot}件）`, 'rgba(20,110,0,0.88)');
+                    dlog(`▶ ヒット [${displayIndex}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${totalGot}件`);
                     if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL), makerName);
                     await sleep(isCrawlerMode ? 500 : 2000); // クローラー時は短縮
                 } else {
-                    const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                    showStatus(`${prefix}[${displayIndex}/${total}] 型番なし（累計: ${cnt}件）`);
+                    showStatus(`${prefix}[${displayIndex}/${total}] 型番なし（累計: ${getResultCount()}件）`);
                 }
             } else {
                 nullCount++;
                 bumpDescStats({ fetchFail: 1 });
-                const cnt = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
-                showStatus(`${prefix}[${displayIndex}/${total}] 説明文取得失敗（累計: ${cnt}件）`);
+                showStatus(`${prefix}[${displayIndex}/${total}] 説明文取得失敗（累計: ${getResultCount()}件）`);
                 logExperiment({ maker: makerName || '', title: item.name, url: item.url, has_model_in_title: false, desc_fetched: false, desc: '', extracted: '', fail_reason: reason });
             }
 
@@ -1297,7 +1330,7 @@
         // logBtnは残す（クリックしていつでもコピー可能）
         logBtn.textContent = 'ログコピー✓';
 
-        const totalSoFar = JSON.parse(localStorage.getItem(RESULT_KEY) || '[]').length;
+        const totalSoFar = getResultCount();
         dlog(`◀ ${makerName || '(検索)'}完了: ${total}件処理 / ${makerHits}件ヒット / 累計: ${totalSoFar}件`);
 
         if (isCrawlerMode) {

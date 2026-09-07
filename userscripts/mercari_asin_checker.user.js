@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.59
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減）
+// @version      3.61
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更）
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -496,6 +496,51 @@
         { name: 'CFD販売', group: '23', url: `https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=20000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=31328` },
     ];
 
+    // 2026-09-07追加：STATIC_MANUFACTURERS/STATIC_CATEGORIESは手動で追記しない限り
+    // manufacturersシートへの新規追加が反映されない構造だった。実測でシートが286件
+    // まで育っているのに対し、この固定配列は144件（ユニーク）までしか追いついて
+    // いなかったと判明（リアルタイムリサーチ側の固定リストとの比較で発覚）。
+    // サーバーの/get-manufacturersからシートを正本として動的に取得し、シートが
+    // 更新されれば次回実行時から自動的に反映されるようにする。サーバー未起動時は
+    // 従来の固定配列にフォールバックする。
+    // カテゴリかどうかの判定はシートのgroup列の表記に依存せず、URLに category_id が
+    // ありbrand_idが無いことで機械的に判定する（ページ深度のメーカー/カテゴリ分岐
+    // ＝MAX_PAGES_RESEARCH_CATを、シート側のグループ表記のゆれに影響されず
+    // 確実に適用するため）。
+    function isCategoryUrl(url) {
+        return /category_id=/.test(url || '') && !/brand_id=/.test(url || '');
+    }
+
+    let _dynMfrsPromise = null;
+    function fetchDynamicManufacturers() {
+        return new Promise((resolve) => {
+            GM_xmlhttpRequest({
+                method:  'GET',
+                url:     'http://localhost:8766/get-manufacturers',
+                timeout: 8000,
+                onload: res => {
+                    try {
+                        const data = JSON.parse(res.responseText);
+                        const all  = (data.manufacturers || []).filter(m => m.url);
+                        if (all.length > 0) {
+                            const mfrs       = all.filter(m => !isCategoryUrl(m.url));
+                            const categories = all.filter(m => isCategoryUrl(m.url)).map(m => ({ ...m, group: 'CAT' }));
+                            resolve({ mfrs, categories });
+                            return;
+                        }
+                    } catch (e) {}
+                    resolve({ mfrs: STATIC_MANUFACTURERS, categories: STATIC_CATEGORIES });
+                },
+                onerror:   () => resolve({ mfrs: STATIC_MANUFACTURERS, categories: STATIC_CATEGORIES }),
+                ontimeout: () => resolve({ mfrs: STATIC_MANUFACTURERS, categories: STATIC_CATEGORIES }),
+            });
+        });
+    }
+    function getManufacturersDynamic() {
+        if (!_dynMfrsPromise) _dynMfrsPromise = fetchDynamicManufacturers();
+        return _dynMfrsPromise;
+    }
+
     const ITEM_SEL    = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
     const NAME_SEL    = '[data-testid="thumbnail-item-name"]';
     const PRICE_SEL   = '.merPrice span:last-child';
@@ -660,7 +705,17 @@
         // 頭打ちページは中央値1ページ目・90パーセンタイルでも7ページ目だった（20ページ目まで
         // 律儀に掘っても大半のメーカーで8ページ目以降はほぼ何も新規発見していなかった）。
         // 所要時間短縮のため20→8ページに削減。
-        const MAX_PAGES_RESEARCH = 8;
+        // 2026-09-07修正：メルカリ/ヤフーフリマ分離後の[ページ深度]再分析で、メーカー個別
+        // クロールと「グループ:CAT」のカテゴリ横断クロールとで傾向が全く違うと判明。メーカーは
+        // ほぼ全て3〜4ページで飽和済み（8ページは深すぎる）。カテゴリは逆に、深いページほど
+        // 「初めて見るID」だらけ（重複率が下がっていく逆転パターン）——これはカテゴリ横断クロールが
+        // 比較的新しく追加された対象で、深いページまで潜った履歴自体がまだ薄いため、既知ID照合が
+        // 効いていないだけと考えられる（謎の異常ではなく、履歴不足による一時的な現象）。
+        // カテゴリはこの深さでの巡回実績を積むためあえて20ページに増やす。20が本当の飽和点という
+        // 確証は無いため、20ページ目でもまだ重複率が低いようなら次回さらに見直すこと。
+        const MAX_PAGES_RESEARCH_MFR = 4;
+        const MAX_PAGES_RESEARCH_CAT = 20;
+        const MAX_PAGES_RESEARCH = (ctx && ctx.group === 'CAT') ? MAX_PAGES_RESEARCH_CAT : MAX_PAGES_RESEARCH_MFR;
         for (let page = 0; page < MAX_PAGES_RESEARCH; page++) {
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
@@ -748,7 +803,9 @@
 
     async function runBatchFetch(mfrs, selected, unopenedOnly) {
         const targets = selected.map(s => s.toUpperCase());
-        const allMfrs = [...mfrs, ...STATIC_CATEGORIES];
+        // 2026-09-07修正：呼び出し元(showGroupPicker・auto_research)で既にメーカー+
+        // カテゴリを結合済みのリストを渡すようにしたため、ここでの再結合は不要になった。
+        const allMfrs = mfrs;
         const filtered = targets.includes('ALL') ? allMfrs : allMfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
         if (filtered.length === 0) { updateStatus('対象なし'); return; }
 
@@ -782,7 +839,7 @@
 
             const mfrStart = Date.now();
             try {
-                items = await fetchCheckerItems(url, { name, idx: i + 1, total: filtered.length });
+                items = await fetchCheckerItems(url, { name, idx: i + 1, total: filtered.length, group: mfr.group });
                 errors = 0;
                 const itemList = Object.values(items);
                 updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
@@ -1025,7 +1082,8 @@
     }
 
     // ========== クローラーリサーチ ==========
-    function showGroupPicker(mfrs) {
+    function showGroupPicker(mfrs, categories) {
+        categories = categories || [];
         const groups = [...new Set(mfrs.map(m => m.group).filter(g => g))].sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
         const groupCounts = {};
         mfrs.forEach(m => { if (m.group) groupCounts[m.group] = (groupCounts[m.group] || 0) + 1; });
@@ -1126,7 +1184,7 @@
             const selected = checked.length > 0 ? checked : ['ALL'];
             const unopenedOnly = unopenedCheckbox.checked;
             overlay.remove();
-            runBatchFetch(mfrs, selected, unopenedOnly);
+            runBatchFetch([...mfrs, ...categories], selected, unopenedOnly);
         };
     }
 
@@ -1148,8 +1206,10 @@
         setTimeout(goNextBatch, 1000);
     }
 
-    function startBatch() {
-        showGroupPicker(STATIC_MANUFACTURERS);
+    async function startBatch() {
+        updateStatus('メーカーリストを取得中...');
+        const { mfrs, categories } = await getManufacturersDynamic();
+        showGroupPicker(mfrs, categories);
     }
 
     // ========== コジマShopsウォッチ ==========
@@ -1342,9 +1402,10 @@
         if (autoGroup) {
             localStorage.setItem('autoResearch', 'true');
             window.addEventListener('load', () => {
-                setTimeout(() => {
+                setTimeout(async () => {
                     const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                    runBatchFetch(STATIC_MANUFACTURERS, groups);
+                    const { mfrs, categories } = await getManufacturersDynamic();
+                    runBatchFetch([...mfrs, ...categories], groups);
                 }, 3000);
             });
         }
