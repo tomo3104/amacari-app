@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.90
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離）
+// @version      2.92
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -36,7 +36,14 @@
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
     const DESC_HEARTBEAT      = 'desc_finder_hb';        // ウォッチドッグ用ハートビート
     const DESC_WD_TIMEOUT     = 300000;                  // ウォッチドッグ5分（フリーズ検知→自動リロード）
-    const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数
+    const MAX_PAGES_CRAWLER   = 1;                       // クローラーモードの1メーカーあたり最大ページ数（デフォルト）
+    // 2026-09-09追加：server_*.logの[発掘:メーカー]行を16日分集計した結果、51社中
+    // 20社が一度もヒットせず、逆に上位5社（アイ・オー・データ・藤井電工・LOGITEC・
+    // サンワサプライ・TWINBIRD）に大半のヒットが集中していると判明。ヒット0件の
+    // メーカーはmanufacturersシート側で発掘リサーチ対象から除外し、浮いた時間を
+    // この上位メーカーの深掘りに充てる。深さの妥当性は_pageログを見ながら今後調整する。
+    const PRIORITY_MAKERS     = new Set(['アイ・オー・データ', '藤井電工', 'LOGITEC', 'サンワサプライ', 'TWINBIRD']);
+    const MAX_PAGES_PRIORITY  = 3;                       // 優先メーカーの最大ページ数
     const DIAG_LOG_MAX        = 200;                     // _diagLog上限（dlog()参照用。クローラーモードのページは冒頭で早期returnするため、
                                                            // この定数は他のconstと同じ場所（早期returnより前）で必ず初期化しておく必要がある
     // 2026-09-06追加：フリーズ→ブラウザごと再起動した場合、localStorageに残っている
@@ -178,8 +185,12 @@
         return true;
     }
 
-    // 説明文DOMセレクター（メルカリのPREタグ）
-    const DESC_SEL = 'pre[class*="merText"]';
+    // 説明文DOMセレクター
+    // 2026-09-08修正：メルカリ側のマークアップ変更で<pre class*="merText">が
+    // 廃止され<P>タグ＋ハッシュ化された不安定なクラス名に置き換わっていたため、
+    // 発掘リサーチの説明文取得が100%失敗する事故が発生（ユーザーがコンソールで
+    // 直接切り分けて発見）。ビルドで変わりにくい data-testid="description" に変更。
+    const DESC_SEL = '[data-testid="description"]';
 
     const MAX_PAGES = 20;
 
@@ -719,11 +730,12 @@
             return;
         }
 
-        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${MAX_PAGES_CRAWLER}ページ収集中...`);
+        const maxPages = PRIORITY_MAKERS.has(maker.name) ? MAX_PAGES_PRIORITY : MAX_PAGES_CRAWLER;
+        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${maxPages}ページ収集中...`);
 
         let allItems;
         try {
-            allItems = await fetchItems(tpl, MAX_PAGES_CRAWLER);
+            allItems = await fetchItems(tpl, maxPages);
         } catch(e) {
             showStatus(`収集エラー: ${e.message} → スキップ`, 'rgba(160,0,0,0.88)');
             await sleep(2000);
@@ -1269,7 +1281,7 @@
                     const tag = isBundle ? '【セット】' : '';
                     makerHits++;
                     showStatus(`${prefix}[${displayIndex}/${total}] ${tag}型番: ${models.join(', ')}（累計: ${totalGot}件）`, 'rgba(20,110,0,0.88)');
-                    dlog(`▶ ヒット [${displayIndex}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — 累計: ${totalGot}件`);
+                    dlog(`▶ ヒット [${displayIndex}/${total}] ${makerName || ''}${makerName ? ' | ' : ''}${models.join(', ')} — ${item._page || '?'}ページ目 — 累計: ${totalGot}件`);
                     if (results.length % SAVE_INTERVAL === 0) sendProgress(results.slice(-SAVE_INTERVAL), makerName);
                     await sleep(isCrawlerMode ? 500 : 2000); // クローラー時は短縮
                 } else {
@@ -1399,6 +1411,9 @@
                     price: String(item.price),
                     url:   `https://jp.mercari.com/item/${id}`,
                     image: (item.thumbnails && item.thumbnails[0]) || '',
+                    // 2026-09-09追加：メーカー別に「何ページ目までヒットが出るか」を
+                    // 後から検証できるよう、収集元のページ番号を残しておく
+                    _page: page + 1,
                 };
             });
 
