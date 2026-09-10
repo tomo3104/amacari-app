@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.62
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）
+// @version      3.63
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -713,9 +713,12 @@
         // 効いていないだけと考えられる（謎の異常ではなく、履歴不足による一時的な現象）。
         // カテゴリはこの深さでの巡回実績を積むためあえて20ページに増やす。20が本当の飽和点という
         // 確証は無いため、20ページ目でもまだ重複率が低いようなら次回さらに見直すこと。
-        const MAX_PAGES_RESEARCH_MFR = 4;
-        const MAX_PAGES_RESEARCH_CAT = 20;
-        const MAX_PAGES_RESEARCH = (ctx && ctx.group === 'CAT') ? MAX_PAGES_RESEARCH_CAT : MAX_PAGES_RESEARCH_MFR;
+        const MAX_PAGES_RESEARCH_MFR  = 4;
+        const MAX_PAGES_RESEARCH_CAT  = 20;
+        const MAX_PAGES_RESEARCH_TEST = 8;  // 2026-09-10：ヒット条件実験（TESTグループ）用に少し深めに
+        const MAX_PAGES_RESEARCH = (ctx && ctx.group === 'CAT') ? MAX_PAGES_RESEARCH_CAT
+            : (ctx && ctx.group === 'TEST') ? MAX_PAGES_RESEARCH_TEST
+            : MAX_PAGES_RESEARCH_MFR;
         for (let page = 0; page < MAX_PAGES_RESEARCH; page++) {
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
