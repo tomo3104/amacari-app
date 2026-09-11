@@ -624,7 +624,5 @@ body {
 
 /* Amazon価格インライン編集 */
 .card-grid .price-val { color: var(--navy); }
-.edit-price-btn { background: none; border: none; color: #bbb; font-size: 12px; cursor: pointer; padding: 0 2px; vertical-align: middle; }
-.edit-price-input { width: 80px; padding: 2px 5px; border-radius: 5px; border: 1px solid #aaa; font-size: 12px; vertical-align: middle; }
-.edit-price-confirm { padding: 2px 7px; border-radius: 5px; border: none; background: var(--navy); color: white; font-size: 11px; cursor: pointer; vertical-align: middle; margin-left: 2px; }
-.edit-price-cancel { padding: 2px 5px; border-radius: 5px; border: 1px solid #ccc; background: #eee; color: #666; font-size: 11px; cursor: pointer; vertical-align: middle; margin-left: 2px; }
+.recheck-price-btn { background: none; border: none; color: #bbb; font-size: 12px; cursor: pointer; padding: 0 2px; vertical-align: middle; }
+.recheck-price-btn:disabled { opacity: 0.4; cursor: default; }

@@ -360,7 +360,7 @@ function buildCardEl(card) {
         </div>
       </div>
       <div class="card-grid">
-        <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="edit-price-btn no-swipe" data-row="${card.row}" aria-label="価格を編集">✏</button></div>
+        <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
         <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
         <div><span>実利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
@@ -472,54 +472,40 @@ function recalcWithNewPrice(card, newPrice) {
   return { amazon_price: newPrice, pmax, diff, roi, margin, score, real_profit, real_margin };
 }
 
-els.stack.addEventListener("click", e => {
-  const btn = e.target.closest(".edit-price-btn");
+// 2026-09-11：手入力での価格編集は「利益少ない」に見える商品をわざわざ調べ直す
+// 手間が大きく結局そのまま却下されがちだったため廃止し、その場でSP-APIから
+// 最新のAmazon価格を取得するボタンに置き換えた（GAS側でprice_recheck_queue
+// シートにも積まれ、後でasin-tools/server.pyがlist.jsonへ反映する）。
+els.stack.addEventListener("click", async e => {
+  const btn = e.target.closest(".recheck-price-btn");
   if (!btn) return;
   e.stopPropagation();
+  if (btn.disabled) return;
   const row = Number(btn.dataset.row);
-  const div = btn.parentElement;
-  const valEl = div.querySelector(".price-val");
-  if (div.querySelector(".edit-price-input")) return;
-
-  valEl.style.display = "none";
-  btn.style.display = "none";
-
-  const input = Object.assign(document.createElement("input"), {
-    type: "number", className: "edit-price-input no-swipe",
-    value: Number(valEl.dataset.price), min: "0"
-  });
-  const ok = Object.assign(document.createElement("button"), {
-    className: "edit-price-confirm no-swipe", textContent: "確定", type: "button"
-  });
-  const ng = Object.assign(document.createElement("button"), {
-    className: "edit-price-cancel no-swipe", textContent: "×", type: "button"
-  });
-  div.append(input, ok, ng);
-  input.focus(); input.select();
-
-  function apply() {
-    const newPrice = Math.round(Number(input.value));
-    if (!newPrice || newPrice <= 0) { cancel(); return; }
+  const asin = btn.dataset.asin;
+  const model = btn.dataset.model;
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const res = await gasPost("recheckPrice", { asin, model });
+    const data = await res.json();
+    if (data.error || !data.price) {
+      alert(data.error || "価格を取得できませんでした");
+      return;
+    }
     const card = state.cards.find(c => c.row === row);
-    if (!card) { cancel(); return; }
-    const upd = recalcWithNewPrice(card, newPrice);
+    if (!card) return;
+    const upd = recalcWithNewPrice(card, data.price);
     Object.assign(card, upd);
-    gasPost("updateAmazonPrice", { row, ...upd });
+    await gasPost("updateAmazonPrice", { row, ...upd });
     renderStack();
+  } catch (err) {
+    alert("価格再調査に失敗しました: " + err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
   }
-
-  function cancel() {
-    valEl.style.display = "";
-    btn.style.display = "";
-    [input, ok, ng].forEach(el => el.remove());
-  }
-
-  ok.addEventListener("click", e => { e.stopPropagation(); apply(); });
-  ng.addEventListener("click", e => { e.stopPropagation(); cancel(); });
-  input.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.stopPropagation(); apply(); }
-    if (e.key === "Escape") { e.stopPropagation(); cancel(); }
-  });
 });
 
 // ---------- Keepaグラフ再読込 ----------
