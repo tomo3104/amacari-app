@@ -54,13 +54,14 @@
         }
     }
 
-    // pmax = Amazon価格×0.85 - FBA手数料 で計算されているため、
-    // pmax地点での実利益は常にAmazon価格×0.15（FBA手数料は計算上相殺される）
-    // → 実利益率 = (差額 + Amazon価格×0.15) ÷ Amazon価格
-    // memoからAmazon価格が取れない場合（登録形式が古い等）は旧式（差額÷上限価格）にフォールバック
+    // 2026-09-11：pmax = Amazon価格 - FBA手数料（純粋な損益分岐点）に変更したため、
+    // 差額（diff）がそのまま実利益額になり、以前の「+Amazon価格×0.15」の補正は
+    // 不要になった。memoからAmazon価格が取れない場合（登録形式が古い等）は
+    // 旧式（差額÷上限価格）にフォールバック（この場合のみ旧pmaxの埋め込み利益が
+    // 残ったままの近似値になる）。
     function calcRealMargin(diff, limitPrice, amazonPrice) {
         if (amazonPrice) {
-            return (diff + amazonPrice * 0.15) / amazonPrice;
+            return diff / amazonPrice;
         }
         return diff / limitPrice;
     }

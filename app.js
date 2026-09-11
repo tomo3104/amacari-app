@@ -471,14 +471,17 @@ function buildFurimaCardEl(card) {
 // ---------- Amazon価格インライン編集 ----------
 
 function recalcWithNewPrice(card, newPrice) {
-  const pmax = Math.round(Number(card.pmax) + (newPrice - Number(card.amazon_price)) * 0.85);
+  // 2026-09-11：pmaxを純粋な損益分岐点（Amazon価格-手数料）に変更したため、
+  // Amazon価格が変わった分はそのまま1:1でpmaxに反映される（旧×0.85は不要）。
+  // diffがそのまま実利益額になるため、real_profit/real_marginの補正も不要。
+  const pmax = Math.round(Number(card.pmax) + (newPrice - Number(card.amazon_price)));
   const mercariPrice = Number(card.mercari_price);
   const diff = Math.round(pmax - mercariPrice);
   const roi = mercariPrice ? Math.round(diff / mercariPrice * 1000) / 10 : 0;
   const margin = newPrice ? Math.round(diff / newPrice * 1000) / 10 : 0;
   const score = Math.round((roi * 0.5 + margin * 0.3 + newPrice / 1000 * 0.2) * 10) / 10;
-  const real_profit = Math.round(diff + newPrice * 0.15);
-  const real_margin = newPrice ? Math.round(real_profit / newPrice * 1000) / 10 : 0;
+  const real_profit = diff;
+  const real_margin = margin;
   return { amazon_price: newPrice, pmax, diff, roi, margin, score, real_profit, real_margin };
 }
 
@@ -805,8 +808,9 @@ document.getElementById("asin-fix-submit").addEventListener("click", async () =>
   const newAsin = els.asinFixNew.value.trim().toUpperCase();
   const newPrice = Math.round(Number(els.asinFixPrice.value));
   if (!newAsin || !newPrice) { alert("ASINとAmazon価格を両方入力してください"); return; }
-  const oldFee = Math.max(Math.round(Number(card.amazon_price) * 0.85 - Number(card.pmax)), 450);
-  const newPmax = Math.round(newPrice * 0.85 - oldFee);
+  // 2026-09-11：pmaxを純粋な損益分岐点（Amazon価格-手数料）に変更
+  const oldFee = Math.max(Math.round(Number(card.amazon_price) - Number(card.pmax)), 450);
+  const newPmax = Math.round(newPrice - oldFee);
   await gasPost("saveAsinCorrection", {
     row: card.row, model: card.model,
     old_asin: card.asin, new_asin: newAsin,
