@@ -232,6 +232,27 @@
   font-size: 22px;
 }
 
+/* お宝カード（2026-09-11追加：server.py find_matches()の[お宝]タグ。
+   ランク5万位以内かつ差益3000円以上、またはランク不明でも利益率40%以上かつ
+   差益6000円以上。hot-badgeと同時に付くこともあるため右上と衝突しないよう左上に配置） */
+.card--treasure {
+  border: 2px solid #7c3aed;
+  box-shadow: 0 0 0 2px #7c3aed, 0 6px 24px rgba(0,0,0,.2);
+}
+.treasure-badge {
+  position: absolute;
+  top: 10px; left: 10px;
+  z-index: 10;
+  background: linear-gradient(135deg, #7c3aed, #38bdf8);
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(124,58,237,.45);
+  pointer-events: none;
+}
+
 /* 下スワイプ：後回しスタックが空のときのバウンス */
 @keyframes bounce-down {
   0%   { transform: translateY(0); }

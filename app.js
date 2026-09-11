@@ -329,13 +329,23 @@ function formatPastJudgment(card) {
 function buildCardEl(card) {
   const el = document.createElement("div");
   const isHot = Number(card.real_margin) >= 50;
-  el.className = isHot ? "card card--hot" : "card";
+  // 2026-09-11追加：server.py側のfind_matches()が付与する[お宝]タグ（ランク5万位
+  // 以内かつ差益3000円以上、またはランク不明でも利益率40%以上かつ差益6000円以上）
+  // を検出して専用バッジを表示する。RTタブの通知が多すぎて慣れが生じ、本当に
+  // 良い商品を見逃していた問題への対応（Discord通知の絞り込みと同じ基準）。
+  const isTreasure = (card.name || "").includes("[お宝]");
+  el.className = [
+    "card",
+    isTreasure ? "card--treasure" : "",
+    isHot ? "card--hot" : "",
+  ].filter(Boolean).join(" ");
 
   const thumb = card.image_url
     ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
     : `<div class="card-thumb"></div>`;
 
   el.innerHTML = `
+    ${isTreasure ? '<div class="treasure-badge">💎 お宝</div>' : ''}
     ${isHot ? '<div class="hot-badge">🔥 激熱</div>' : ''}
     <div class="swipe-flag flag-like">仕入れ対象</div>
     <div class="swipe-flag flag-nope">却下</div>
