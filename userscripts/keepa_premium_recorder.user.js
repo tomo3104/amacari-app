@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keepa プレミアム価格記録
 // @namespace    http://tampermonkey.net/
-// @version      3.30
+// @version      3.31
 // @description  KeepaページでASINの価格をFlotチャートから直接取得・記録（XHR書き換えなし）
 // @match        https://keepa.com/*
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/keepa_premium_recorder.user.js
@@ -195,7 +195,11 @@
         GM_xmlhttpRequest({
             method: 'POST', url: `${SERVER}/save-premium-price`,
             headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ asin: asin || cand.asin, price }), timeout: 30000,
+            // 2026-09-12修正：modelを送っていなかったため、サーバー側が毎回ASINからの
+            // 逆引きに頼らざるを得ず、それが失敗するとlist.jsonに反映されないまま
+            // プレミアム候補シート側にしか価格が残らない不具合があった（cand.modelは
+            // キュー取得時から確実に分かっているのでそのまま渡す）。
+            data: JSON.stringify({ asin: asin || cand.asin, model: cand.model, price }), timeout: 30000,
             onload: res => {
                 try {
                     const r = JSON.parse(res.responseText);
@@ -362,7 +366,8 @@
                 GM_xmlhttpRequest({
                     method: 'POST', url: `${SERVER}/save-premium-price`,
                     headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ asin, price: p }), timeout: 30000,
+                    // 2026-09-12修正：こちらもcand.modelを送るよう追加（onAutoResultと同じ理由）
+                    data: JSON.stringify({ asin, model: cand.model, price: p }), timeout: 30000,
                     onload: res => {
                         try {
                             const r = JSON.parse(res.responseText);
