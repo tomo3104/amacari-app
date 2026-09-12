@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Category Tree Crawler
 // @namespace    http://tampermonkey.net/
-// @version      1.8
-// @description  メルカリの全カテゴリを自動巡回し、階層構造（id/name/parent）を収集する（型番収集のカテゴリ拡張検討用・2026-09-06新設・loadイベント消失バグ修正・固定待機を安定化ポーリングに変更して0件誤判定を解消・2026-09-07：同一タブでの長時間連続遷移によるChromeメモリ蓄積とみられる子数の誤検出を受け、100件ごとにタブ再起動を促すチェックポイントを追加・安定判定を件数のみからID一覧の中身比較に強化しポーリング開始前に最低600ms待つよう修正・0件で安定した場合のみ確認時間を3倍に伸ばして描画未開始との誤判定を防止・さらに下層を持たない末端の子カテゴリが/search?category_id=形式でリンクされているため取りこぼされていたバグを修正（「すべて」リンクとはテキストで判別して除外）・巡回中も常に停止・リセットボタンを表示するよう改善・2600件規模だと再開ボタンを26回押す手間になるとの指摘を受け、専用URL(?resume_catcrawl=1)を開いた時だけ5秒後に自動継続するよう変更・無関係なメルカリ閲覧タブで巡回対象ページと誤認して処理してしまう事故を防ぐため対象ページのURL一致確認を追加）
+// @version      1.9
+// @description  メルカリの全カテゴリを自動巡回し、階層構造（id/name/parent）を収集する（型番収集のカテゴリ拡張検討用・2026-09-06新設・loadイベント消失バグ修正・固定待機を安定化ポーリングに変更して0件誤判定を解消・2026-09-07：同一タブでの長時間連続遷移によるChromeメモリ蓄積とみられる子数の誤検出を受け、100件ごとにタブ再起動を促すチェックポイントを追加・安定判定を件数のみからID一覧の中身比較に強化しポーリング開始前に最低600ms待つよう修正・0件で安定した場合のみ確認時間を3倍に伸ばして描画未開始との誤判定を防止・さらに下層を持たない末端の子カテゴリが/search?category_id=形式でリンクされているため取りこぼされていたバグを修正（「すべて」リンクとはテキストで判別して除外）・巡回中も常に停止・リセットボタンを表示するよう改善・2600件規模だと再開ボタンを26回押す手間になるとの指摘を受け、専用URL(?resume_catcrawl=1)を開いた時だけ5秒後に自動継続するよう変更・無関係なメルカリ閲覧タブで巡回対象ページと誤認して処理してしまう事故を防ぐため対象ページのURL一致確認を追加・2026-09-13：URLが一致しない時に何も表示せず終わっていたため「吹き出しが消えた」ように見えていた不具合を修正、止まっているページへワンクリックで移動・再開できる案内を追加）
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_category_tree_crawler.user.js
@@ -209,6 +209,28 @@
         }, 1000);
     }
 
+    // 2026-09-13追加：巡回が待っているページと違うページを開いている時に案内する。
+    // ワンクリックでそのカテゴリページへ飛べば、通常通りprocessCurrentPage()が
+    // 走って続きから再開する（データ・キューは一切失われない）。
+    function showStuckPrompt(current) {
+        showStatus(`⏸ 巡回は「${current.name}」(ID:${current.id})のページで止まっています。\n\n下のボタンでそのページへ移動すると続きから再開します。`);
+        const el = document.getElementById('catcrawl-status');
+
+        const goBtn = document.createElement('button');
+        goBtn.textContent = '▶ そのページへ移動して再開';
+        goBtn.style.cssText = [
+            'display:block', 'margin-top:8px', 'padding:7px 14px', 'width:100%',
+            'background:#1565c0', 'color:#fff', 'border:none', 'border-radius:6px',
+            'cursor:pointer', 'font-weight:bold', 'font-size:12px',
+        ].join(';');
+        goBtn.onclick = () => {
+            location.href = `https://jp.mercari.com/categories?category_id=${current.id}`;
+        };
+        // showStatus()が既に末尾に「停止・リセット」ボタンを追加済みなので、
+        // その手前に移動ボタンを挿入する
+        el.insertBefore(goBtn, el.querySelector('button'));
+    }
+
     function startCrawl() {
         setQueue(ROOT_CATEGORIES.map(c => ({ id: c.id, name: c.name, parent: '' })));
         setVisited(new Set());
@@ -350,7 +372,16 @@
         } else if (localStorage.getItem(RUNNING_KEY) === 'true' && localStorage.getItem(CURRENT_KEY)) {
             // このページ自体が、巡回が次に進もうとしていたまさにそのカテゴリページ
             // （current_key）と一致する場合のみ処理を続ける。無関係な閲覧では発火しない。
-            processCurrentPage();
+            // 2026-09-13追加：一致しない場合は何も表示せず黙って終わっていたため、
+            // 「吹き出しが消えた」ように見えて分かりにくかった（ユーザーが2回遭遇して
+            // 発覚）。巡回がどのページで止まっているか分かるよう案内し、ワンクリックで
+            // そのページへ飛んで再開できるようにする。
+            const currentForCheck = JSON.parse(localStorage.getItem(CURRENT_KEY));
+            if (new URLSearchParams(location.search).get('category_id') !== currentForCheck.id) {
+                showStuckPrompt(currentForCheck);
+            } else {
+                processCurrentPage();
+            }
         } else if (localStorage.getItem(RUNNING_KEY) === 'true') {
             // current_keyが無い状態で再開（途中でタブを閉じた等）。
             // 明示的な再開URLでなければボタン待ちにする（無関係な閲覧で勝手に進まないように）。
