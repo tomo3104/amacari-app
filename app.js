@@ -1,8 +1,12 @@
 // GAS Web AppのデプロイURL（/exec で終わるもの）に置き換えてください
 const GAS_URL = "https://script.google.com/macros/s/AKfycbz6W83NlKgz8ieDfRrXL2AfaPWo4xFqv_8vr5NT1-NQglc1tuOC50uT-CWEHrG95c64/exec";
 
+// 2026-09-12追加：GASのWebアプリは同一URLへのGETリクエストをGoogle側で
+// キャッシュすることがあり、「リロードしても件数が変わらない」原因になっていた
+// （RTタブでシミュレーション上21件残るはずが実際には1件しか表示されない、
+// という食い違いから発覚）。毎回ユニークなクエリパラメータを付けてキャッシュを回避する。
 function gasUrl(action, params) {
-  const usp = new URLSearchParams(Object.assign({ action }, params || {}));
+  const usp = new URLSearchParams(Object.assign({ action, _: Date.now() }, params || {}));
   return `${GAS_URL}?${usp.toString()}`;
 }
 
