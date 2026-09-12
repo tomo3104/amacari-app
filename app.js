@@ -358,6 +358,7 @@ function buildCardEl(card) {
       <p class="card-sub">
         型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         ／ ASIN：${escapeHtml(card.asin)}<button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        ／ 検知：${escapeHtml(formatHitTime(card.date))}
       </p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
@@ -1274,6 +1275,14 @@ function formatPercent(v) {
 function formatRank(v) {
   const n = Number(v);
   return Number.isFinite(n) && v !== "" && v !== null ? `${n.toLocaleString()}位` : "−";
+}
+
+// card.dateは"yyyy-MM-dd HH:mm"形式（Code.gs側で'Asia/Tokyo'指定でフォーマット済み）。
+// RTタブは検知から即座に判定するため、何時何分にヒットしたかが判断材料になる。
+function formatHitTime(dateStr) {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/);
+  if (!m) return dateStr || "−";
+  return `${parseInt(m[2], 10)}/${parseInt(m[3], 10)} ${m[4]}`;
 }
 
 // ---------- ログ ----------
