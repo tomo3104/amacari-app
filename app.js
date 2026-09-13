@@ -388,6 +388,7 @@ function buildCardEl(card) {
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
         <button class="link-btn link-asin-fix no-swipe" data-row="${card.row}">ASIN修正</button>
         <button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>
+        <button class="link-btn link-report-model no-swipe" data-model="${escapeAttr(card.model)}" data-asin="${escapeAttr(card.asin)}" data-name="${escapeAttr(card.name)}" data-url="${escapeAttr(card.mercari_url)}">🚩型番通報</button>
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
@@ -790,6 +791,35 @@ els.stack.addEventListener("click", handleCheckRestrictionClick);
 els.rtStack.addEventListener("click", handleCheckRestrictionClick);
 els.descStack.addEventListener("click", handleCheckRestrictionClick);
 els.furimaStack.addEventListener("click", handleCheckRestrictionClick);
+
+// ---------- 型番通報 ----------
+// 2026-09-14追加：精査中に「この型番はおかしい」と気づいても、後でまとめて
+// 伝えようとすると忘れてしまうとの指摘を受け、その場でワンタップ記録できる
+// ボタンを追加。判定操作とは独立で、押しても却下・仕入れ対象にはならない。
+async function handleReportModelClick(e) {
+  const btn = e.target.closest(".link-report-model");
+  if (!btn) return;
+  e.stopPropagation();
+  const model = btn.dataset.model;
+  const asin = btn.dataset.asin;
+  const name = btn.dataset.name;
+  const url = btn.dataset.url;
+  const original = btn.textContent;
+  btn.textContent = "送信中…";
+  btn.disabled = true;
+  try {
+    await gasPost("reportModel", { model, asin, name, mercari_url: url });
+    btn.textContent = "✅ 報告済み";
+  } catch (err) {
+    btn.textContent = "⚠ 失敗";
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  }
+}
+
+els.stack.addEventListener("click", handleReportModelClick);
+els.rtStack.addEventListener("click", handleReportModelClick);
+els.descStack.addEventListener("click", handleReportModelClick);
 
 // ---------- ASIN修正 ----------
 
