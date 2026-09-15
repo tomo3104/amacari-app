@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 利益率ハイライター
 // @namespace    http://tampermonkey.net/
-// @version      2.6
-// @description  実利益率（Amazon価格基準）に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆実利益率15%以上をASIN付きでローカルサーバーに通知＆1時間ごとに自動リロード
+// @version      2.7
+// @description  実利益率（Amazon価格基準）に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆実利益率15%以上かつ差益500円以上をASIN・型番付きでローカルサーバーに通知＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -13,6 +13,10 @@
     'use strict';
 
     const MIN_PROFIT_RATE = 0.15;
+    // 2026-09-16追加：利益率だけだと「利益率は高いが絶対額はごくわずか」な商品
+    // （例：500円の商品で利益率15%＝利益75円）まで通知されてしまうため、AR/RT側の
+    // MIN_DIFF（server.py）と同じ考え方で最低利益額の下限も追加した。
+    const MIN_DIFF = 500;
     const SERVER_URL = 'http://localhost:8768/furima-hit';
     const LS_KEY = 'furimaNotifiedCache';
     const LS_ACCOUNT_KEY = 'frimaAccount';
@@ -88,6 +92,9 @@
 
             const querySource = (tr.query && (tr.query.name || tr.query.memo)) || '';
             const asinMatch = querySource.match(/\bB0[A-Z0-9]{8}\b/) || querySource.match(/\b[A-Z0-9]{10}\b/);
+            // 2026-09-16追加：登録時のアラート名は「型番 ASIN pmax」の空白区切り形式
+            // （export_frima.pyのmake_premium_row参照）のため、先頭トークンが型番になる。
+            const model = (querySource.trim().split(/\s+/)[0]) || '';
 
             const payload = {
                 itemid:     itemid,
@@ -100,6 +107,7 @@
                 service:    tr.item.service || '',
                 asin:       asinMatch ? asinMatch[0] : '',
                 account:    getAccount() || 'unknown',
+                model:      model,
             };
 
             fetch(SERVER_URL, {
@@ -151,7 +159,7 @@
             const amazonPrice = getAmazonPriceFromRow(row);
             const profitRate = calcRealMargin(diff, limitPrice, amazonPrice);
 
-            if (profitRate >= MIN_PROFIT_RATE) {
+            if (profitRate >= MIN_PROFIT_RATE && diff >= MIN_DIFF) {
                 sendHit(row, profitRate, frimPrice, limitPrice);
             }
 

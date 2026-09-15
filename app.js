@@ -445,6 +445,13 @@ function buildFurimaCardEl(card) {
     links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
     links.push(`<button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>`);
   }
+  if (card.model) {
+    links.push(`<button class="link-btn link-exclude-model no-swipe" data-model="${escapeAttr(card.model)}">🚫型番除外報告</button>`);
+  }
+
+  const modelLine = card.model
+    ? `型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button> ／ `
+    : "";
 
   el.innerHTML = `
     <div class="swipe-flag flag-like">仕入れ対象</div>
@@ -454,7 +461,7 @@ function buildFurimaCardEl(card) {
     ${thumb}
     <div class="card-body">
       <p class="card-name">${escapeHtml(card.name)}</p>
-      <p class="card-sub">サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
+      <p class="card-sub">${modelLine}サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
@@ -820,6 +827,31 @@ async function handleReportModelClick(e) {
 els.stack.addEventListener("click", handleReportModelClick);
 els.rtStack.addEventListener("click", handleReportModelClick);
 els.descStack.addEventListener("click", handleReportModelClick);
+
+// ---------- 型番除外報告（FRタブ専用） ----------
+// 2026-09-16追加：FR（フリマウォッチ常時監視）タブでノイズ型番に気づいたら、
+// reportModel（後日まとめて人力判断）とは別に、即座に除外を確定できるように
+// する。押した型番はexport_frima.pyの次回CSV生成から自動的に除外される。
+// 判定操作とは独立で、押しても却下・仕入れ対象にはならない。
+async function handleExcludeFurimaModelClick(e) {
+  const btn = e.target.closest(".link-exclude-model");
+  if (!btn) return;
+  e.stopPropagation();
+  const model = btn.dataset.model;
+  const original = btn.textContent;
+  btn.textContent = "送信中…";
+  btn.disabled = true;
+  try {
+    await gasPost("excludeFurimaModel", { model });
+    btn.textContent = "✅ 除外済み";
+  } catch (err) {
+    btn.textContent = "⚠ 失敗";
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  }
+}
+
+els.furimaStack.addEventListener("click", handleExcludeFurimaModelClick);
 
 // ---------- ASIN修正 ----------
 
