@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリ有効性サンプラー
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  候補カテゴリごとに実際の出品タイトルをサンプル取得し、型番らしき文字列を含む比率をスコアリングする（新規メーカー発掘のカテゴリ版・2026-09-17新設）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -125,29 +125,68 @@
             + '&sort=created_time&order=desc';
     }
 
-    async function sampleCategory(cat) {
+    // 2026-09-17：メルカリの検索結果はNext.jsのクライアントサイド描画のため、fetch()で
+    // 取得した生HTMLには商品が入っていない（サーバーはナビゲーションリクエストにのみ
+    // 描画済みデータを返すため）。mercari_desc_model_finder.user.jsのfetchItemDescと
+    // 同じ「隠しiframeで実際にナビゲートさせてから、描画済みDOMをポーリングで待つ」
+    // 方式に統一する。
+    function sampleCategory(cat) {
         const url = buildUrl(cat.id);
-        let doc;
-        try {
-            const res = await fetch(url, { credentials: 'include' });
-            const html = await res.text();
-            doc = new DOMParser().parseFromString(html, 'text/html');
-        } catch (e) {
-            addLog(`  [${cat.name}] 取得失敗: ${e}`, '#ff8888');
-            return { ...cat, sample: 0, hit: 0, rate: null };
-        }
-        const items = doc.querySelectorAll(ITEM_SEL);
-        let sample = 0, hit = 0;
-        items.forEach(el => {
-            const nameEl = el.querySelector(NAME_SEL);
-            if (!nameEl) return;
-            const name = nameEl.textContent.trim();
-            if (!name) return;
-            sample++;
-            if (hasModelLikeToken(name)) hit++;
+        return new Promise(resolve => {
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
+            document.body.appendChild(iframe);
+
+            let done = false;
+            const finish = (sample, hit, failed) => {
+                if (done) return;
+                done = true;
+                try { iframe.remove(); } catch (_) {}
+                const rate = (!failed && sample > 0) ? Math.round((hit / sample) * 1000) / 10 : null;
+                resolve({ ...cat, sample, hit, rate, failed });
+            };
+
+            const hardTimer = setTimeout(() => finish(0, 0, true), 10000);
+
+            iframe.onload = () => {
+                let tries = 0;
+                const poll = setInterval(() => {
+                    let items;
+                    try {
+                        const doc = iframe.contentDocument;
+                        if (!doc || !doc.body) return;
+                        items = doc.querySelectorAll(ITEM_SEL);
+                    } catch (e) {
+                        clearInterval(poll);
+                        clearTimeout(hardTimer);
+                        finish(0, 0, true);
+                        return;
+                    }
+                    if (items.length > 0) {
+                        clearInterval(poll);
+                        clearTimeout(hardTimer);
+                        let sample = 0, hit = 0;
+                        items.forEach(el => {
+                            const nameEl = el.querySelector(NAME_SEL);
+                            if (!nameEl) return;
+                            const name = nameEl.textContent.trim();
+                            if (!name) return;
+                            sample++;
+                            if (hasModelLikeToken(name)) hit++;
+                        });
+                        finish(sample, hit, false);
+                        return;
+                    }
+                    if (++tries > 45) { // 45 × 200ms = 9秒（該当カテゴリに出品が0件の場合もここに来る）
+                        clearInterval(poll);
+                        clearTimeout(hardTimer);
+                        finish(0, 0, false); // 取得失敗ではなく「0件」として扱う
+                    }
+                }, 200);
+            };
+            iframe.onerror = () => { clearTimeout(hardTimer); finish(0, 0, true); };
+            iframe.src = url;
         });
-        const rate = sample > 0 ? Math.round((hit / sample) * 1000) / 10 : null;
-        return { ...cat, sample, hit, rate };
     }
 
     btn.addEventListener('click', async () => {
@@ -159,15 +198,15 @@
             updateStatus(`検証中... (${i + 1}/${CANDIDATES.length}) ${cat.name}`);
             const r = await sampleCategory(cat);
             results.push(r);
-            const rateStr = r.rate === null ? '取得失敗' : `${r.rate}%`;
+            const rateStr = r.failed ? '取得失敗' : (r.sample === 0 ? '0件' : `${r.rate}%`);
             addLog(`[${i + 1}/${CANDIDATES.length}] ${cat.name} (ID:${cat.id}): ${r.hit}/${r.sample}件 → ${rateStr}`,
-                   r.rate === null ? '#ff8888' : (r.rate >= 30 ? '#88ff88' : (r.rate >= 10 ? '#ffcc66' : '#ff8888')));
+                   r.failed ? '#ff8888' : (r.rate === null ? '#999' : (r.rate >= 30 ? '#88ff88' : (r.rate >= 10 ? '#ffcc66' : '#ff8888'))));
             await new Promise(resolve => setTimeout(resolve, 1500));
         }
         results.sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
         addLog('----- 結果（型番らしき比率の高い順） -----', '#88ccff');
         results.forEach(r => {
-            const rateStr = r.rate === null ? '取得失敗' : `${r.rate}%`;
+            const rateStr = r.failed ? '取得失敗' : (r.sample === 0 ? '0件' : `${r.rate}%`);
             addLog(`${r.name}: ${rateStr} (${r.hit}/${r.sample}件)`);
         });
         updateStatus('完了！コンソールに詳細結果を出力しました');
