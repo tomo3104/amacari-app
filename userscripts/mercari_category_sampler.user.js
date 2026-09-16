@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリ有効性サンプラー
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  候補カテゴリごとに実際の出品タイトルをサンプル取得し、型番らしき文字列を含む比率をスコアリングする（新規メーカー発掘のカテゴリ版・2026-09-17新設）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -201,16 +201,17 @@
         console.log('[カテゴリ検証結果]', JSON.stringify(results, null, 2));
     }
 
-    // 現在のページから型番らしき比率を計測し、キューを進める
-    function processCurrentPage(cat) {
-        showStatus(`検証中...\n${cat.name} の描画待ち`);
+    const TARGET_SAMPLE_SIZE = 30;
+    const MAX_SCROLL_ATTEMPTS = 6;
+    const SCROLL_WAIT_MS = 1200;
+
+    function waitForInitialRender(callback) {
         let stableTicks = 0;
         let lastCount = -1;
         const startTime = Date.now();
         setTimeout(() => {
             const poll = setInterval(() => {
-                const items = document.querySelectorAll(ITEM_SEL);
-                const count = items.length;
+                const count = document.querySelectorAll(ITEM_SEL).length;
                 if (count === lastCount) {
                     stableTicks++;
                 } else {
@@ -225,23 +226,62 @@
                 const requiredTicks = count === 0 ? STABLE_TICKS_REQUIRED * 3 : STABLE_TICKS_REQUIRED;
                 if (stableTicks >= requiredTicks || elapsed >= MAX_WAIT_MS * 2) {
                     clearInterval(poll);
-                    let sample = 0, hit = 0;
-                    items.forEach(el => {
-                        const nameEl = el.querySelector(NAME_SEL);
-                        if (!nameEl) return;
-                        const name = nameEl.textContent.trim();
-                        if (!name) return;
-                        sample++;
-                        if (hasModelLikeToken(name)) hit++;
-                    });
-                    const rate = sample > 0 ? Math.round((hit / sample) * 1000) / 10 : null;
-                    const results = getResult();
-                    results.push({ ...cat, sample, hit, rate });
-                    setResult(results);
-                    goNext();
+                    callback();
                 }
             }, POLL_INTERVAL_MS);
         }, INITIAL_DELAY_MS);
+    }
+
+    // 2026-09-17追加：サンプル10件は少なすぎて比率のブレが大きい（新規メーカー発掘の
+    // 検証で「小さいサンプルは五分五分を見逃す」と判明した教訓と同じ）。無限スクロール
+    // で追加読み込みさせ、TARGET_SAMPLE_SIZE件に達するか、スクロールしても増えなく
+    // なるまで（＝そのページの全件を読み切った）繰り返す。
+    function scrollForMoreItems(cat) {
+        let attempts = 0;
+        let lastCount = document.querySelectorAll(ITEM_SEL).length;
+        const tryScroll = () => {
+            if (lastCount >= TARGET_SAMPLE_SIZE || attempts >= MAX_SCROLL_ATTEMPTS) {
+                finalizeCategory(cat);
+                return;
+            }
+            attempts++;
+            showStatus(`検証中...\n${cat.name}（${lastCount}件読み込み済み・追加読込中）`);
+            window.scrollTo(0, document.body.scrollHeight);
+            setTimeout(() => {
+                const count = document.querySelectorAll(ITEM_SEL).length;
+                if (count === lastCount) {
+                    // 2回連続で増えなければそのページの全件を読み切ったとみなす
+                    finalizeCategory(cat);
+                    return;
+                }
+                lastCount = count;
+                tryScroll();
+            }, SCROLL_WAIT_MS);
+        };
+        tryScroll();
+    }
+
+    function finalizeCategory(cat) {
+        const items = document.querySelectorAll(ITEM_SEL);
+        let sample = 0, hit = 0;
+        items.forEach(el => {
+            const nameEl = el.querySelector(NAME_SEL);
+            if (!nameEl) return;
+            const name = nameEl.textContent.trim();
+            if (!name) return;
+            sample++;
+            if (hasModelLikeToken(name)) hit++;
+        });
+        const rate = sample > 0 ? Math.round((hit / sample) * 1000) / 10 : null;
+        const results = getResult();
+        results.push({ ...cat, sample, hit, rate });
+        setResult(results);
+        goNext();
+    }
+
+    function processCurrentPage(cat) {
+        showStatus(`検証中...\n${cat.name} の描画待ち`);
+        waitForInitialRender(() => scrollForMoreItems(cat));
     }
 
     function addStartButton() {
