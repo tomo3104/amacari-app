@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリ有効性サンプラー
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  候補カテゴリごとに実際の出品タイトルをサンプル取得し、型番らしき文字列を含む比率をスコアリングする（新規メーカー発掘のカテゴリ版・2026-09-17新設）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -115,14 +115,18 @@
     }
     function updateStatus(msg) { statusEl.style.display = 'block'; statusEl.textContent = msg; }
 
+    // 2026-09-17修正：manufacturersシートで実際に稼働確認済みのURL形式に合わせる
+    // （配列ブラケット記法%5B%5Dは不要で、item_types=mercariが必要だった）。
     function buildUrl(catId) {
         return 'https://jp.mercari.com/search'
-            + '?category_id=' + encodeURIComponent(catId)
-            + '&status=sold_out'
-            + '&item_condition_id%5B%5D=1'
-            + '&shipping_payer_id%5B%5D=2'
+            + '?exclude_keyword=' + encodeURIComponent('開封済み　破れ　ダメージ')
             + '&price_min=1500&price_max=15000'
-            + '&sort=created_time&order=desc';
+            + '&item_condition_id=1'
+            + '&shipping_payer_id=2'
+            + '&status=sold_out'
+            + '&sort=created_time&order=desc'
+            + '&item_types=mercari'
+            + '&category_id=' + encodeURIComponent(catId);
     }
 
     // 2026-09-17：メルカリの検索結果はNext.jsのクライアントサイド描画のため、fetch()で
