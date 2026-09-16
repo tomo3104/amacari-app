@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリ有効性サンプラー
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  候補カテゴリごとに実際の出品タイトルをサンプル取得し、型番らしき文字列を含む比率をスコアリングする（新規メーカー発掘のカテゴリ版・2026-09-17新設）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -218,7 +218,12 @@
                     lastCount = count;
                 }
                 const elapsed = Date.now() - startTime;
-                if (stableTicks >= STABLE_TICKS_REQUIRED || elapsed >= MAX_WAIT_MS) {
+                // 2026-09-17：0件のまま安定した場合、「本当に0件」なのか「まだ描画が
+                // 始まっていないだけ」なのかを件数だけでは区別できない
+                // （mercari_category_tree_crawler.user.jsで実際に踏んだ事故と同じ）。
+                // 0件のときだけ通常の3倍の安定確認時間を要求する。
+                const requiredTicks = count === 0 ? STABLE_TICKS_REQUIRED * 3 : STABLE_TICKS_REQUIRED;
+                if (stableTicks >= requiredTicks || elapsed >= MAX_WAIT_MS * 2) {
                     clearInterval(poll);
                     let sample = 0, hit = 0;
                     items.forEach(el => {
