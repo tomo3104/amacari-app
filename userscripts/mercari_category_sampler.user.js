@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリ有効性サンプラー
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  候補カテゴリごとに実際の出品タイトルをサンプル取得し、型番らしき文字列を含む比率をスコアリングする（新規メーカー発掘のカテゴリ版・2026-09-17新設）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -69,7 +69,10 @@
     ];
 
     const NAME_SEL = 'span[data-testid="thumbnail-item-name"]';
-    const ITEM_SEL = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
+    // 2026-09-17修正：itemtype="ITEM_TYPE_MERCARI"属性が現在のDOMには存在しないと判明
+    // （mercari_auto_collector.user.js側のセレクタが既に古くなっていた可能性）。
+    // クラス名のみで判定する。
+    const ITEM_SEL = 'div.merItemThumbnail';
 
     const QUEUE_KEY   = 'catsample_queue';
     const RESULT_KEY  = 'catsample_result';
