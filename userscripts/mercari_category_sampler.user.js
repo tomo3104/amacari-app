@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリ有効性サンプラー
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      2.0
 // @description  候補カテゴリごとに実際の出品タイトルをサンプル取得し、型番らしき文字列を含む比率をスコアリングする（新規メーカー発掘のカテゴリ版・2026-09-17新設）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -12,9 +12,11 @@
 (function () {
     'use strict';
 
-    // 2026-09-17：asin-tools/asin_check.pyのmodel_pattern/EXCLUDE_WORDSと同じロジックをJS移植。
-    // 「型番らしき文字列」の判定基準を型番収集ルート本体と一致させることで、
-    // ここでのスコアがそのまま実運用時の型番抽出率の見込みになるようにする。
+    // 2026-09-17：検索結果一覧は隠しiframeでは商品グリッドが描画されないと判明
+    // （フィルターUI等の外枠だけは読めるが、仮想スクロール的な一覧本体は非表示iframe
+    // だとレンダリングされない）。mercari_category_tree_crawler.user.jsと同じ
+    // 「実際にタブを遷移させながら1件ずつ処理する」方式に作り直した。
+
     const MODEL_PATTERN = /\b(?=[A-Z][A-Z0-9\-_/.]{5,24}(?<![-_/.])\b)(?=.*\d)[A-Z][A-Z0-9\-_/.]{5,24}\b/g;
     const EXCLUDE_WORDS = [
         "SONY", "BUFFALO", "ELECOM", "IRIS", "PANASONIC", "SANWA", "HORI", "TDK",
@@ -33,15 +35,11 @@
         const w = word.replace(/\s/g, '').replace(/　/g, '').toUpperCase();
         return EXCLUDE_WORDS.some(ex => w.startsWith(ex));
     }
-
     function hasModelLikeToken(title) {
         const matches = title.match(MODEL_PATTERN) || [];
         return matches.some(m => m.length >= 6 && !isExcluded(m));
     }
 
-    // 2026-09-17：候補カテゴリ一覧（クローラーコレクトの分析・仕分けで決定した「型番が
-    // 出そうな枝」のみ）。IDはcatcrawl_result.json（mercari_category_tree_crawler.user.js
-    // の収集結果）から抽出したもの。
     const CANDIDATES = [
         { id: '7',    name: 'スマホ・タブレット・パソコン' },
         { id: '3888', name: 'テレビ・オーディオ・カメラ' },
@@ -70,53 +68,25 @@
         { id: '501',  name: 'ベビーカー・バギー' },
     ];
 
-    const NAME_SEL  = 'span[data-testid="thumbnail-item-name"]';
-    const ITEM_SEL  = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
+    const NAME_SEL = 'span[data-testid="thumbnail-item-name"]';
+    const ITEM_SEL = 'div.merItemThumbnail[itemtype="ITEM_TYPE_MERCARI"]';
 
-    // ===== UI =====
-    const container = document.createElement('div');
-    container.style.cssText = `
-        position:fixed; bottom:180px; right:20px; z-index:99999;
-        display:flex; flex-direction:column; align-items:flex-end; gap:8px;
-    `;
-    const statusEl = document.createElement('div');
-    statusEl.style.cssText = `
-        background:rgba(0,0,0,0.78); color:#fff; padding:6px 14px;
-        border-radius:6px; font-size:13px; display:none; max-width:320px;
-    `;
-    const btn = document.createElement('button');
-    btn.textContent = '📊 カテゴリ検証';
-    btn.style.cssText = `
-        padding:12px 20px; background:#8e24aa; color:#fff;
-        border:none; border-radius:6px; font-size:14px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
-    container.appendChild(statusEl);
-    container.appendChild(btn);
-    document.body.appendChild(container);
+    const QUEUE_KEY   = 'catsample_queue';
+    const RESULT_KEY  = 'catsample_result';
+    const RUNNING_KEY = 'catsample_running';
+    const CURRENT_KEY = 'catsample_current';
 
-    const logPanel = document.createElement('div');
-    logPanel.style.cssText = `
-        position:fixed; bottom:280px; right:20px; z-index:99998;
-        width:420px; max-height:400px; overflow-y:auto;
-        background:rgba(0,0,0,0.9); color:#d0d0d0; padding:10px 14px;
-        border-radius:8px; font-size:12px; font-family:monospace;
-        display:none; line-height:1.6; box-shadow:0 2px 10px rgba(0,0,0,0.4);
-    `;
-    document.body.appendChild(logPanel);
+    const POLL_INTERVAL_MS      = 300;
+    const STABLE_TICKS_REQUIRED = 4;    // 1200ms間、件数が変化しなければ安定とみなす
+    const MAX_WAIT_MS           = 8000;
+    const INITIAL_DELAY_MS      = 600;
+    const NAV_DELAY_MS          = 800;
 
-    function addLog(msg, color) {
-        const line = document.createElement('div');
-        line.textContent = msg;
-        if (color) line.style.color = color;
-        logPanel.appendChild(line);
-        logPanel.scrollTop = logPanel.scrollHeight;
-        logPanel.style.display = 'block';
-    }
-    function updateStatus(msg) { statusEl.style.display = 'block'; statusEl.textContent = msg; }
+    function getQueue()  { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch (e) { return []; } }
+    function setQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+    function getResult()  { try { return JSON.parse(localStorage.getItem(RESULT_KEY) || '[]'); } catch (e) { return []; } }
+    function setResult(r) { localStorage.setItem(RESULT_KEY, JSON.stringify(r)); }
 
-    // 2026-09-17修正：manufacturersシートで実際に稼働確認済みのURL形式に合わせる
-    // （配列ブラケット記法%5B%5Dは不要で、item_types=mercariが必要だった）。
     function buildUrl(catId) {
         return 'https://jp.mercari.com/search'
             + '?exclude_keyword=' + encodeURIComponent('開封済み　破れ　ダメージ')
@@ -129,43 +99,123 @@
             + '&category_id=' + encodeURIComponent(catId);
     }
 
-    // 2026-09-17：メルカリの検索結果はNext.jsのクライアントサイド描画のため、fetch()で
-    // 取得した生HTMLには商品が入っていない（サーバーはナビゲーションリクエストにのみ
-    // 描画済みデータを返すため）。mercari_desc_model_finder.user.jsのfetchItemDescと
-    // 同じ「隠しiframeで実際にナビゲートさせてから、描画済みDOMをポーリングで待つ」
-    // 方式に統一する。
-    function sampleCategory(cat, debug) {
-        const url = buildUrl(cat.id);
-        return new Promise(resolve => {
-            const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
-            document.body.appendChild(iframe);
-
-            let done = false;
-            const finish = (sample, hit, failed, debugInfo) => {
-                if (done) return;
-                done = true;
-                try { iframe.remove(); } catch (_) {}
-                const rate = (!failed && sample > 0) ? Math.round((hit / sample) * 1000) / 10 : null;
-                resolve({ ...cat, sample, hit, rate, failed, debugInfo });
+    function showStatus(msg, showCopyButton) {
+        let el = document.getElementById('catsample-status');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'catsample-status';
+            el.style.cssText = [
+                'position:fixed', 'top:20px', 'right:320px', 'z-index:2147483647',
+                'background:#4a148c', 'color:#fff', 'padding:12px 16px', 'border-radius:10px',
+                'font-size:13px', 'box-shadow:0 4px 16px rgba(0,0,0,.5)', 'max-width:280px',
+                'line-height:1.5', 'white-space:pre-line',
+            ].join(';');
+            document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        if (showCopyButton) {
+            const btn = document.createElement('button');
+            btn.textContent = '📋 結果をコピー';
+            btn.style.cssText = [
+                'display:block', 'margin-top:8px', 'padding:7px 14px', 'width:100%',
+                'background:#2e7d32', 'color:#fff', 'border:none', 'border-radius:6px',
+                'cursor:pointer', 'font-weight:bold', 'font-size:12px',
+            ].join(';');
+            btn.onclick = () => {
+                const sorted = getResult().slice().sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
+                navigator.clipboard.writeText(JSON.stringify(sorted, null, 2))
+                    .then(() => { btn.textContent = '✅ コピーしました'; })
+                    .catch(() => { btn.textContent = '⚠ コピー失敗'; });
             };
+            el.appendChild(btn);
+        }
+        const stopBtn = document.createElement('button');
+        stopBtn.textContent = '停止・リセット';
+        stopBtn.style.cssText = [
+            'display:block', 'margin-top:6px', 'padding:6px 14px', 'width:100%',
+            'background:#616161', 'color:#fff', 'border:none', 'border-radius:6px',
+            'cursor:pointer', 'font-size:11px',
+        ].join(';');
+        stopBtn.onclick = resetAll;
+        el.appendChild(stopBtn);
+    }
 
-            // 2026-09-17修正：onloadイベントの発火に依存せず、iframe.src設定直後から
-            // 即座にポーリングを始める（SPAページはonloadが期待通り発火しないことがある）。
-            let tries = 0;
-            const MAX_TRIES = 75; // 75 × 200ms = 15秒
+    function resetAll() {
+        localStorage.removeItem(QUEUE_KEY);
+        localStorage.removeItem(RESULT_KEY);
+        localStorage.removeItem(RUNNING_KEY);
+        localStorage.removeItem(CURRENT_KEY);
+        const el = document.getElementById('catsample-status');
+        if (el) el.remove();
+        addStartButton();
+    }
+
+    function showStuckPrompt(current) {
+        showStatus(`⏸ 検証は「${current.name}」(ID:${current.id})のページで止まっています。\n\n下のボタンでそのページへ移動すると続きから再開します。`);
+        const el = document.getElementById('catsample-status');
+        const goBtn = document.createElement('button');
+        goBtn.textContent = '▶ そのページへ移動して再開';
+        goBtn.style.cssText = [
+            'display:block', 'margin-top:8px', 'padding:7px 14px', 'width:100%',
+            'background:#1565c0', 'color:#fff', 'border:none', 'border-radius:6px',
+            'cursor:pointer', 'font-weight:bold', 'font-size:12px',
+        ].join(';');
+        goBtn.onclick = () => { location.href = buildUrl(current.id); };
+        el.insertBefore(goBtn, el.querySelector('button'));
+    }
+
+    function startSampling() {
+        setQueue(CANDIDATES.slice());
+        setResult([]);
+        localStorage.setItem(RUNNING_KEY, 'true');
+        const btn = document.getElementById('catsample-start-btn');
+        if (btn) btn.remove();
+        goNext();
+    }
+
+    function goNext() {
+        const queue = getQueue();
+        if (queue.length === 0) {
+            finish();
+            return;
+        }
+        const next = queue.shift();
+        setQueue(queue);
+        localStorage.setItem(CURRENT_KEY, JSON.stringify(next));
+        showStatus(`検証中... 残り${queue.length + 1}件\n次: ${next.name}`);
+        setTimeout(() => { location.href = buildUrl(next.id); }, NAV_DELAY_MS);
+    }
+
+    function finish() {
+        localStorage.removeItem(RUNNING_KEY);
+        localStorage.removeItem(CURRENT_KEY);
+        const results = getResult().slice().sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
+        const lines = results.map(r => {
+            const rateStr = r.sample === 0 ? '0件' : `${r.rate}%`;
+            return `${r.name}: ${rateStr} (${r.hit}/${r.sample})`;
+        });
+        showStatus(`✅ 完了！全${results.length}件\n\n` + lines.join('\n'), true);
+        console.log('[カテゴリ検証結果]', JSON.stringify(results, null, 2));
+    }
+
+    // 現在のページから型番らしき比率を計測し、キューを進める
+    function processCurrentPage(cat) {
+        showStatus(`検証中...\n${cat.name} の描画待ち`);
+        let stableTicks = 0;
+        let lastCount = -1;
+        const startTime = Date.now();
+        setTimeout(() => {
             const poll = setInterval(() => {
-                let doc, items;
-                try {
-                    doc = iframe.contentDocument;
-                    if (!doc || !doc.body) return; // まだ何も読み込まれていない
-                    items = doc.querySelectorAll(ITEM_SEL);
-                } catch (e) {
-                    clearInterval(poll);
-                    finish(0, 0, true, `crossorigin: ${e.message}`);
-                    return;
+                const items = document.querySelectorAll(ITEM_SEL);
+                const count = items.length;
+                if (count === lastCount) {
+                    stableTicks++;
+                } else {
+                    stableTicks = 0;
+                    lastCount = count;
                 }
-                if (items.length > 0) {
+                const elapsed = Date.now() - startTime;
+                if (stableTicks >= STABLE_TICKS_REQUIRED || elapsed >= MAX_WAIT_MS) {
                     clearInterval(poll);
                     let sample = 0, hit = 0;
                     items.forEach(el => {
@@ -176,47 +226,42 @@
                         sample++;
                         if (hasModelLikeToken(name)) hit++;
                     });
-                    finish(sample, hit, false, `ok (title=${doc.title})`);
-                    return;
+                    const rate = sample > 0 ? Math.round((hit / sample) * 1000) / 10 : null;
+                    const results = getResult();
+                    results.push({ ...cat, sample, hit, rate });
+                    setResult(results);
+                    goNext();
                 }
-                if (++tries > MAX_TRIES) {
-                    clearInterval(poll);
-                    const bodySnippet = (doc && doc.body ? doc.body.innerText : '').slice(0, 120).replace(/\s+/g, ' ');
-                    finish(0, 0, true, `timeout (title=${doc ? doc.title : '?'} body="${bodySnippet}")`);
-                }
-            }, 200);
-            iframe.onerror = () => { clearInterval(poll); finish(0, 0, true, 'onerror'); };
-            iframe.src = url;
-        });
+            }, POLL_INTERVAL_MS);
+        }, INITIAL_DELAY_MS);
     }
 
-    btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        logPanel.innerHTML = '';
-        const results = [];
-        for (let i = 0; i < CANDIDATES.length; i++) {
-            const cat = CANDIDATES[i];
-            updateStatus(`検証中... (${i + 1}/${CANDIDATES.length}) ${cat.name}`);
-            const r = await sampleCategory(cat);
-            results.push(r);
-            const rateStr = r.failed ? '取得失敗' : (r.sample === 0 ? '0件' : `${r.rate}%`);
-            addLog(`[${i + 1}/${CANDIDATES.length}] ${cat.name} (ID:${cat.id}): ${r.hit}/${r.sample}件 → ${rateStr}`,
-                   r.failed ? '#ff8888' : (r.rate === null ? '#999' : (r.rate >= 30 ? '#88ff88' : (r.rate >= 10 ? '#ffcc66' : '#ff8888'))));
-            if (r.failed) addLog(`    診断: ${r.debugInfo}`, '#888');
-            await new Promise(resolve => setTimeout(resolve, 1500));
+    function addStartButton() {
+        if (document.getElementById('catsample-start-btn')) return;
+        const btn = document.createElement('button');
+        btn.id = 'catsample-start-btn';
+        btn.textContent = '📊 カテゴリ検証';
+        btn.style.cssText = `
+            position:fixed; bottom:180px; right:20px; z-index:99999;
+            padding:12px 20px; background:#8e24aa; color:#fff;
+            border:none; border-radius:6px; font-size:14px;
+            cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        `;
+        btn.onclick = startSampling;
+        document.body.appendChild(btn);
+    }
+
+    // ===== 起動時の状態判定 =====
+    if (localStorage.getItem(RUNNING_KEY) === 'true' && localStorage.getItem(CURRENT_KEY)) {
+        let current;
+        try { current = JSON.parse(localStorage.getItem(CURRENT_KEY)); } catch (e) { current = null; }
+        const urlMatches = current && location.href.includes('category_id=' + current.id) && location.pathname.startsWith('/search');
+        if (current && urlMatches) {
+            processCurrentPage(current);
+        } else if (current) {
+            showStuckPrompt(current);
         }
-        results.sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
-        addLog('----- 結果（型番らしき比率の高い順） -----', '#88ccff');
-        results.forEach(r => {
-            const rateStr = r.failed ? '取得失敗' : (r.sample === 0 ? '0件' : `${r.rate}%`);
-            addLog(`${r.name}: ${rateStr} (${r.hit}/${r.sample}件)`);
-        });
-        updateStatus('完了！コンソールに詳細結果を出力しました');
-        console.log('[カテゴリ検証結果]', JSON.stringify(results, null, 2));
-        try {
-            await navigator.clipboard.writeText(JSON.stringify(results, null, 2));
-            addLog('→ 結果をクリップボードにコピーしました', '#88ccff');
-        } catch (e) { /* noop */ }
-        btn.disabled = false;
-    });
+    } else {
+        addStartButton();
+    }
 })();
