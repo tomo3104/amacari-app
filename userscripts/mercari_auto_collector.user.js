@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.15
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更）
+// @version      6.16
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・一時的にページ深度を20→60へ拡張しカテゴリ検証Aの深掘りテストに対応）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -467,7 +467,8 @@
         const allItems = {};
         let pageToken = '';
 
-        for (let page = 0; page < 20; page++) {
+        // 2026-09-17一時変更：カテゴリ検証Aの深掘りテスト用に20→60ページへ拡張（検証後は20に戻す）
+        for (let page = 0; page < 60; page++) {
             const bodyObj = JSON.parse(tpl.body);
             const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
             sc.keyword = keyword;
