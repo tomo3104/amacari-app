@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.19
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張）
+// @version      6.20
+// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -721,9 +721,12 @@
                     const brand = (b && b.id) ? { id: String(b.id), name: b.name || '' } : null;
                     // 2026-09-02追加：クローラーリサーチ側と同じ「何ページ目で新規発見が尽きるか」の
                     // 分析をコレクト側でも行うため、urlと_pageも保持する
+                    // 2026-09-17追加：カテゴリ/メーカー別の実績（Amazon価格リサーチ後の
+                    // ヒット率）を後から集計できるよう、収集元の名前(ctx.name)も保持する
                     allItems[id] = {
                         name: item.name, price: String(item.price), brand,
                         url: `https://jp.mercari.com/item/${id}`, _page: page + 1,
+                        _source: ctx ? ctx.name : '',
                     };
                 }
             });
@@ -844,7 +847,7 @@
         // 2026-09-03追加：/collect-items側にもurlを送り、サーバー側でアイテムID単位の
         // 重複排除ができるようにした（同じ売り切れ出品が毎回のクロールで再収集され、
         // mercariシートの価格リストに同一価格が何十回も重複記録される問題を修正するため）。
-        const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0, url: it.url || '' }));
+        const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0, url: it.url || '', source: it._source || '' }));
         const result = await new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'POST',
