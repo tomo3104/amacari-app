@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.25
+// @version      3.26
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -124,7 +124,6 @@
         { name: 'シマノ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=3391' },
         { name: 'マキタ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=9916' },
         { name: 'タミヤ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=36300' },
-        { name: 'バンダイ', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=958' },
         { name: 'ライト・照明', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=65' },
         { name: 'テレビ・映像機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=98' },
         { name: 'オーディオ機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=99' },
