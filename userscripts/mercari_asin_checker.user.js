@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.65
+// @version      3.66
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -521,7 +521,14 @@
                         const all  = (data.manufacturers || []).filter(m => m.url);
                         if (all.length > 0) {
                             const mfrs       = all.filter(m => !isCategoryUrl(m.url));
-                            const categories = all.filter(m => isCategoryUrl(m.url)).map(m => ({ ...m, group: 'CAT' }));
+                            // 2026-09-20変更：以前は全カテゴリ行のgroupを'CAT'に上書きしていたが、
+                            // シートのグループ名（カテゴリ家電/PC/AV/住宅工具等）を保持して個別に選べるようにした。
+                            // 深さの上限(20ページ)はURL判定(isCategoryUrl)で適用するのでgroupに依存しない。
+                            // 「カテゴリ〜」で始まる新カテゴリ群は、夜間の自動実行(ALL)が際限なく長くなるのを
+                            // 防ぐため、ALLには含めず明示的に選んだ時だけ回す(optIn)。
+                            const categories = all.filter(m => isCategoryUrl(m.url)).map(m => ({
+                                ...m, group: m.group || 'CAT', isCat: true, optIn: /^カテゴリ/.test(m.group || ''),
+                            }));
                             resolve({ mfrs, categories });
                             return;
                         }
@@ -713,7 +720,7 @@
         const MAX_PAGES_RESEARCH_MFR  = 4;
         const MAX_PAGES_RESEARCH_CAT  = 20;
         const MAX_PAGES_RESEARCH_TEST = 8;  // 2026-09-10：ヒット条件実験（TESTグループ）用に少し深めに
-        const MAX_PAGES_RESEARCH = (ctx && ctx.group === 'CAT') ? MAX_PAGES_RESEARCH_CAT
+        const MAX_PAGES_RESEARCH = ((ctx && ctx.group === 'CAT') || isCategoryUrl(mfrUrl)) ? MAX_PAGES_RESEARCH_CAT
             : (ctx && ctx.group === 'TEST') ? MAX_PAGES_RESEARCH_TEST
             : MAX_PAGES_RESEARCH_MFR;
         for (let page = 0; page < MAX_PAGES_RESEARCH; page++) {
@@ -806,7 +813,8 @@
         // 2026-09-07修正：呼び出し元(showGroupPicker・auto_research)で既にメーカー+
         // カテゴリを結合済みのリストを渡すようにしたため、ここでの再結合は不要になった。
         const allMfrs = mfrs;
-        const filtered = targets.includes('ALL') ? allMfrs : allMfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
+        // optIn(新カテゴリ群)はALLに含めず、グループを明示的に選んだ時だけ対象にする
+        const filtered = targets.includes('ALL') ? allMfrs.filter(m => !m.optIn) : allMfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
         if (filtered.length === 0) { updateStatus('対象なし'); return; }
 
         running = true;
@@ -1084,9 +1092,11 @@
     // ========== クローラーリサーチ ==========
     function showGroupPicker(mfrs, categories) {
         categories = categories || [];
-        const groups = [...new Set(mfrs.map(m => m.group).filter(g => g))].sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
+        const pickable = [...mfrs, ...categories];
+        const groups = [...new Set(pickable.map(m => m.group).filter(g => g))].sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
         const groupCounts = {};
-        mfrs.forEach(m => { if (m.group) groupCounts[m.group] = (groupCounts[m.group] || 0) + 1; });
+        pickable.forEach(m => { if (m.group) groupCounts[m.group] = (groupCounts[m.group] || 0) + 1; });
+        const allCount = pickable.filter(m => !m.optIn).length;
 
         const overlay = document.createElement('div');
         overlay.id = 'group-picker-overlay';
@@ -1124,7 +1134,7 @@
             return wrap;
         }
 
-        const allCheckEl = makeOption('ALL', `ALL（全件・${mfrs.length}件）`, true);
+        const allCheckEl = makeOption('ALL', `ALL（${allCount}件・新カテゴリ群は除く）`, true);
         list.appendChild(allCheckEl);
         const groupEls = groups.map(g => {
             const el = makeOption(g, `${g}（${groupCounts[g]}件）`, false);
