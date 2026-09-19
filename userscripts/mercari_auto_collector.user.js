@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.23
-// @description  メルカリ検索結果を全ページ自動収集（クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に）
+// @version      6.24
+// @description  メルカリ検索結果を全ページ自動収集（重複率が高いページが3ページ続いたら自動で打ち切る機能を追加(v6.24)・クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -524,6 +524,31 @@
         console.log(JSON.stringify(data.items && data.items[0], null, 2));
     };
 
+    // 2026-09-20追加：重複率による自動打ち切り（日次運用向け）。
+    // 1ページ取得するごとにサーバーへ問い合わせ、「型番が取れるアイテムのうち既に収集済みの割合」が
+    // EARLY_STOP_RATIO以上のページがEARLY_STOP_STREAKページ続いたら、その先も既知の出品ばかりと
+    // みなしてそのカテゴリ/メーカーの収集を打ち切る。未収集のカテゴリ（バックフィル）では重複が
+    // 出ないため発動しない。サーバーが応答しない場合は判定を諦めて従来どおり最後まで取得する。
+    const EARLY_STOP_ENABLED = true;
+    const EARLY_STOP_RATIO = 0.95;
+    const EARLY_STOP_STREAK = 3;
+    const EARLY_STOP_MIN_PAGES = 3;
+    const EARLY_STOP_MIN_CANDIDATES = 5;
+
+    function checkSeenRatio(pageItems) {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST', url: 'http://localhost:8765/seen-ratio',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ items: pageItems }),
+                timeout: 8000,
+                onload: res => { try { resolve(JSON.parse(res.responseText)); } catch (e) { resolve(null); } },
+                onerror: () => resolve(null),
+                ontimeout: () => resolve(null),
+            });
+        });
+    }
+
     async function fetchCollectorItems(mfrUrl, ctx) {
         const tpl = _getSharedTpl();
         if (!tpl) throw new Error('NO_TEMPLATE');
@@ -539,6 +564,7 @@
 
         const allItems = {};
         let pageToken = '';
+        let staleStreak = 0;
 
         // 2026-09-17一時変更：60ページでも頭打ちだったカテゴリのさらなる深掘り用に60→150ページへ拡張
         for (let page = 0; page < 150; page++) {
@@ -597,6 +623,20 @@
 
             const cnt = Object.keys(allItems).length;
             if (ctx) updateStatus('[' + ctx.idx + '/' + ctx.total + '] ' + ctx.name + ' p' + (page + 1) + ': ' + cnt + '件');
+
+            if (EARLY_STOP_ENABLED && (data.items || []).length > 0) {
+                const pageItems = (data.items || []).map(it => ({
+                    name: it.name || '', url: `https://jp.mercari.com/item/${it.id || it.itemId}`,
+                }));
+                const st = await checkSeenRatio(pageItems);
+                if (st && st.candidates >= EARLY_STOP_MIN_CANDIDATES) {
+                    if (st.seen / st.candidates >= EARLY_STOP_RATIO) staleStreak++; else staleStreak = 0;
+                    if (staleStreak >= EARLY_STOP_STREAK && page + 1 >= EARLY_STOP_MIN_PAGES) {
+                        if (ctx) addLog('  ↳ ' + ctx.name + ': 既知の出品が続いたため p' + (page + 1) + ' で打ち切り', '#aaaaaa');
+                        break;
+                    }
+                }
+            }
 
             const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
             if (!nextToken || (data.items || []).length === 0) break;
