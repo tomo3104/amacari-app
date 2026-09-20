@@ -1450,17 +1450,20 @@ function renderStatusReport(data) {
   }
   toggleBtn.classList.remove("hidden");
 
+  // 2026-09-20夜修正：単純なヒット数だけで並べると「収集量が多いだけ」の順位に
+  // なってしまうという指摘を受け、型番一致数に対するヒット率（%）で見せる
+  // ように変更（並び順自体はstatus_report.py側で一致数不足を除外済み・降順）。
   const top = sources.slice(0, 10);
-  const maxHits = Math.max(1, ...top.map(r => Number(r.hits) || 0));
   document.getElementById("status-source-chart").innerHTML = top.map(r => {
-    const w = Math.round((Number(r.hits) || 0) / maxHits * 100);
+    const rate = Number(r.hitRate) || 0;
+    const w = Math.min(100, Math.round(rate));
     return `
       <div class="status-bar-row">
         <span class="status-bar-name">${escapeHtml(r.name)}</span>
         <div class="status-bar-track">
           <div class="status-bar-fill" style="width:${w}%"></div>
         </div>
-        <span class="status-bar-value">${n(r.hits)}</span>
+        <span class="status-bar-value">${rate.toFixed(1)}%</span>
       </div>
     `;
   }).join("");
@@ -1473,6 +1476,7 @@ function renderStatusReport(data) {
       <td>${n(r.matched)}</td>
       <td class="${Number(r.hits) > 0 ? 'rt-log-hit' : ''}">${n(r.hits)}</td>
       <td class="${Number(r.newModels) > 0 ? 'rt-log-new' : ''}">${n(r.newModels)}</td>
+      <td>${Number(r.hitRate || 0).toFixed(1)}%</td>
     </tr>
   `).join("");
 }

@@ -105,9 +105,9 @@
     <div id="status-summary" class="status-summary">
       <p class="log-loading">読み込み中…</p>
     </div>
-    <button id="status-source-toggle" class="ghost-btn hidden">収集元別の実績を見る（ヒット数上位） ▾</button>
+    <button id="status-source-toggle" class="ghost-btn hidden">収集元別の実績を見る（ヒット率上位） ▾</button>
     <div id="status-source-wrap" class="hidden">
-      <p class="status-chart-caption">ヒット数が多い収集元（上位10件）</p>
+      <p class="status-chart-caption">ヒット率が高い収集元（上位10件・型番一致20件未満は判断材料不足として除外）</p>
       <div id="status-source-chart" class="status-bar-chart"></div>
       <details class="status-table-details">
         <summary>表で全件見る</summary>
@@ -121,6 +121,7 @@
                 <th>一致</th>
                 <th>ヒット</th>
                 <th>新規</th>
+                <th>ヒット率</th>
               </tr>
             </thead>
             <tbody id="status-source-body"></tbody>
@@ -299,6 +300,6 @@
 
 </style>
 
-<script src="app.js?v=37"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>
