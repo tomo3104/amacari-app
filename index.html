@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=19">
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 <header class="topbar">
@@ -105,21 +105,28 @@
     <div id="status-summary" class="status-summary">
       <p class="log-loading">読み込み中…</p>
     </div>
-    <button id="status-source-toggle" class="ghost-btn hidden">収集元別の実績を見る ▾</button>
-    <div id="status-source-wrap" class="rt-log-wrap hidden">
-      <table class="rt-log-table">
-        <thead>
-          <tr>
-            <th>収集元</th>
-            <th>ルート</th>
-            <th>収集</th>
-            <th>一致</th>
-            <th>ヒット</th>
-            <th>新規</th>
-          </tr>
-        </thead>
-        <tbody id="status-source-body"></tbody>
-      </table>
+    <button id="status-source-toggle" class="ghost-btn hidden">収集元別の実績を見る（ヒット数上位） ▾</button>
+    <div id="status-source-wrap" class="hidden">
+      <p class="status-chart-caption">ヒット数が多い収集元（上位10件）</p>
+      <div id="status-source-chart" class="status-bar-chart"></div>
+      <details class="status-table-details">
+        <summary>表で全件見る</summary>
+        <div class="rt-log-wrap">
+          <table class="rt-log-table">
+            <thead>
+              <tr>
+                <th>収集元</th>
+                <th>ルート</th>
+                <th>収集</th>
+                <th>一致</th>
+                <th>ヒット</th>
+                <th>新規</th>
+              </tr>
+            </thead>
+            <tbody id="status-source-body"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
   </section>
 
@@ -292,6 +299,6 @@
 
 </style>
 
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>

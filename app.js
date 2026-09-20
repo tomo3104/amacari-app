@@ -1409,22 +1409,31 @@ function renderStatusReport(data) {
 
   const s = data.summary;
   const n = v => Number(v || 0).toLocaleString();
+  const pct = (part, total) => total > 0 ? Math.round((part / total) * 100) : 0;
+
+  // 型番リスト・プレミアム候補は「全体のうちどれだけ済んでいるか」なので、
+  // 既存の月間目標と同じ「メーター」表現（track+fill）で進捗として見せる。
+  // 新型番待ち・Keepa待ちは「まだ何も進んでいない残数」なので単純な数値タイルにする。
+  const listPct    = pct(s.listValid, s.listTotal);
+  const premiumPct = pct(s.premiumRegistered, s.premiumTotal);
+
   summaryEl.innerHTML = `
+    <div class="status-meter">
+      <div class="status-meter-label"><span>型番リスト（有効な件数の割合）</span><span>${n(s.listValid)} / ${n(s.listTotal)}（${listPct}%）</span></div>
+      <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${listPct}%"></div></div>
+    </div>
+    <div class="status-meter">
+      <div class="status-meter-label"><span>プレミアム候補（Keepa登録済みの割合）</span><span>${n(s.premiumRegistered)} / ${n(s.premiumTotal)}（${premiumPct}%）</span></div>
+      <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${premiumPct}%"></div></div>
+    </div>
     <div class="status-grid">
       <div class="status-card">
-        <h3>型番リスト</h3>
-        <p>総数 <strong>${n(s.listTotal)}</strong></p>
-        <p>有効 ${n(s.listValid)} ／ 無効 ${n(s.listInvalid)}</p>
+        <h3>新型番（コレクト経由・価格調査待ち）</h3>
+        <p><strong>${n(s.candCollectPending)}</strong> 件</p>
       </div>
       <div class="status-card">
-        <h3>プレミアム候補</h3>
-        <p>総数 <strong>${n(s.premiumTotal)}</strong></p>
-        <p>登録済 ${n(s.premiumRegistered)} ／ 未登録 ${n(s.premiumUnregistered)}</p>
-      </div>
-      <div class="status-card">
-        <h3>新型番（価格調査待ち）</h3>
-        <p>コレクト経由 <strong>${n(s.candCollectPending)}</strong></p>
-        <p>リサーチ経由 <strong>${n(s.candResearchPending)}</strong></p>
+        <h3>新型番（リサーチ経由・価格調査待ち）</h3>
+        <p><strong>${n(s.candResearchPending)}</strong> 件</p>
       </div>
       <div class="status-card">
         <h3>Keepa登録待ち</h3>
@@ -1440,6 +1449,22 @@ function renderStatusReport(data) {
     return;
   }
   toggleBtn.classList.remove("hidden");
+
+  const top = sources.slice(0, 10);
+  const maxHits = Math.max(1, ...top.map(r => Number(r.hits) || 0));
+  document.getElementById("status-source-chart").innerHTML = top.map(r => {
+    const w = Math.round((Number(r.hits) || 0) / maxHits * 100);
+    return `
+      <div class="status-bar-row">
+        <span class="status-bar-name">${escapeHtml(r.name)}</span>
+        <div class="status-bar-track">
+          <div class="status-bar-fill" style="width:${w}%"></div>
+        </div>
+        <span class="status-bar-value">${n(r.hits)}</span>
+      </div>
+    `;
+  }).join("");
+
   sourceBody.innerHTML = sources.map(r => `
     <tr>
       <td>${escapeHtml(r.name)}</td>
