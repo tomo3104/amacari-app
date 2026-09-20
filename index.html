@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=18">
+<link rel="stylesheet" href="style.css?v=19">
 </head>
 <body>
 <header class="topbar">
@@ -99,6 +99,30 @@
 </main>
 
 <main id="log-view" class="view hidden">
+  <section class="log-section">
+    <h2 class="log-heading">現在のステータス</h2>
+    <p id="status-updated" class="status-updated"></p>
+    <div id="status-summary" class="status-summary">
+      <p class="log-loading">読み込み中…</p>
+    </div>
+    <button id="status-source-toggle" class="ghost-btn hidden">収集元別の実績を見る ▾</button>
+    <div id="status-source-wrap" class="rt-log-wrap hidden">
+      <table class="rt-log-table">
+        <thead>
+          <tr>
+            <th>収集元</th>
+            <th>ルート</th>
+            <th>収集</th>
+            <th>一致</th>
+            <th>ヒット</th>
+            <th>新規</th>
+          </tr>
+        </thead>
+        <tbody id="status-source-body"></tbody>
+      </table>
+    </div>
+  </section>
+
   <div class="toolbar" style="border-bottom:1px solid rgba(128,128,128,.2); margin-bottom:0; padding-bottom:8px;">
     <button id="log-stats-toggle" class="ghost-btn">📊 実績を見る</button>
   </div>
@@ -268,6 +292,6 @@
 
 </style>
 
-<script src="app.js?v=35"></script>
+<script src="app.js?v=36"></script>
 </body>
 </html>

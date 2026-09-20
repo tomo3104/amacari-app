@@ -396,6 +396,32 @@ body {
 .archive-actions button.done { background: var(--navy); color: white; }
 .archive-actions button[data-action="reject-archive"] { background: #fde9e8; color: var(--red); }
 
+/* ステータス（2026-09-20新設） */
+.status-updated { font-size: 12px; color: #999; margin: 0 0 8px; }
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.status-card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  padding: 12px 14px;
+}
+
+.status-card h3 {
+  font-size: 12px;
+  font-weight: 700;
+  color: #999;
+  margin: 0 0 6px;
+}
+
+.status-card p { margin: 2px 0; font-size: 13px; color: var(--navy); }
+.status-card strong { font-size: 16px; }
+
 /* 実績 */
 #stats-view { overflow-y: auto; }
 

@@ -1358,6 +1358,7 @@ async function loadLog() {
   const autoList = document.getElementById("auto-log-list");
   rtBody.innerHTML   = '<tr><td colspan="5" class="log-loading">読み込み中…</td></tr>';
   autoList.innerHTML = '<li class="log-loading">読み込み中…</li>';
+  loadStatusReport();
   try {
     const [rtRes, autoRes] = await Promise.all([
       fetch(gasUrl("realtimeLog")),
@@ -1372,6 +1373,92 @@ async function loadLog() {
     autoList.innerHTML = '<li class="log-loading">読み込みに失敗しました。</li>';
   }
 }
+
+// ---------- ステータス（2026-09-20新設） ----------
+// 集計自体はasin-tools/status_report.pyが定期実行してシートに書き出す。
+// ここではそのシートを読んで表示するだけ（重い集計はGAS/フロント側でやらない）。
+
+async function loadStatusReport() {
+  const updatedEl = document.getElementById("status-updated");
+  const summaryEl = document.getElementById("status-summary");
+  updatedEl.textContent = "";
+  summaryEl.innerHTML = '<p class="log-loading">読み込み中…</p>';
+  try {
+    const res  = await fetch(gasUrl("status"));
+    const data = await res.json();
+    renderStatusReport(data);
+  } catch (e) {
+    summaryEl.innerHTML = '<p class="log-loading">読み込みに失敗しました。</p>';
+  }
+}
+
+function renderStatusReport(data) {
+  const updatedEl = document.getElementById("status-updated");
+  const summaryEl = document.getElementById("status-summary");
+  const toggleBtn = document.getElementById("status-source-toggle");
+  const sourceWrap = document.getElementById("status-source-wrap");
+  const sourceBody = document.getElementById("status-source-body");
+
+  if (!data || !data.summary) {
+    summaryEl.innerHTML = '<p class="log-loading">まだ集計データがありません（status_report.pyの実行待ち）。</p>';
+    toggleBtn.classList.add("hidden");
+    return;
+  }
+
+  updatedEl.textContent = data.updated ? `更新：${data.updated}` : "";
+
+  const s = data.summary;
+  const n = v => Number(v || 0).toLocaleString();
+  summaryEl.innerHTML = `
+    <div class="status-grid">
+      <div class="status-card">
+        <h3>型番リスト</h3>
+        <p>総数 <strong>${n(s.listTotal)}</strong></p>
+        <p>有効 ${n(s.listValid)} ／ 無効 ${n(s.listInvalid)}</p>
+      </div>
+      <div class="status-card">
+        <h3>プレミアム候補</h3>
+        <p>総数 <strong>${n(s.premiumTotal)}</strong></p>
+        <p>登録済 ${n(s.premiumRegistered)} ／ 未登録 ${n(s.premiumUnregistered)}</p>
+      </div>
+      <div class="status-card">
+        <h3>新型番（価格調査待ち）</h3>
+        <p>コレクト経由 <strong>${n(s.candCollectPending)}</strong></p>
+        <p>リサーチ経由 <strong>${n(s.candResearchPending)}</strong></p>
+      </div>
+      <div class="status-card">
+        <h3>Keepa登録待ち</h3>
+        <p><strong>${n(s.keepaQueuePending)}</strong> 件</p>
+      </div>
+    </div>
+  `;
+
+  const sources = data.sources || [];
+  if (!sources.length) {
+    toggleBtn.classList.add("hidden");
+    sourceWrap.classList.add("hidden");
+    return;
+  }
+  toggleBtn.classList.remove("hidden");
+  sourceBody.innerHTML = sources.map(r => `
+    <tr>
+      <td>${escapeHtml(r.name)}</td>
+      <td>${escapeHtml(r.route)}</td>
+      <td>${n(r.items)}</td>
+      <td>${n(r.matched)}</td>
+      <td class="${Number(r.hits) > 0 ? 'rt-log-hit' : ''}">${n(r.hits)}</td>
+      <td class="${Number(r.newModels) > 0 ? 'rt-log-new' : ''}">${n(r.newModels)}</td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("status-source-toggle").addEventListener("click", () => {
+  const wrap = document.getElementById("status-source-wrap");
+  const btn = document.getElementById("status-source-toggle");
+  const isHidden = wrap.classList.contains("hidden");
+  wrap.classList.toggle("hidden");
+  btn.textContent = isHidden ? "収集元別の実績を閉じる ▴" : "収集元別の実績を見る ▾";
+});
 
 function renderRealtimeLog(rows) {
   const tbody = document.getElementById("rt-log-body");
