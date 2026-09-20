@@ -1442,6 +1442,8 @@ function renderStatusReport(data) {
     </div>
   `;
 
+  renderStatusBreakdown(data.breakdown);
+
   const sources = data.sources || [];
   if (!sources.length) {
     toggleBtn.classList.add("hidden");
@@ -1479,6 +1481,66 @@ function renderStatusReport(data) {
       <td>${Number(r.hitRate || 0).toFixed(1)}%</td>
     </tr>
   `).join("");
+}
+
+// 2026-09-20深夜追加：list.jsonの構成（有効/プレミアム/無効の積み上げ棒）、
+// 無効の理由、ランク分布を表示する。単一指標のカテゴリ別内訳なので、それぞれ
+// 単色の横棒（.status-bar-chart）で見せ、構成だけは部分と全体の関係なので
+// 積み上げ棒＋凡例にする。
+function renderStatusBreakdown(breakdown) {
+  const compWrap = document.getElementById("status-composition-wrap");
+  const invalidDetails = document.getElementById("status-invalid-details");
+  const rankDetails = document.getElementById("status-rank-details");
+  const n = v => Number(v || 0).toLocaleString();
+
+  if (!breakdown || !(breakdown.composition || []).length) {
+    compWrap.classList.add("hidden");
+    invalidDetails.classList.add("hidden");
+    rankDetails.classList.add("hidden");
+    return;
+  }
+
+  compWrap.classList.remove("hidden");
+  const comp = breakdown.composition;
+  const total = comp.reduce((sum, c) => sum + Number(c.count || 0), 0) || 1;
+  const segClass = { "有効(通常)": "seg-valid", "有効(プレミアム)": "seg-premium", "無効": "seg-invalid" };
+  document.getElementById("status-composition-bar").innerHTML = comp.map(c => {
+    const w = Math.round((Number(c.count) || 0) / total * 100);
+    return `<div class="status-stack-seg ${segClass[c.label] || ''}" style="width:${w}%"></div>`;
+  }).join("");
+  document.getElementById("status-composition-legend").innerHTML = comp.map(c => `
+    <span><span class="swatch" style="background:${
+      c.label === "有効(通常)" ? "#0ca30c" : c.label === "有効(プレミアム)" ? "var(--blue)" : "#c9ccd1"
+    }"></span>${escapeHtml(c.label)} ${n(c.count)}</span>
+  `).join("");
+
+  const renderMiniChart = (containerId, items) => {
+    const max = Math.max(1, ...items.map(r => Number(r.count) || 0));
+    document.getElementById(containerId).innerHTML = items.map(r => {
+      const w = Math.round((Number(r.count) || 0) / max * 100);
+      return `
+        <div class="status-bar-row">
+          <span class="status-bar-name">${escapeHtml(r.label)}</span>
+          <div class="status-bar-track"><div class="status-bar-fill" style="width:${w}%"></div></div>
+          <span class="status-bar-value">${n(r.count)}</span>
+        </div>
+      `;
+    }).join("");
+  };
+
+  if ((breakdown.invalidReasons || []).length) {
+    invalidDetails.classList.remove("hidden");
+    renderMiniChart("status-invalid-chart", breakdown.invalidReasons);
+  } else {
+    invalidDetails.classList.add("hidden");
+  }
+
+  if ((breakdown.rankDistribution || []).length) {
+    rankDetails.classList.remove("hidden");
+    renderMiniChart("status-rank-chart", breakdown.rankDistribution);
+  } else {
+    rankDetails.classList.add("hidden");
+  }
 }
 
 document.getElementById("status-source-toggle").addEventListener("click", () => {

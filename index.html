@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=20">
+<link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 <header class="topbar">
@@ -105,6 +105,23 @@
     <div id="status-summary" class="status-summary">
       <p class="log-loading">読み込み中…</p>
     </div>
+
+    <div id="status-composition-wrap" class="hidden">
+      <p class="status-chart-caption">型番リストの構成</p>
+      <div id="status-composition-bar" class="status-stack-bar"></div>
+      <div id="status-composition-legend" class="status-stack-legend"></div>
+    </div>
+
+    <details id="status-invalid-details" class="status-table-details hidden">
+      <summary>無効な型番の内訳を見る</summary>
+      <div id="status-invalid-chart" class="status-bar-chart"></div>
+    </details>
+
+    <details id="status-rank-details" class="status-table-details hidden">
+      <summary>有効な型番のランク分布を見る</summary>
+      <div id="status-rank-chart" class="status-bar-chart"></div>
+    </details>
+
     <button id="status-source-toggle" class="ghost-btn hidden">収集元別の実績を見る（ヒット率上位） ▾</button>
     <div id="status-source-wrap" class="hidden">
       <p class="status-chart-caption">ヒット率が高い収集元（上位10件・型番一致20件未満は判断材料不足として除外）</p>
@@ -300,6 +317,6 @@
 
 </style>
 
-<script src="app.js?v=38"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>

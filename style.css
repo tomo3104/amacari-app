@@ -481,6 +481,35 @@ body {
 .status-table-details { margin-top: 10px; }
 .status-table-details summary { font-size: 12px; color: #999; cursor: pointer; }
 
+/* 型番リストの構成（積み上げ棒）。2px gapで区切り、色は凡例で識別する */
+.status-stack-bar {
+  display: flex;
+  height: 20px;
+  border-radius: 4px;
+  overflow: hidden;
+  gap: 2px;
+  background: #e6e9ef;
+}
+.status-stack-seg { height: 100%; }
+.status-stack-seg.seg-valid   { background: #0ca30c; }
+.status-stack-seg.seg-premium { background: var(--blue); }
+.status-stack-seg.seg-invalid { background: #c9ccd1; }
+
+.status-stack-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #666;
+}
+.status-stack-legend span.swatch {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
 /* 実績 */
 #stats-view { overflow-y: auto; }
 
