@@ -382,10 +382,10 @@ function buildCardEl(card) {
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
       <div class="card-links">
-        <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
-        <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
-        <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
+        <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}">Amazon</a>
+        <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}">モノトレ</a>
+        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}">Keepa</a>
         <button class="link-btn link-asin-fix no-swipe" data-row="${card.row}">ASIN修正</button>
         <button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>
         <button class="link-btn link-report-model no-swipe" data-model="${escapeAttr(card.model)}" data-asin="${escapeAttr(card.asin)}" data-name="${escapeAttr(card.name)}" data-url="${escapeAttr(card.mercari_url)}">🚩型番通報</button>
@@ -437,12 +437,12 @@ function buildFurimaCardEl(card) {
     : `<div class="card-thumb"></div>`;
 
   const links = [
-    `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}" target="_blank" rel="noopener">商品ページ</a>`,
+    `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}">商品ページ</a>`,
   ];
   if (card.asin) {
-    links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>`);
-    links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>`);
-    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
+    links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}">Amazon</a>`);
+    links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}">モノトレ</a>`);
+    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}">Keepa</a>`);
     links.push(`<button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>`);
   }
   if (card.model) {
@@ -1061,9 +1061,9 @@ function renderArchive(items) {
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
       </div>
       <div class="archive-actions">
-        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
-        <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}">メルカリで見る</a>
+        <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}">モノトレ</a>
+        <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
@@ -1089,7 +1089,7 @@ function renderRejected(items) {
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ 却下理由：${escapeHtml(item.reason)}${item.is_auto ? "（自動）" : ""}</p>
       </div>
       <div class="archive-actions">
-        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
+        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}">メルカリで見る</a>
         <button data-action="restore">やっぱり仕入れ対象</button>
         ${item.is_auto ? `<button data-action="confirm" data-reason="${escapeAttr(item.reason)}">却下のままでOK</button>` : ""}
       </div>
