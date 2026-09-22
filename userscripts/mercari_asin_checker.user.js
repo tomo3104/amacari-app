@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.68
+// @version      3.69
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -1141,6 +1141,14 @@
         });
         box.appendChild(list);
 
+        // 2026-09-23追加：ALLは新カテゴリ群(optIn)を意図的に除くため、新カテゴリ含めて
+        // 全部回したい時は個別グループを1つずつ手動でチェックするしかなかった。
+        // 個別グループを全部チェック済みにするだけのショートカットボタンを追加する。
+        const selectAllLink = document.createElement('div');
+        selectAllLink.textContent = '↳ 全選択（新カテゴリ含む・個別グループを全てチェック）';
+        selectAllLink.style.cssText = 'font-size:12px; color:#9C27B0; cursor:pointer; margin:-4px 0 12px 0; text-decoration:underline;';
+        box.insertBefore(selectAllLink, list.nextSibling);
+
         const unopenedWrap = document.createElement('label');
         unopenedWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:#555; cursor:pointer; margin-bottom:14px; padding-top:8px; border-top:1px solid #eee;';
         const unopenedCheckbox = document.createElement('input');
@@ -1162,6 +1170,10 @@
             c.addEventListener('change', () => {
                 if (c.checked) allCheckbox.checked = false;
             });
+        });
+        selectAllLink.addEventListener('click', () => {
+            allCheckbox.checked = false;
+            groupCheckboxes.forEach(c => { c.checked = true; });
         });
 
         const btnRow = document.createElement('div');
