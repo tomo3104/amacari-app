@@ -36,10 +36,20 @@ async function gasPost(action, body, attempt) {
 // 2026-09-22追加：書き込み(gasPost)にはリトライがあるのに、読み込み（カード取得等の
 // GET）には無く、スマホでの回線切替の一瞬の途切れだけで各タブが即「読み込みに失敗
 // しました」になっていた。同じ理由・同じリトライ回数で読み込み側にも追加する。
+//
+// 2026-09-22さらに修正：上記のリトライはfetch()自体が例外を投げた場合（DNS・接続
+// 拒否等）しか拾えておらず、「fetch自体は成功したがGAS側が実行エラーのHTMLページを
+// 返した／レスポンスがJSONとして壊れている」ケースは1回目の失敗で即座に諦めていた
+// （呼び出し側でres.json()する際にSyntaxErrorになるが、それはgasFetchの外）。
+// これがリトライ追加後も「読み込みに失敗しました」が変わらず頻発していた原因と考え、
+// fetch＋レスポンス検証＋JSONパースまでを丸ごとリトライ対象にし、パース済みデータを
+// 直接返す形に変更した（呼び出し側の`res.json()`は不要になる）。
 async function gasFetch(action, params, attempt) {
   attempt = attempt || 1;
   try {
-    return await fetch(gasUrl(action, params));
+    const res = await fetch(gasUrl(action, params));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
   } catch (err) {
     if (attempt < 3) {
       await new Promise(r => setTimeout(r, 500 * attempt));
@@ -159,8 +169,7 @@ async function loadCards() {
   els.empty.textContent = "読み込み中…";
   els.empty.style.display = "block";
   try {
-    const res = await gasFetch("cards", { sort: state.sort });
-    const data = await res.json();
+    const data = await gasFetch("cards", { sort: state.sort });
     state.cards = data.cards || [];
     state.skipStack = [];
     state.totalCount = state.cards.length;
@@ -181,8 +190,7 @@ async function loadArchive() {
   els.archiveEmpty.style.display = "block";
   els.archiveList.innerHTML = "";
   try {
-    const res = await gasFetch("archive");
-    const data = await res.json();
+    const data = await gasFetch("archive");
     renderArchive(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
@@ -196,8 +204,7 @@ async function loadRejected() {
   els.archiveEmpty.style.display = "block";
   els.autoRejectedList.innerHTML = "";
   try {
-    const res = await gasFetch("rejected");
-    const data = await res.json();
+    const data = await gasFetch("rejected");
     renderRejected(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
@@ -210,8 +217,7 @@ async function loadStats() {
   els.statsMonthlyList.innerHTML = "";
   els.statsDailyList.innerHTML = "";
   try {
-    const res = await gasFetch("purchasedStats");
-    const data = await res.json();
+    const data = await gasFetch("purchasedStats");
     renderStats(data.items || []);
   } catch (e) {
     els.statsEmpty.textContent = "読み込みに失敗しました。";
@@ -222,8 +228,7 @@ async function loadFurimaCards() {
   els.furimaEmpty.textContent = "読み込み中…";
   els.furimaEmpty.style.display = "block";
   try {
-    const res = await gasFetch("furimaCards");
-    const data = await res.json();
+    const data = await gasFetch("furimaCards");
     state.furimaCards = data.cards || [];
     state.furimaSkipStack = [];
     state.furimaTotalCount = state.furimaCards.length;
@@ -237,8 +242,7 @@ async function loadDescCards() {
   els.descEmpty.textContent = "読み込み中…";
   els.descEmpty.style.display = "block";
   try {
-    const res = await gasFetch("descCards");
-    const data = await res.json();
+    const data = await gasFetch("descCards");
     state.descCards = data.cards || [];
     state.descSkipStack = [];
     state.descTotalCount = state.descCards.length;
@@ -252,8 +256,7 @@ async function loadRtCards() {
   els.rtEmpty.textContent = "読み込み中…";
   els.rtEmpty.style.display = "block";
   try {
-    const res = await gasFetch("rtCards");
-    const data = await res.json();
+    const data = await gasFetch("rtCards");
     state.rtCards = data.cards || [];
     state.rtSkipStack = [];
     state.rtTotalCount = state.rtCards.length;
@@ -793,8 +796,7 @@ async function handleCheckRestrictionClick(e) {
   btn.textContent = "確認中…";
   btn.disabled = true;
   try {
-    const res = await gasFetch("checkRestriction", { asin });
-    const data = await res.json();
+    const data = await gasFetch("checkRestriction", { asin });
     if (!data.ok) {
       alert("確認に失敗しました：" + (data.error || "不明なエラー"));
     } else if (data.restricted) {
@@ -1376,12 +1378,10 @@ async function loadLog() {
   autoList.innerHTML = '<li class="log-loading">読み込み中…</li>';
   loadStatusReport();
   try {
-    const [rtRes, autoRes] = await Promise.all([
+    const [rtData, autoData] = await Promise.all([
       gasFetch("realtimeLog"),
       gasFetch("researchTiming"),
     ]);
-    const rtData   = await rtRes.json();
-    const autoData = await autoRes.json();
     renderRealtimeLog(rtData.rows   || []);
     renderAutoLog(autoData.rows || []);
   } catch (e) {
@@ -1400,8 +1400,7 @@ async function loadStatusReport() {
   updatedEl.textContent = "";
   summaryEl.innerHTML = '<p class="log-loading">読み込み中…</p>';
   try {
-    const res  = await gasFetch("status");
-    const data = await res.json();
+    const data = await gasFetch("status");
     renderStatusReport(data);
   } catch (e) {
     summaryEl.innerHTML = '<p class="log-loading">読み込みに失敗しました。</p>';
