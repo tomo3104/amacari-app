@@ -1558,13 +1558,18 @@ function renderStatusBreakdown(breakdown) {
 
   const renderMiniChart = (containerId, items) => {
     const max = Math.max(1, ...items.map(r => Number(r.count) || 0));
+    // 2026-09-25追加：件数だけだと全体に対する割合が一目で分からないという指摘を受け、
+    // 内訳合計に対する%も併記する（ランク分布・無効理由の両方で共用のため両方に効く）。
+    const sum = items.reduce((s, r) => s + (Number(r.count) || 0), 0) || 1;
     document.getElementById(containerId).innerHTML = items.map(r => {
-      const w = Math.round((Number(r.count) || 0) / max * 100);
+      const count = Number(r.count) || 0;
+      const w = Math.round(count / max * 100);
+      const pct = Math.round(count / sum * 100);
       return `
         <div class="status-bar-row">
           <span class="status-bar-name">${escapeHtml(r.label)}</span>
           <div class="status-bar-track"><div class="status-bar-fill" style="width:${w}%"></div></div>
-          <span class="status-bar-value">${n(r.count)}</span>
+          <span class="status-bar-value">${n(r.count)}<span class="status-bar-pct">（${pct}%）</span></span>
         </div>
       `;
     }).join("");

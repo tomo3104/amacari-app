@@ -478,6 +478,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.status-bar-pct {
+  font-weight: 400;
+  color: #888;
+  margin-left: 2px;
+}
+
 .status-table-details { margin-top: 10px; }
 .status-table-details summary { font-size: 12px; color: #999; cursor: pointer; }
 
