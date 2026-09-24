@@ -740,5 +740,7 @@ body {
 
 /* Amazon価格インライン編集 */
 .card-grid .price-val { color: var(--navy); }
+.card-grid .nego-needed { color: var(--orange); font-weight: 700; }
+.card-grid .nego-ok { color: var(--navy); font-weight: 700; }
 .recheck-price-btn { background: none; border: none; color: #bbb; font-size: 12px; cursor: pointer; padding: 0 2px; vertical-align: middle; }
 .recheck-price-btn:disabled { opacity: 0.4; cursor: default; }

@@ -1369,9 +1369,13 @@ function negotiationTarget(pmax) {
 function formatNegotiation(mercariPrice, pmax) {
   const target = negotiationTarget(pmax);
   const price  = Number(mercariPrice);
-  if (target === null || !Number.isFinite(price)) return "−";
+  if (target === null || !Number.isFinite(price)) {
+    return `<span class="nego-val">−</span>`;
+  }
   const diff = price - target;
-  return diff > 0 ? `¥${diff.toLocaleString()} 値下げ希望` : "達成済み";
+  return diff > 0
+    ? `<span class="nego-val nego-needed">¥${diff.toLocaleString()} 値下げ希望</span>`
+    : `<span class="nego-val nego-ok">達成済み</span>`;
 }
 
 function formatPercent(v) {
