@@ -553,6 +553,39 @@ body {
   background: linear-gradient(90deg, #ff9800, #ffc107);
 }
 
+/* 今月の仕入れ候補グラフ（2026-09-27追加）。積み上げ棒は.status-stack-*を再利用。
+   確定=緑（目標バーの進捗色と同系）、未確定=青。どちらも配色バリデータ通過済み。 */
+.status-stack-seg.seg-cand-confirmed   { background: #0ca30c; }
+.status-stack-seg.seg-cand-unconfirmed { background: #2f6fdb; }
+/* データ端（右端）を4pxの丸みに。左端は棒の外枠(overflow:hidden)が丸める */
+.status-stack-seg.seg-cand-confirmed:last-child,
+.status-stack-seg.seg-cand-unconfirmed:last-child { border-radius: 0 4px 4px 0; }
+/* 目標マーカー：縦線に「目標25万」を直接ラベルする（凡例に頼らない）。
+   ラベルは棒の上に出るので、マーカー表示時だけ上に余白を足す。 */
+.cand-track-wrap.has-goal-mark { padding-top: 16px; }
+.cand-track-wrap.has-goal-mark .cand-goal-mark { top: 13px; } /* パディング分だけ下げて棒に合わせる */
+.cand-goal-label {
+  position: absolute;
+  top: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.cand-track-wrap { position: relative; }
+.cand-goal-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--navy);
+  border-radius: 1px;
+}
+.cand-goal-mark.hidden { display: none; }
+
 .goal-progress-text {
   margin-top: 6px;
   font-size: 13px;

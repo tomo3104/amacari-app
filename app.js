@@ -1142,6 +1142,66 @@ function renderGoalProgress(monthly) {
     `¥${profit.toLocaleString()} / ¥${MONTHLY_PROFIT_GOAL.toLocaleString()}（${pct.toFixed(1)}%）${remainText}`;
 }
 
+// 2026-09-27追加：「今月の仕入れ候補」グラフ。今月の目標バー（購入済み＝確定分の見込実利益）
+// の下に、仕入れ対象＋購入済みを合わせた「仕入れ候補」の見込実利益を積み上げ棒で描き、
+// そのうち確定（購入済み）がどれだけ含まれるかを色分けで見せる。
+// 棒の長さの基準は max(月間目標, 候補合計)。候補が目標を超えた場合は目標位置に縦線を出す。
+// 色だけに頼らないよう、凡例に金額・件数・割合を必ず併記する。
+function renderCandidateGraph(monthlyAll, monthlyPurchased) {
+  const key = currentMonthKey();
+  const all  = monthlyAll.find(a => a.key === key)       || { count: 0, profit: 0 };
+  const conf = monthlyPurchased.find(a => a.key === key) || { count: 0, profit: 0 };
+
+  const barEl    = document.getElementById("cand-bar");
+  const legendEl = document.getElementById("cand-legend");
+  const textEl   = document.getElementById("cand-text");
+  const markEl   = document.getElementById("cand-goal-mark");
+
+  if (all.count === 0) {
+    barEl.innerHTML = "";
+    markEl.classList.add("hidden");
+    markEl.parentElement.classList.remove("has-goal-mark");
+    legendEl.innerHTML = "";
+    textEl.textContent = "今月の仕入れ候補はまだありません。";
+    return;
+  }
+
+  const confProfit   = Math.max(0, conf.profit);
+  const totalProfit  = Math.max(confProfit, all.profit);
+  const unconfProfit = totalProfit - confProfit;
+  const unconfCount  = Math.max(0, all.count - conf.count);
+  const scale = Math.max(MONTHLY_PROFIT_GOAL, totalProfit);
+  const w = v => (v / scale * 100).toFixed(2);
+  const yen = v => `¥${Math.round(v).toLocaleString()}`;
+  const ratio = totalProfit > 0 ? confProfit / totalProfit * 100 : 0;
+
+  const seg = (cls, value, title) => value > 0
+    ? `<div class="status-stack-seg ${cls}" style="width:${w(value)}%; min-width:3px" title="${escapeAttr(title)}"></div>`
+    : "";
+  barEl.innerHTML =
+    seg("seg-cand-confirmed",   confProfit,   `確定（購入済み）${yen(confProfit)}・${conf.count}件`) +
+    seg("seg-cand-unconfirmed", unconfProfit, `未確定（仕入れ対象）${yen(unconfProfit)}・${unconfCount}件`);
+
+  // 候補が目標を超えたときだけ、目標の位置に縦線＋直接ラベルを出す（超えていなければ
+  // 棒の右端＝目標なので不要）。ラベル分の余白は.has-goal-markで確保する。
+  const showMark = scale > MONTHLY_PROFIT_GOAL;
+  markEl.classList.toggle("hidden", !showMark);
+  markEl.parentElement.classList.toggle("has-goal-mark", showMark);
+  if (showMark) {
+    markEl.style.left = `${(MONTHLY_PROFIT_GOAL / scale * 100).toFixed(2)}%`;
+    markEl.title = `今月の目標 ${yen(MONTHLY_PROFIT_GOAL)}`;
+    markEl.querySelector(".cand-goal-label").textContent = `目標${MONTHLY_PROFIT_GOAL / 10000}万`;
+  }
+
+  // 定義（確定＝購入済み／未確定＝仕入れ対象のまま）は見出しに書き、凡例は短くして1行に収める
+  legendEl.innerHTML = `
+    <span><span class="swatch" style="background:#0ca30c"></span>確定 ${yen(confProfit)}（${conf.count}件）</span>
+    <span><span class="swatch" style="background:#2f6fdb"></span>未確定 ${yen(unconfProfit)}（${unconfCount}件）</span>
+  `;
+  textEl.textContent =
+    `候補合計 ${yen(totalProfit)}（${all.count}件）・確定率 ${ratio.toFixed(1)}%`;
+}
+
 function aggregateBy(items, keyFn) {
   const map = new Map();
   items.forEach(item => {
@@ -1203,6 +1263,7 @@ function renderStats(items) {
     els.statsEmpty.textContent = "購入済みの商品はまだありません。";
     els.statsEmpty.style.display = "block";
     renderGoalProgress([]);
+    renderCandidateGraph([], []);
     return;
   }
   els.statsEmpty.style.display = "none";
@@ -1210,7 +1271,9 @@ function renderStats(items) {
   const monthly = aggregateBy(items, date => date.slice(0, 7));
   const daily = aggregateBy(items, date => date.slice(0, 10));
   const purchasedOnly = items.filter(item => item.judgment === "購入済み");
-  renderGoalProgress(aggregateBy(purchasedOnly, date => date.slice(0, 7)));
+  const purchasedMonthly = aggregateBy(purchasedOnly, date => date.slice(0, 7));
+  renderGoalProgress(purchasedMonthly);
+  renderCandidateGraph(monthly, purchasedMonthly);
 
   els.statsMonthlyList.innerHTML = monthly.map(agg =>
     renderStatRow(agg, agg.key.replace("-", "年") + "月")

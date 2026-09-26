@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=22">
+<link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 <header class="topbar">
@@ -159,6 +159,15 @@
         <div class="goal-progress-bar"><div id="goal-progress-fill" class="goal-progress-fill"></div></div>
         <div id="goal-progress-text" class="goal-progress-text"></div>
       </div>
+    </section>
+    <section class="stats-section" id="cand-section">
+      <h2 class="stats-heading">今月の仕入れ候補（確定＝購入済み）</h2>
+      <div class="cand-track-wrap">
+        <div id="cand-bar" class="status-stack-bar"></div>
+        <div id="cand-goal-mark" class="cand-goal-mark hidden"><span class="cand-goal-label"></span></div>
+      </div>
+      <div id="cand-legend" class="status-stack-legend"></div>
+      <div id="cand-text" class="goal-progress-text"></div>
     </section>
     <section class="stats-section">
       <h2 class="stats-heading">月別累計</h2>
@@ -318,6 +327,6 @@
 
 </style>
 
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>
