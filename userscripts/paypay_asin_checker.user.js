@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      2.0
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・mercari_asin_checker.user.jsと同様のクロール深度ログ(maker/_page送信)を追加、メルカリ側同様の深度分析に対応）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -16,6 +16,12 @@
     const SERVER_URL = 'http://localhost:8766/check-mercari';
     const MFR_URL    = 'http://localhost:8766/get-manufacturers';
     const MAX_PAGE   = 20; // 最大20ページ = 2000件/メーカー
+    // 2026-09-27追加：ブランドID(yahoo_brand_id)未設定のメーカーはPayPayの実行対象から外す。
+    // ID指定が無いとメーカー名のキーワード検索になり、同名の別業種の商品が混ざる。
+    // 9/20以降の実データ（別物判定の集計）で、ID設定あり=別物率7.2%・採用2.3%に対し、
+    // ID未設定=別物率28.8%・採用0.3%（393件中1件）と差が明確だったため。
+    // 戻したくなったらfalseにすれば従来通り全メーカーを対象にする。
+    const REQUIRE_BRAND_ID = true;
     const EXCLUDE_KW = ['開封済み', '破れ', 'ダメージ', '傷あり', '汚れあり', '水没', 'ジャンク'];
 
     // ===== UI =====
@@ -339,8 +345,16 @@
             onload: res => {
                 try {
                     const data = JSON.parse(res.responseText);
-                    const mfrs = data.manufacturers || [];
-                    if (mfrs.length === 0) { updateStatus('メーカーリストが空です'); return; }
+                    const allMfrs = data.manufacturers || [];
+                    if (allMfrs.length === 0) { updateStatus('メーカーリストが空です'); return; }
+                    // カテゴリ検索行はPPフリマ非対応で元々対象外（runBatchFetch側でも除外している）。
+                    // 選択画面に「実行しても0件になるグループ」が出ないよう、ここで一覧からも外す。
+                    const isCat = m => (m.url || '').includes('category_id');
+                    const mfrs = REQUIRE_BRAND_ID ? allMfrs.filter(m => !isCat(m) && m.yahoo_brand_id) : allMfrs;
+                    const skipped = allMfrs.filter(m => !isCat(m) && !m.yahoo_brand_id).length;
+                    if (REQUIRE_BRAND_ID && skipped > 0) {
+                        updateStatus(`ブランドID未設定の${skipped}社は対象外です（キーワード検索だと別物が混ざるため）`);
+                    }
                     showGroupPicker(mfrs);
                 } catch(e) {
                     updateStatus('取得失敗: ' + e);
