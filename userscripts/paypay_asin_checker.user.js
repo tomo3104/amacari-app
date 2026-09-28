@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・mercari_asin_checker.user.jsと同様のクロール深度ログ(maker/_page送信)を追加、メルカリ側同様の深度分析に対応）
+// @version      2.1
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -207,6 +207,27 @@
         setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
     }
 
+    // ===== タイミングログ（2026-09-29追加）=====
+    // mercari_asin_checker.user.jsのpostTimingと同じ仕組み。メルカリ側の実行と区別できるよう、
+    // groupは'PP:'を付けて送り、mfr単位の記録にはroute:'PPリサーチ'を付けてserver.py側で
+    // 「リサーチ」（メルカリ）と別ルートとして記録させる（mfr_timingのルート列で区別可能に）。
+    // これにより①何社処理したか（＝全部終わったか）が後から確認できる ②type='end'を
+    // server.pyが受け取ることで、メルカリと同様に入念調査・実績集計が自動連鎖するようになる
+    // （以前は無くPayPayのヒットが精査待ちのまま溜まっていた）。
+    function postTiming(data) {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method:   'POST',
+                url:      'http://localhost:8766/log-timing',
+                headers:  { 'Content-Type': 'application/json' },
+                data:     JSON.stringify(data),
+                onload:   () => resolve(),
+                onerror:  () => resolve(),
+                ontimeout: () => resolve(),
+            });
+        });
+    }
+
     // ===== クローラーリサーチ本体 =====
     async function runBatchFetch(mfrs, selected) {
         const targets  = selected.map(s => s.toUpperCase());
@@ -219,7 +240,10 @@
         running = true;
         setRunningUI(true);
         let errors = 0;
-        let totalCollected = 0, totalHits = 0;
+        let totalCollected = 0, totalMatched = 0, totalHits = 0, totalNewCands = 0;
+        const groupLabel = 'PP:' + selected.join(',');
+        const batchStart = Date.now();
+        postTiming({ type: 'start', group: groupLabel, total: filtered.length });
 
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
@@ -235,6 +259,7 @@
             } catch(_) {}
             updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ¥${priceMin}〜¥${priceMax} fetch中...`);
 
+            const mfrStart = Date.now();
             try {
                 const fetched = await fetchPayPayItems(mfr.name, priceMin, priceMax, mfr.yahoo_brand_id);
                 errors = 0;
@@ -242,7 +267,13 @@
                 totalCollected += itemList.length;
                 updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} ${itemList.length}件 → 照合中`);
                 const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: mfr.name }));
-                totalHits += (result.matches || []).length;
+                const matched = result.n_model_match || 0;
+                const hits    = (result.matches || []).length;
+                const newCands = result.new_candidates_count || 0;
+                totalMatched  += matched;
+                totalHits     += hits;
+                totalNewCands += newCands;
+                postTiming({ type: 'mfr', name: mfr.name, group: mfr.group, route: 'PPリサーチ', elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched, hits, new_cands: newCands });
                 await sleep(500);
             } catch(e) {
                 errors++;
@@ -251,6 +282,7 @@
                     updateStatus(`エラー連続3回 → 停止: ${e.message}`);
                     running = false;
                     setRunningUI(false);
+                    await postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
                     return;
                 }
                 await sleep(2000);
@@ -259,9 +291,8 @@
 
         running = false;
         setRunningUI(false);
-        if (running === false) {
-            updateStatus(`完了 ${filtered.length}件巡回 / 累計${totalCollected}件 / ヒット${totalHits}件`);
-        }
+        await postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
+        updateStatus(`完了 ${filtered.length}件巡回 / 累計${totalCollected}件 / ヒット${totalHits}件`);
     }
 
     // ===== グループ選択ダイアログ =====
