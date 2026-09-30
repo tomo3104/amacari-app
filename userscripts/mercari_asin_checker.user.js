@@ -1,7 +1,7 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.69
+// @version      3.70
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -783,14 +783,21 @@
     }
 
     // 自動起動（?auto_research=）経由だった場合、クローラーリサーチがどのルート（正常完了・
-    // テンプレート再取得失敗・エラー連続3回）で終わっても発掘リサーチへ自動チェーンする。
-    // 以前は正常完了ルートにしか無く、エラー終了だと発掘リサーチが始まらなかった（2026-08-15修正）。
-    function chainToDescFinderIfAuto() {
+    // テンプレート再取得失敗・エラー連続3回）で終わってもヤフーフリマへ自動で連鎖する。
+    // 以前はメルカリ→発掘リサーチの直接チェーンだったが、「メルカリとヤフーフリマの両方を
+    // 仕掛けて寝る」という使い方に対応するため、発掘リサーチの代わりにヤフーフリマの
+    // クローラーリサーチへ繋ぐように変更した（2026-09-30。発掘リサーチは時間がかかりすぎる
+    // という理由で自動連鎖からは除外。手動で使う分には従来通り?start_desc=ALLで起動可能）。
+    // localStorageはオリジンごとに独立しているため、ここから先はURLクエリ文字列
+    // （auto_research=ALL）だけで「自動実行してね」という意思をヤフーフリマ側へ伝える。
+    // ヤフーフリマ側（paypay_asin_checker.user.js）が完了した後は、そこで連鎖は終わり
+    // （入念調査はどちらの完了イベントでも動くデバウンス方式で別途自動的に起動する）。
+    function chainToPayPayIfAuto() {
         if (localStorage.getItem('autoResearch') === 'true') {
             localStorage.removeItem('autoResearch');
-            updateStatus('→ 発掘リサーチへ自動移行中...');
+            updateStatus('→ ヤフーフリマのリサーチへ自動移行中...');
             setTimeout(() => {
-                window.location.href = 'https://jp.mercari.com/?start_desc=ALL';
+                window.location.href = 'https://paypayfleamarket.yahoo.co.jp/?auto_research=ALL';
             }, 3000);
             return true;
         }
@@ -870,7 +877,7 @@
                     updateStatus('テンプレート再取得失敗 → 中断');
                     await postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
                     running = false; setRunningUI(false);
-                    chainToDescFinderIfAuto();
+                    chainToPayPayIfAuto();
                     return;
                 }
                 errors++;
@@ -886,7 +893,7 @@
                     await sleep(2000);
                     running = false;
                     setRunningUI(false);
-                    chainToDescFinderIfAuto();
+                    chainToPayPayIfAuto();
                     return;
                 }
                 await sleep(2000);
@@ -903,7 +910,7 @@
         running = false;
         setRunningUI(false);
         updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
-        chainToDescFinderIfAuto();
+        chainToPayPayIfAuto();
     }
 
     // ========== 収集 ==========
@@ -1467,3 +1474,4 @@
     });
 
 })();
+

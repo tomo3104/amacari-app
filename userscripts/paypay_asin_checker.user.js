@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応）
+// @version      2.2
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -368,8 +368,8 @@
         };
     }
 
-    // ===== ボタン処理 =====
-    batchBtn.onclick = () => {
+    // メーカーリスト取得＋ブランドID未設定の除外（ボタン押下・自動起動の両方から使う共通処理）
+    function fetchEligibleMfrs(onReady) {
         GM_xmlhttpRequest({
             method: 'GET',
             url: MFR_URL,
@@ -386,14 +386,38 @@
                     if (REQUIRE_BRAND_ID && skipped > 0) {
                         updateStatus(`ブランドID未設定の${skipped}社は対象外です（キーワード検索だと別物が混ざるため）`);
                     }
-                    showGroupPicker(mfrs);
+                    onReady(mfrs);
                 } catch(e) {
                     updateStatus('取得失敗: ' + e);
                 }
             },
             onerror: () => updateStatus('サーバー未起動 (localhost:8766)'),
         });
-    };
+    }
+
+    // ===== ボタン処理 =====
+    batchBtn.onclick = () => fetchEligibleMfrs(showGroupPicker);
+
+    // ===== 自動起動（2026-09-30追加）=====
+    // メルカリ側（mercari_asin_checker.user.js）が?auto_research=経由で起動された時、
+    // 完了後にこのURL(?auto_research=ALL)へ自動遷移してくる。「メルカリとヤフーフリマの
+    // 両方を仕掛けて寝る」使い方のためのチェーンの2番目。手動でタスクスケジューラ等から
+    // 直接このURLを開いて単独起動することもできる。
+    // @run-at指定なし(document-idle)のため、スクリプト実行時点で既にloadイベントが
+    // 発火済みの場合があることに注意し、readyStateを見て即時実行にフォールバックする。
+    (function () {
+        const autoGroup = new URLSearchParams(location.search).get('auto_research');
+        if (!autoGroup) return;
+        const start = () => {
+            setTimeout(() => {
+                const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
+                updateStatus('自動起動: メーカーリスト取得中...');
+                fetchEligibleMfrs(mfrs => runBatchFetch(mfrs, groups));
+            }, 3000);
+        };
+        if (document.readyState === 'complete') start();
+        else window.addEventListener('load', start);
+    })();
 
     stopBtn.onclick = () => { running = false; };
 
