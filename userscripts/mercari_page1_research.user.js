@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.26
-// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）
+// @version      3.27
+// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -16,6 +16,13 @@
     const SERVER      = 'http://localhost:8766/check-mercari';
     const WAIT_MS     = 60000;  // サイクル間の待機
     const FETCH_DELAY = 3000;   // カテゴリ間のfetch間隔
+    // 2026-10-02追加：RTがページ1（新着順）しか見ないため、自動リサーチが拾う
+    // 「売れ残り（2ページ目以降）」の95%をRTは構造的に取りこぼしていることが
+    // 20日分のログ分析で判明。1メーカーあたり最大3ページまで遡ることで、
+    // RTの高頻度（約48回/日）を維持したまま自動リサーチとの守備範囲の重複を
+    // 減らす。ページ間はPAGE_FETCH_DELAY（同一メーカー内なので短め）で間引く。
+    const MAX_PAGES        = 3;
+    const PAGE_FETCH_DELAY = 800;
 
     const P1_MODE      = 'p1r_mode';
     const P1_CURSOR    = 'p1r_cursor';
@@ -195,6 +202,68 @@
         { name: 'CFD販売', url: 'https://jp.mercari.com/search?exclude_keyword=%E9%96%8B%E5%B0%81%E6%B8%88%E3%81%BF%E3%80%80%E7%A0%B4%E3%82%8C%E3%80%80%E3%83%80%E3%83%A1%E3%83%BC%E3%82%B8&price_min=1000&price_max=20000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari&brand_id=31328' }
     ];
 
+    // 2026-10-02追加：/get-manufacturers が成功するとloadMakers()がSTATIC_MAKERS全体を
+    // 動的リストで「丸ごと置き換え」ていたため、STATIC_MAKERSに同梱されていた
+    // カテゴリ横断検索（ライト・照明〜スマホカテゴリ等、約50件・ブランド不問で
+    // ¥1,000〜¥20,000を拾う網）が、動的取得が安定して成功するようになって以降
+    // RTから完全に失われていた（手動実行のクローラーリサーチ側には同等のCAT/CAT2が
+    // 残っており、RTだけがこの網を欠いた状態で動き続けていた）。動的取得の成否に
+    // 関わらず常に合流させる別枠として独立させる。
+    const STATIC_CATEGORIES = [
+        { name: 'ライト・照明', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=65' },
+        { name: 'テレビ・映像機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=98' },
+        { name: 'オーディオ機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=99' },
+        { name: '生活家電', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=101' },
+        { name: 'ノートPC', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=840' },
+        { name: 'PC周辺機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=841' },
+        { name: 'テレビ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=848' },
+        { name: '旅行用品', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=935' },
+        { name: 'カーナビ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1113' },
+        { name: 'カーオーディオ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1114' },
+        { name: 'ETC車載器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1117' },
+        { name: 'PCパーツ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1156' },
+        { name: 'アウトドア', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1164' },
+        { name: 'ラウンド用品・アクセサリー', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1190' },
+        { name: '美容家電', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1237' },
+        { name: '冷暖房・空調', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1243' },
+        { name: 'ディスプレイ・モニター', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=1262' },
+        { name: 'アウトドア・釣り・旅行用品', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=2634' },
+        { name: '旅行用家電', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3117' },
+        { name: 'キーボード', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3710' },
+        { name: 'マウス・トラックボール', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3716' },
+        { name: 'PC用ゲームコントローラー・コンバーター', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3728' },
+        { name: 'プリンター・複合機本体', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3733' },
+        { name: '外付けハードディスク・ドライブ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3756' },
+        { name: 'ルーター・ネットワーク機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3770' },
+        { name: 'PCケーブル・コネクタ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3779' },
+        { name: 'スキャナー', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3811' },
+        { name: '分配器・切替器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3820' },
+        { name: 'Webカメラ の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3829' },
+        { name: 'PCスピーカー の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3831' },
+        { name: 'PC周辺機器 その他 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3832' },
+        { name: 'メモリーカード', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=3875' },
+        { name: '望遠鏡・光学機器', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=4124' },
+        { name: '生活家電・空調', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=4136' },
+        { name: '電池・充電池アクセサリー の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=4290' },
+        { name: '電卓 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5457' },
+        { name: '防犯・セーフティ', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5497' },
+        { name: '電動工具・エア工具', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5598' },
+        { name: '住宅設備 屋外照明 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5865' },
+        { name: '住宅設備 キッチン の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5873' },
+        { name: '住宅設備 空調設備 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5874' },
+        { name: '住宅設備 水回り・配管 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5875' },
+        { name: '住宅設備 トイレ の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5877' },
+        { name: '計測・検査', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5907' },
+        { name: '電設資材 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=5961' },
+        { name: 'ゴルフ GPSナビ の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=8096' },
+        { name: 'ゴルフ用距離計 の検索結果', url: 'https://jp.mercari.com/search?status=on_sale&shipping_payer_id=2&item_condition_id=1&price_min=1000&price_max=20000&sort=created_time&order=desc&category_id=8097' },
+        { name: '外付けHDD・ドライブ', url: 'https://jp.mercari.com/search?item_condition_id=1&shipping_payer_id=2&price_min=1000&price_max=10000&status=on_sale&sort=created_time&order=desc&item_types=mercari&category_id=3756' },
+        { name: 'プリンター・複合機', url: 'https://jp.mercari.com/search?item_condition_id=1&shipping_payer_id=2&price_min=1000&price_max=10000&status=on_sale&sort=created_time&order=desc&item_types=mercari&category_id=3733' },
+        { name: '家電カテゴリ', url: 'https://jp.mercari.com/search?category_id=1244%2C1245%2C1246%2C1248%2C1250%2C1251%2C1252%2C1253%2C4142%2C4143%2C4150%2C4158%2C4184%2C4188%2C4193%2C4198%2C4231%2C4232%2C4246%2C4290%2C4293%2C865%2C866%2C867%2C869%2C870%2C871%2C873%2C874%2C875%2C878&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari' },
+        { name: 'カメラカテゴリ', url: 'https://jp.mercari.com/search?category_id=1255%2C4021%2C4074%2C4081%2C4096%2C4121%2C4122%2C4124%2C843%2C845%2C846%2C847%2C98%2C99&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari' },
+        { name: 'スマホカテゴリ', url: 'https://jp.mercari.com/search?category_id=10792%2C10793%2C1106%2C1156%2C1209%2C1262%2C1689%2C3660%2C3662%2C3663%2C3666%2C3673%2C3674%2C3690%2C3691%2C3692%2C3693%2C3703%2C3705%2C3707%2C3709%2C3710%2C3716%2C3728%2C3733%2C3756%2C3770%2C3779%2C3811%2C3820%2C3829%2C3830%2C3831%2C3832%2C3834%2C3839%2C3844%2C3848%2C3875%2C983%2C984%2C986&price_min=1000&price_max=10000&item_condition_id=1&shipping_payer_id=2&status=on_sale&sort=created_time&order=desc&item_types=mercari' },
+    ];
+
     let _searchUrls = [];  // STATIC_MAKERS から初期化
     let _fetchInternal = false; // 自前のfetchCategory呼び出しを区別するフラグ
 
@@ -233,13 +302,20 @@
 
     async function loadMakers() {
         const dynamic = await fetchDynamicMakers();
+        let makerUrls;
         if (dynamic && dynamic.length > 0) {
-            _searchUrls = dynamic.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
-            p1Log(`makers: ${_searchUrls.length}件（サーバーから動的取得）`);
-            return;
+            makerUrls = dynamic.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
+            p1Log(`makers: ${makerUrls.length}件（サーバーから動的取得）`);
+        } else {
+            makerUrls = STATIC_MAKERS.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
+            p1Log(`makers: ${makerUrls.length}件（内蔵リスト・フォールバック）`);
         }
-        _searchUrls = STATIC_MAKERS.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
-        p1Log(`makers: ${_searchUrls.length}件（内蔵リスト・フォールバック）`);
+        // STATIC_CATEGORIESは動的取得の成否に関わらず常に合流させる（上のコメント参照）。
+        // フォールバック時はSTATIC_MAKERS内の同一カテゴリ分と重複するが、実害は
+        // 二重チェックされる程度でヒット判定上の問題はないため許容する。
+        const categoryUrls = STATIC_CATEGORIES.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
+        _searchUrls = makerUrls.concat(categoryUrls);
+        p1Log(`makers合計: ${_searchUrls.length}件（カテゴリ横断${categoryUrls.length}件含む）`);
     }
 
     // ── キャプチャデータ（ページ遷移を超えてlocalStorageで保持） ──────────────
@@ -423,7 +499,7 @@
         } catch (e) {}
     }
 
-    async function processItems(items) {
+    async function processItems(items, makerName) {
         const auctionItems = items.filter(item => item.auction && item.auction.bidDeadline);
         if (auctionItems.length > 0) {
             p1Log(`  ●オークション検知 ${auctionItems.length}件`);
@@ -442,10 +518,16 @@
         if (formatted.length === 0) return 0;
 
         try {
+            // 2026-10-02修正：mercari_asin_checker.user.js（自動リサーチ側）は
+            // { maker: name } を送っており、server.pyのTEST_RULE_MAKERS
+            // （エレコム・サンワサプライ・アイ・オー・データ＝実験的緩和ルール適用対象）が
+            // maker名の完全一致で判定される。RT側はmakerを一切送っていなかったため、
+            // よりによってRT自身のメーカーリスト先頭3社であるこの3社が、RTだけ
+            // 常に通常ルール（厳しい方）で判定され続け、ヒットを取りこぼしていた。
             const res  = await fetch(SERVER, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ items: formatted, source: 'realtime' }),
+                body:    JSON.stringify({ items: formatted, source: 'realtime', maker: makerName || '' }),
             });
             const data    = await res.json();
             const matches = data.matches || [];
@@ -488,7 +570,7 @@
 
     // ── キャプチャフェーズ（初回のみ3カテゴリを1回ずつ遷移して記録） ─────────
 
-    function buildBodyFromUrl(templateBody, makerUrl) {
+    function buildBodyFromUrl(templateBody, makerUrl, pageToken = '') {
         try {
             const body = JSON.parse(templateBody);
             const u = new URL(makerUrl);
@@ -510,11 +592,41 @@
             }
 
             body.searchCondition = sc;
-            body.pageToken = '';
+            body.pageToken = pageToken;
             return JSON.stringify(body);
         } catch (e) {
             return templateBody;
         }
+    }
+
+    // 2026-10-02追加：1メーカーあたり最大MAX_PAGESページまで遡って取得する。
+    // mercari_asin_checker.user.js（クローラーリサーチ）と同じ
+    // data.meta.nextPageToken方式。取得失敗時はそれまでに集めたitemsだけ返し、
+    // 1メーカー分が丸ごと無駄にならないようにする。
+    async function fetchCategoryPages(tpl, makerUrl, maxPages) {
+        const allItems = [];
+        let pageToken = '';
+        for (let page = 0; page < maxPages; page++) {
+            const body = buildBodyFromUrl(tpl.body, makerUrl, pageToken);
+            const cap = { ...tpl, body };
+            let data;
+            try {
+                data = await fetchCategory(cap);
+            } catch (e) {
+                // 1ページ目が失敗した場合のみ、呼び出し元（認証切れ検知）に投げる。
+                // 2ページ目以降の失敗は、既に集めた1ページ目分だけでも活かす。
+                if (page === 0) throw e;
+                break;
+            }
+            const items = data.items || [];
+            allItems.push(...items);
+
+            const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
+            if (!nextToken || items.length === 0) break;
+            pageToken = nextToken;
+            if (page < maxPages - 1) await sleep(PAGE_FETCH_DELAY);
+        }
+        return allItems;
     }
 
     async function runCapturePhase() {
@@ -569,13 +681,9 @@
                 showStatus(`[R] ${_searchUrls[i].name} 照合中…`, '#0d47a1');
                 p1Log(`fetch cat${i}`);
 
-                const body = buildBodyFromUrl(tpl.body, _searchUrls[i].url);
-                const cap = { ...tpl, body };
-
                 let items = [];
                 try {
-                    const data = await fetchCategory(cap);
-                    items = data.items || [];
+                    items = await fetchCategoryPages(tpl, _searchUrls[i].url, MAX_PAGES);
                     _fetchErrors = 0;
                 } catch (e) {
                     _fetchErrors++;
@@ -594,7 +702,7 @@
                 p1Log(`cat${i} items=${items.length}`);
                 reportStatus(`${_searchUrls[i].name} ${items.length}件照合中`, 'loop');
                 let found = 0;
-                try { found = await processItems(items); } catch (e) { p1Log(`processItems error: ${e.message}`); }
+                try { found = await processItems(items, _searchUrls[i].name); } catch (e) { p1Log(`processItems error: ${e.message}`); }
 
                 const total = parseInt(ls.get(P1_FOUND) || '0', 10) + found;
                 ls.set(P1_FOUND, String(total));
