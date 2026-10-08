@@ -504,7 +504,7 @@
                     models.forEach(model => {
                         // 【セット】タグはサーバー側(find_matches)が名前を見て一括付与するため、ここでは付けない（二重表示防止）
                         const label = `${item.name} ${model}`;
-                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model) });
+                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model), _page: item._page });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     const totalGot = incResultCount(models.length);
@@ -1274,7 +1274,7 @@
                     models.forEach(model => {
                         // 【セット】タグはサーバー側(find_matches)が名前を見て一括付与するため、ここでは付けない（二重表示防止）
                         const label = `${item.name} ${model}`;
-                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model) });
+                        results.push({ name: label, model, price: item.price, url: item.url, image: item.image, desc_excerpt: extractExcerpt(desc, model), _page: item._page });
                     });
                     localStorage.setItem(RESULT_KEY, JSON.stringify(results));
                     const totalGot = incResultCount(models.length);
