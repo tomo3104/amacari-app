@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.27
-// @description  メルカリ検索結果を全ページ自動収集（重複率が高いページが3ページ続いたら自動で打ち切る機能を追加(v6.24)・クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に）
+// @version      6.28
+// @description  メルカリ検索結果を全ページ自動収集（重複率が高いページが3ページ続いたら自動で打ち切る機能を追加(v6.24)・クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に・クローラーコレクトが全メーカー完走後に1回だけ送信する作りで途中中断時に収集済み全データが消失する事故が発生したため、10メーカーごとに随時送信する方式に変更(v6.28)）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -644,6 +644,34 @@
         return allItems;
     }
 
+    // 2026-10-09追加：クローラーコレクトは全メーカーを回り終えた後に1回だけ/collect-itemsへ
+    // 送信する作りだったため、途中でページがリロードされる等で中断すると、それまで収集した
+    // 分が丸ごとブラウザのメモリ上から消えて保存されずに失われる事故があった（366件中138件
+    // 処理済みの時点でメルカリ側の要因と思われるページ遷移が起き、12万件超の収集データが全損）。
+    // SEND_EVERYメーカーごとに区切って随時送信することで、損失を最大SEND_EVERY件分に抑える。
+    const SEND_EVERY = 10;
+
+    async function flushPendingItems(pending) {
+        const itemList = Object.values(pending).map(it => ({ name: it.name, price: Number(it.price) || 0, url: it.url || '', source: it._source || '' }));
+        if (itemList.length === 0) return { ok: true, new_count: 0, add_count: 0, total: null };
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const result = await new Promise(resolve => {
+                GM_xmlhttpRequest({
+                    method: 'POST', url: 'http://localhost:8765/collect-items',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ items: itemList }),
+                    timeout: 120000,
+                    onload: res => { try { resolve(JSON.parse(res.responseText)); } catch (e) { resolve(null); } },
+                    onerror: () => resolve(null),
+                    ontimeout: () => resolve(null),
+                });
+            });
+            if (result && result.ok) return result;
+            await sleep(3000);
+        }
+        return null;
+    }
+
     async function runCrawlerFetch(mfrs, selected) {
         const targets = selected.map(s => s.toUpperCase());
         const allMfrs = [...mfrs, ...STATIC_CATEGORIES];
@@ -680,6 +708,8 @@
 
         let errors = 0;
         const allItems = {};
+        let pendingItems = {};
+        let sentNew = 0, sentAdd = 0, lastTotal = 0;
 
         for (let i = 0; i < filtered.length; i++) {
             if (!running) break;
@@ -691,6 +721,7 @@
                 const fetched = await fetchCollectorItems(url, { name: mfr.name, idx: i + 1, total: filtered.length });
                 errors = 0;
                 Object.assign(allItems, fetched);
+                Object.assign(pendingItems, fetched);
                 const cnt   = Object.keys(fetched).length;
                 const total = Object.keys(allItems).length;
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
@@ -708,6 +739,24 @@
                     data: JSON.stringify({ index: i+1, total_mfr: filtered.length, name: mfr.name, group: mfr.group, count: cnt, cumulative: total, items: itemsForLog }),
                 });
                 await sleep(300);
+
+                const isLast = (i === filtered.length - 1);
+                if ((i + 1) % SEND_EVERY === 0 || isLast) {
+                    const pendingCount = Object.keys(pendingItems).length;
+                    if (pendingCount > 0) {
+                        updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + pendingCount + '件をサーバーへ送信中...');
+                        const sendResult = await flushPendingItems(pendingItems);
+                        if (sendResult) {
+                            sentNew += sendResult.new_count || 0;
+                            sentAdd += sendResult.add_count || 0;
+                            if (sendResult.total != null) lastTotal = sendResult.total;
+                            pendingItems = {};
+                            addLog('  → ' + pendingCount + '件をサーバーへ送信完了（新規型番+' + (sendResult.new_count || 0) + '件）', '#888888');
+                        } else {
+                            addLog('  ⚠ ' + pendingCount + '件の送信に失敗（次回まとめて再送信します）', '#ff8888');
+                        }
+                    }
+                }
             } catch(e) {
                 errors++;
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  エラー: ' + e.message, '#ff8888');
@@ -724,10 +773,14 @@
                         continue;
                     }
                     updateStatus('テンプレート再取得失敗 → 中断');
-                    running = false; setRunningUI(false); return;
+                    running = false; setRunningUI(false);
+                    await flushPendingItems(pendingItems);
+                    return;
                 } else if (errors >= 3) {
                     updateStatus('エラー連続' + errors + '回 → 再試行してください: ' + e.message);
-                    running = false; setRunningUI(false); return;
+                    running = false; setRunningUI(false);
+                    await flushPendingItems(pendingItems);
+                    return;
                 }
                 await sleep(2000);
             }
@@ -737,40 +790,19 @@
             setRunningUI(false);
             updateStatus('中止しました');
             addLog('--- 中止 ---', '#ffaa44');
+            await flushPendingItems(pendingItems);
             return;
         }
 
         items = allItems;
         const grandTotal = Object.keys(items).length;
-        updateStatus('型番抽出中... (' + grandTotal + '件)');
-        addLog('-------------------------');
-        addLog('収集完了: ' + grandTotal + '件 → 型番抽出中...', '#88ccff');
-
-        // 2026-09-03追加：/collect-items側にもurlを送り、サーバー側でアイテムID単位の
-        // 重複排除ができるようにした（同じ売り切れ出品が毎回のクロールで再収集され、
-        // mercariシートの価格リストに同一価格が何十回も重複記録される問題を修正するため）。
-        const itemList = Object.values(items).map(it => ({ name: it.name, price: Number(it.price) || 0, url: it.url || '', source: it._source || '' }));
-        const result = await new Promise(resolve => {
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: 'http://localhost:8765/collect-items',
-                headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ items: itemList }),
-                timeout: 120000,
-                onload: function(res) {
-                    try { resolve(JSON.parse(res.responseText)); } catch(e) { resolve({}); }
-                },
-                onerror: () => resolve({}),
-                ontimeout: () => resolve({}),
-            });
-        });
-
+        // 2026-10-09変更：送信はメーカーごとにSEND_EVERY件区切りで既に完了しているため、
+        // ここでのまとめ送信は不要（flushPendingItemsの累計結果を表示するだけ）。
         running = false;
         setRunningUI(false);
-        const newCount    = result.new_count || 0;
-        const totalModels = result.total || 0;
-        addLog('新規型番: ' + newCount + '件  累計型番: ' + totalModels + '件', '#88ff88');
-        updateStatus('完了！ ' + grandTotal + '件収集 / 新規型番' + newCount + '件');
+        addLog('-------------------------');
+        addLog('新規型番: ' + sentNew + '件  累計型番: ' + lastTotal + '件', '#88ff88');
+        updateStatus('完了！ ' + grandTotal + '件収集 / 新規型番' + sentNew + '件');
 
         // 自動起動モード（auto_crawl）の場合、完了後にASIN Checkerへチェーン
         if (localStorage.getItem('autoPipeline') === 'true') {
