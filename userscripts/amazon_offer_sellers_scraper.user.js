@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
@@ -18,24 +18,27 @@
         return m ? m[1] : null;
     }
 
-    // 2026-10-09：新品・FBAだけに絞るための条件を正確に作る前段階として、各セラーリンクの
-    // 近く（offer行全体と思われる祖先要素）のテキストを一緒に出力し、実際の表記を確認する。
+    // 2026-10-09：祖先を60文字しきい値で遡る方式だと「配送詳細」リンクと「セラー情報」
+    // リンクが別々に拾われ、コンディション/FBA表記まで届かなかった。offer行の正確な境界を
+    // 見つけるため、まず最初の2件分だけ祖先チェーン（タグ・id・class・文字数）を出力して調査する。
+    function dumpAncestorChain(a) {
+        const chain = [];
+        let el = a;
+        for (let i = 0; i < 10 && el; i++) {
+            chain.push(`${el.tagName}#${el.id || ''}.${(el.className || '').toString().slice(0, 40)} len=${(el.textContent || '').length}`);
+            el = el.parentElement;
+        }
+        return chain.join('\n  ');
+    }
+
     function scrapeSellers() {
-        const found = new Map(); // sellerId -> {name, context}
+        const found = new Map();
         document.querySelectorAll('a[href*="seller="]').forEach(a => {
             const m = a.href.match(/seller=([A-Z0-9]{10,})/);
             if (!m) return;
             const sellerId = m[1];
-            const text = a.textContent.trim();
-            // offer行全体らしき祖先（ある程度大きいテキストブロックになるまで遡る）を探す
-            let anc = a;
-            for (let i = 0; i < 6 && anc.parentElement; i++) {
-                anc = anc.parentElement;
-                if (anc.textContent.trim().length > 60) break;
-            }
-            const context = anc.textContent.replace(/\s+/g, ' ').trim().slice(0, 400);
             if (!found.has(sellerId)) {
-                found.set(sellerId, { name: text, context });
+                found.set(sellerId, { name: a.textContent.trim(), chain: dumpAncestorChain(a) });
             }
         });
         return found;
@@ -43,12 +46,14 @@
 
     function buildReport(asin, sellers) {
         const lines = [];
-        lines.push(`ASIN: ${asin}`);
-        lines.push(`見つかったセラー数: ${sellers.size}`);
+        lines.push(`ASIN: ${asin} / 見つかったリンク数: ${sellers.size}`);
+        lines.push('（最初の2件の祖先チェーンを調査）');
         lines.push('');
+        let n = 0;
         for (const [id, info] of sellers) {
+            if (n++ >= 2) break;
             lines.push(`=== sellerId=${id} name="${info.name}" ===`);
-            lines.push(info.context);
+            lines.push('  ' + info.chain);
             lines.push('');
         }
         return lines.join('\n');
