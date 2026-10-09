@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker
 // @namespace    http://tampermonkey.net/
-// @version      4.0
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)（2026-10-09新設）。
+// @version      5.0
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -101,6 +101,85 @@
         return m ? m[1] : null;
     }
 
+    // ========== Step1→2自動連鎖：複数セラーを自動巡回 ==========
+    // ページ遷移するとスクリプトの状態（変数）は全て消えるため、進行状況と結果を
+    // localStorageに保存しながら1人ずつプロフィールページへ自動遷移する
+    // （mercari_auto_collector.user.jsのautoPipeline連鎖と同じ考え方）。
+    const LS_KEY = 'mercariResellerWalk';
+    const WALK_STALE_MS = 30 * 60 * 1000; // 30分より古い状態は放棄済みとみなす
+    const WAIT_PER_SELLER_MS = 8000;
+    const NAV_DELAY_MS = 800;
+
+    function loadWalkState() {
+        try {
+            const raw = localStorage.getItem(LS_KEY);
+            if (!raw) return null;
+            const state = JSON.parse(raw);
+            if (!state.active || Date.now() - state.startedAt > WALK_STALE_MS) return null;
+            return state;
+        } catch (e) { return null; }
+    }
+    function saveWalkState(state) {
+        localStorage.setItem(LS_KEY, JSON.stringify(state));
+    }
+    function clearWalkState() {
+        localStorage.removeItem(LS_KEY);
+    }
+
+    function buildCombinedSoldReport(results) {
+        const lines = [];
+        const totalItems = results.reduce((a, r) => a + r.items.length, 0);
+        lines.push(`巡回セラー数: ${results.length} / SOLD商品合計: ${totalItems}件`);
+        lines.push('');
+        lines.push('日付\tsellerId\tsellerName\t商品名\t価格\tブランド');
+        for (const r of results) {
+            for (const it of r.items) {
+                lines.push(`${it.date}\t${r.sellerId}\t${r.sellerName}\t${it.name}\t${it.price}\t${it.brand}`);
+            }
+        }
+        return lines.join('\n');
+    }
+
+    async function waitForSellerItems(sellerId, timeoutMs) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const m = capturedItemsBySeller.get(sellerId);
+            if (m && m.size > 0) return m;
+            await new Promise(r => setTimeout(r, 400));
+        }
+        return capturedItemsBySeller.get(sellerId) || new Map();
+    }
+
+    async function runWalkStep(state) {
+        const current = state.queue[state.currentIndex];
+        const itemsMap = await waitForSellerItems(String(current.id), WAIT_PER_SELLER_MS);
+        const sold = [...itemsMap.values()]
+            .filter(it => it.status === 'sold_out')
+            .sort((a, b) => b.created - a.created);
+        state.results.push({
+            sellerId: current.id,
+            sellerName: current.name,
+            items: sold.map(it => ({
+                date: formatDate(it.created), name: it.name, price: it.price,
+                brand: (it.item_brand && it.item_brand.name) || '',
+            })),
+        });
+        state.currentIndex++;
+
+        if (state.currentIndex >= state.queue.length) {
+            const report = buildCombinedSoldReport(state.results);
+            clearWalkState();
+            GM_setClipboard(report);
+            return { done: true, report };
+        }
+        saveWalkState(state);
+        const next = state.queue[state.currentIndex];
+        setTimeout(() => {
+            location.href = `https://jp.mercari.com/user/profile/${next.id}`;
+        }, NAV_DELAY_MS);
+        return { done: false, progress: `${state.currentIndex}/${state.queue.length}` };
+    }
+
     // ========== Step1: 評価履歴→セラー一覧 ==========
     function buildReviewReport(entries) {
         const asBuyer = entries.filter(e => e.subject === 'buyer');
@@ -146,35 +225,69 @@
     function mountUI() {
         const userId = getUserIdFromUrl();
 
+        const statusEl0 = document.createElement('div');
+        statusEl0.style.cssText = 'position:fixed;top:195px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
+        document.body.appendChild(statusEl0);
+        function updateStatus0(msg) {
+            statusEl0.style.display = 'block';
+            statusEl0.textContent = msg;
+        }
+
+        // --- 巡回中なら、UIを出さずに自動進行だけ行う ---
+        const walkState = loadWalkState();
+        if (walkState && userId && String(walkState.queue[walkState.currentIndex].id) === userId) {
+            updateStatus0(`自動巡回中... (${walkState.currentIndex + 1}/${walkState.queue.length}) ${walkState.queue[walkState.currentIndex].name}`);
+            runWalkStep(walkState).then(r => {
+                if (r.done) {
+                    updateStatus0('巡回完了！クリップボードにコピーしました（' + r.report.length + '文字）');
+                    console.log(r.report);
+                }
+            });
+            return; // 通常のStep1/2ボタンは出さない（遷移中なので）
+        }
+
         // --- Step1ボタン ---
         const btn1 = document.createElement('button');
         btn1.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
         document.body.appendChild(btn1);
-
-        const statusEl = document.createElement('div');
-        statusEl.style.cssText = 'position:fixed;top:140px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
-        document.body.appendChild(statusEl);
-
-        function updateStatus(msg) {
-            statusEl.style.display = 'block';
-            statusEl.textContent = msg;
-        }
 
         setInterval(() => {
             btn1.textContent = capturedReviews ? 'Step1: セラー一覧を抽出してコピー' : 'Step1: 評価データ待機中...（更新待ち）';
         }, 500);
 
         btn1.onclick = () => {
-            if (!capturedReviews) { updateStatus('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
+            if (!capturedReviews) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
             const report = buildReviewReport(capturedReviews.data || []);
             GM_setClipboard(report);
-            updateStatus('Step1完了！クリップボードにコピーしました（' + report.length + '文字）');
+            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）');
             console.log(report);
+        };
+
+        // --- Step1→2自動連鎖ボタン（評価履歴から全セラーを自動巡回） ---
+        const btnWalk = document.createElement('button');
+        btnWalk.textContent = 'Step1→2: 全セラーを自動巡回';
+        btnWalk.style.cssText = 'position:fixed;top:75px;right:20px;z-index:99999;padding:12px 20px;background:#E65100;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+        document.body.appendChild(btnWalk);
+
+        btnWalk.onclick = () => {
+            if (!capturedReviews) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
+            const asBuyer = (capturedReviews.data || []).filter(e => e.subject === 'buyer');
+            const bySeller = new Map();
+            for (const e of asBuyer) {
+                if (!bySeller.has(e.user.id)) bySeller.set(e.user.id, { id: e.user.id, name: e.user.name });
+            }
+            const queue = [...bySeller.values()];
+            if (queue.length === 0) { updateStatus0('セラーが見つかりませんでした'); return; }
+            saveWalkState({ active: true, startedAt: Date.now(), queue, currentIndex: 0, results: [] });
+            updateStatus0(`自動巡回開始... (0/${queue.length})`);
+            setTimeout(() => {
+                location.href = `https://jp.mercari.com/user/profile/${queue[0].id}`;
+            }, NAV_DELAY_MS);
         };
 
         // --- Step2ボタン（セラーのプロフィールページでも使えるよう常に表示） ---
         const btn2 = document.createElement('button');
-        btn2.style.cssText = 'position:fixed;top:75px;right:20px;z-index:99999;padding:12px 20px;background:#00897B;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+        btn2.style.cssText = 'position:fixed;top:130px;right:20px;z-index:99999;padding:12px 20px;background:#00897B;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
         document.body.appendChild(btn2);
 
         setInterval(() => {
@@ -183,15 +296,15 @@
         }, 500);
 
         btn2.onclick = () => {
-            if (!userId) { updateStatus('ユーザーIDがURLから取得できません'); return; }
+            if (!userId) { updateStatus0('ユーザーIDがURLから取得できません'); return; }
             const itemsMap = capturedItemsBySeller.get(userId);
             if (!itemsMap || itemsMap.size === 0) {
-                updateStatus('まだ商品データを捕まえていません。ページを更新し、SOLDタブを開いてから少し待ってお試しください（スクロールするとさらに多く捕まります）');
+                updateStatus0('まだ商品データを捕まえていません。ページを更新してから少し待ってお試しください');
                 return;
             }
             const report = buildSoldReport(userId, itemsMap);
             GM_setClipboard(report);
-            updateStatus('Step2完了！クリップボードにコピーしました（' + report.length + '文字）');
+            updateStatus0('Step2完了！クリップボードにコピーしました（' + report.length + '文字）');
             console.log(report);
         };
     }
