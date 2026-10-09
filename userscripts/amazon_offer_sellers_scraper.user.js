@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
@@ -18,17 +18,24 @@
         return m ? m[1] : null;
     }
 
+    // 2026-10-09：新品・FBAだけに絞るための条件を正確に作る前段階として、各セラーリンクの
+    // 近く（offer行全体と思われる祖先要素）のテキストを一緒に出力し、実際の表記を確認する。
     function scrapeSellers() {
-        // 2026-10-09：ページのデザイン変更に強くするため、具体的なクラス名ではなく
-        // 「href に seller=ID を含むリンク」というパターンでセラーへの導線を広く探す。
-        const found = new Map(); // sellerId -> name
+        const found = new Map(); // sellerId -> {name, context}
         document.querySelectorAll('a[href*="seller="]').forEach(a => {
             const m = a.href.match(/seller=([A-Z0-9]{10,})/);
             if (!m) return;
             const sellerId = m[1];
             const text = a.textContent.trim();
-            if (!found.has(sellerId) || (!found.get(sellerId) && text)) {
-                found.set(sellerId, text || found.get(sellerId) || '');
+            // offer行全体らしき祖先（ある程度大きいテキストブロックになるまで遡る）を探す
+            let anc = a;
+            for (let i = 0; i < 6 && anc.parentElement; i++) {
+                anc = anc.parentElement;
+                if (anc.textContent.trim().length > 60) break;
+            }
+            const context = anc.textContent.replace(/\s+/g, ' ').trim().slice(0, 400);
+            if (!found.has(sellerId)) {
+                found.set(sellerId, { name: text, context });
             }
         });
         return found;
@@ -39,9 +46,10 @@
         lines.push(`ASIN: ${asin}`);
         lines.push(`見つかったセラー数: ${sellers.size}`);
         lines.push('');
-        lines.push('sellerId\tsellerName\tストアURL');
-        for (const [id, name] of sellers) {
-            lines.push(`${id}\t${name}\thttps://www.amazon.co.jp/s?me=${id}`);
+        for (const [id, info] of sellers) {
+            lines.push(`=== sellerId=${id} name="${info.name}" ===`);
+            lines.push(info.context);
+            lines.push('');
         }
         return lines.join('\n');
     }
