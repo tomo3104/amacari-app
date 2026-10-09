@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      6.0
 // @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
+// @connect      localhost
 // @run-at       document-start
 // ==/UserScript==
 
@@ -150,12 +152,32 @@
         return capturedItemsBySeller.get(sellerId) || new Map();
     }
 
+    // 2026-10-09追加：既存のクローラーコレクトと同じ/collect-items（amacari-tools:8765）に
+    // そのまま流し込む。新しい受け口を作らず、mercariシート→型番候補検出→Amazon価格チェックの
+    // 既存パイプラインにそのまま乗せる。1人処理するごとに随時送信する（最後にまとめて送ると
+    // 巡回が途中で止まった時に全部失われる、クローラーコレクトで実際に起きた事故と同じ教訓）。
+    function sendToCollectItems(sellerName, sold) {
+        if (sold.length === 0) return;
+        const itemList = sold.map(it => ({
+            name: it.name, price: Number(it.price) || 0,
+            url: `https://jp.mercari.com/item/${it.id}`,
+            source: 'せどらー追跡:' + sellerName,
+        }));
+        GM_xmlhttpRequest({
+            method: 'POST', url: 'http://localhost:8765/collect-items',
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ items: itemList }),
+            timeout: 30000,
+        });
+    }
+
     async function runWalkStep(state) {
         const current = state.queue[state.currentIndex];
         const itemsMap = await waitForSellerItems(String(current.id), WAIT_PER_SELLER_MS);
         const sold = [...itemsMap.values()]
             .filter(it => it.status === 'sold_out')
             .sort((a, b) => b.created - a.created);
+        sendToCollectItems(current.name, sold);
         state.results.push({
             sellerId: current.id,
             sellerName: current.name,
@@ -239,7 +261,7 @@
             updateStatus0(`自動巡回中... (${walkState.currentIndex + 1}/${walkState.queue.length}) ${walkState.queue[walkState.currentIndex].name}`);
             runWalkStep(walkState).then(r => {
                 if (r.done) {
-                    updateStatus0('巡回完了！クリップボードにコピーしました（' + r.report.length + '文字）');
+                    updateStatus0('巡回完了！mercariシートへ送信済み＋クリップボードにもコピーしました（' + r.report.length + '文字）');
                     console.log(r.report);
                 }
             });
@@ -302,9 +324,13 @@
                 updateStatus0('まだ商品データを捕まえていません。ページを更新してから少し待ってお試しください');
                 return;
             }
+            const items = [...itemsMap.values()];
+            const sold = items.filter(it => it.status === 'sold_out').sort((a, b) => b.created - a.created);
+            const sellerName = (sold[0] && sold[0].seller && sold[0].seller.name) || userId;
+            sendToCollectItems(sellerName, sold);
             const report = buildSoldReport(userId, itemsMap);
             GM_setClipboard(report);
-            updateStatus0('Step2完了！クリップボードにコピーしました（' + report.length + '文字）');
+            updateStatus0('Step2完了！mercariシートへ送信＋クリップボードにコピーしました（' + report.length + '文字）');
             console.log(report);
         };
     }
