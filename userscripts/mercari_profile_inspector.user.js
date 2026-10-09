@@ -1,67 +1,64 @@
 // ==UserScript==
 // @name         Mercari Profile Inspector (調査用)
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  プロフィールページの「評価」タブのDOM構造を調査するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
+// @version      2.0
+// @description  プロフィールページ「評価」タブの実データ取得APIを特定するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
 // @match        https://jp.mercari.com/user/profile/*
 // @match        https://jp.mercari.com/user/reviews/*
 // @grant        GM_setClipboard
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const btn = document.createElement('button');
-    btn.textContent = '評価欄を調査';
-    btn.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
-    document.body.appendChild(btn);
-
-    const statusEl = document.createElement('div');
-    statusEl.style.cssText = 'position:fixed;top:70px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
-    document.body.appendChild(statusEl);
-
-    function updateStatus(msg) {
-        statusEl.style.display = 'block';
-        statusEl.textContent = msg;
-    }
-
-    function dumpCandidates() {
-        const report = [];
-
-        // DOM側が仮想化等で空のため、Next.jsのRSCストリーミングペイロード（scriptタグ内の
-        // self.__next_f.push(...)）に埋め込まれた生データからキーワード周辺を直接探す
-        const scripts = [...document.querySelectorAll('script')]
-            .map(s => s.textContent)
-            .filter(t => t && t.includes('self.__next_f.push'));
-        report.push('=== 対象スクリプト数: ' + scripts.length + ' / 合計文字数: ' + scripts.reduce((a, t) => a + t.length, 0) + ' ===');
-
-        const keywords = ['comment', 'Comment', 'rating', 'Rating', '良い', '残念', 'reviewee', 'reviewer', 'review'];
-        const seen = new Set();
-        let hits = 0;
-        for (const text of scripts) {
-            for (const kw of keywords) {
-                let idx = 0;
-                while (hits < 15) {
-                    const pos = text.indexOf(kw, idx);
-                    if (pos === -1) break;
-                    const snippet = text.slice(Math.max(0, pos - 80), pos + 150);
-                    if (!seen.has(snippet)) {
-                        seen.add(snippet);
-                        report.push(`\n--- "${kw}" 周辺 ---\n${snippet}`);
-                        hits++;
-                    }
-                    idx = pos + kw.length;
-                }
+    // 2026-10-09：DOM側のレビュー一覧が仮想化等で空だったため、ページ自身が発行する
+    // 実データ取得のfetch通信そのものを横取りする。ページの初期化より前に仕込む必要があるため
+    // document-startで動かす（UIの構築はbody生成後に行う）。
+    const captured = [];
+    const origFetch = window.fetch;
+    window.fetch = async function (...args) {
+        const res = await origFetch.apply(this, args);
+        try {
+            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+            if (/review|rating/i.test(url)) {
+                const clone = res.clone();
+                clone.text().then(body => {
+                    captured.push({ url, status: res.status, body: body.slice(0, 20000) });
+                }).catch(() => {});
             }
-        }
+        } catch (e) {}
+        return res;
+    };
 
-        return report.join('\n');
+    function mountUI() {
+        const btn = document.createElement('button');
+        btn.textContent = '捕まえた通信をコピー(' + captured.length + ')';
+        btn.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+        document.body.appendChild(btn);
+
+        const statusEl = document.createElement('div');
+        statusEl.style.cssText = 'position:fixed;top:70px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
+        document.body.appendChild(statusEl);
+
+        setInterval(() => {
+            btn.textContent = '捕まえた通信をコピー(' + captured.length + ')';
+        }, 1000);
+
+        btn.onclick = () => {
+            const text = captured.map((c, i) =>
+                `=== [${i}] ${c.status} ${c.url} ===\n${c.body}`
+            ).join('\n\n');
+            GM_setClipboard(text || '（何も捕まえていません。ページをリロードしてから少し待って押してください）');
+            statusEl.style.display = 'block';
+            statusEl.textContent = (text.length) + '文字をコピーしました（' + captured.length + '件の通信）';
+            console.log(text);
+        };
     }
 
-    btn.onclick = () => {
-        const text = dumpCandidates();
-        GM_setClipboard(text);
-        updateStatus('調査結果をクリップボードにコピーしました（' + text.length + '文字）。貼り付けて共有してください。');
-        console.log(text);
-    };
+    if (document.body) {
+        mountUI();
+    } else {
+        document.addEventListener('DOMContentLoaded', mountUI);
+    }
 })();
