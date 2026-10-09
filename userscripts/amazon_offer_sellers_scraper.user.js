@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
@@ -18,44 +18,19 @@
         return m ? m[1] : null;
     }
 
-    // 2026-10-09：祖先を60文字しきい値で遡る方式だと「配送詳細」リンクと「セラー情報」
-    // リンクが別々に拾われ、コンディション/FBA表記まで届かなかった。offer行の正確な境界を
-    // 見つけるため、まず最初の2件分だけ祖先チェーン（タグ・id・class・文字数）を出力して調査する。
-    function dumpAncestorChain(a) {
-        const chain = [];
-        let el = a;
-        for (let i = 0; i < 10 && el; i++) {
-            chain.push(`${el.tagName}#${el.id || ''}.${(el.className || '').toString().slice(0, 40)} len=${(el.textContent || '').length}`);
-            el = el.parentElement;
-        }
-        return chain.join('\n  ');
-    }
-
-    function scrapeSellers() {
-        const found = new Map();
-        document.querySelectorAll('a[href*="seller="]').forEach(a => {
-            const m = a.href.match(/seller=([A-Z0-9]{10,})/);
-            if (!m) return;
-            const sellerId = m[1];
-            if (!found.has(sellerId)) {
-                found.set(sellerId, { name: a.textContent.trim(), chain: dumpAncestorChain(a) });
-            }
-        });
-        return found;
-    }
-
-    function buildReport(asin, sellers) {
+    // 2026-10-09：個別リンクから祖先を遡る方式では、オファー行によってセラー名がリンクに
+    // なっていない（詳細を見るリンクだけがseller=を持つ）ケースがあり不確実だった。
+    // id="aod-offer..."で始まる要素（オファー行自体のコンテナと見られる）を直接調査する。
+    function buildReport() {
         const lines = [];
-        lines.push(`ASIN: ${asin} / 見つかったリンク数: ${sellers.size}`);
-        lines.push('（最初の2件の祖先チェーンを調査）');
+        const offerEls = document.querySelectorAll('[id^="aod-offer"]');
+        lines.push(`id^="aod-offer" に一致する要素数: ${offerEls.length}`);
         lines.push('');
-        let n = 0;
-        for (const [id, info] of sellers) {
-            if (n++ >= 2) break;
-            lines.push(`=== sellerId=${id} name="${info.name}" ===`);
-            lines.push('  ' + info.chain);
+        [...offerEls].forEach((el, i) => {
+            lines.push(`=== [${i}] id="${el.id}" tag=${el.tagName} 文字数=${el.textContent.length} ===`);
+            lines.push(el.textContent.replace(/\s+/g, ' ').trim().slice(0, 300));
             lines.push('');
-        }
+        });
         return lines.join('\n');
     }
 
@@ -75,15 +50,9 @@
         }
 
         btn.onclick = () => {
-            const asin = getAsinFromUrl();
-            const sellers = scrapeSellers();
-            if (sellers.size === 0) {
-                updateStatus('セラーへのリンクが見つかりませんでした（ページ構造が想定と違う可能性）');
-                return;
-            }
-            const report = buildReport(asin, sellers);
+            const report = buildReport();
             GM_setClipboard(report);
-            updateStatus('完了！' + sellers.size + '件のセラーをコピーしました');
+            updateStatus('調査結果をコピーしました（' + report.length + '文字）');
             console.log(report);
         };
     }
