@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker - Step1 評価履歴取得
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  せどらーと思われる購入者の評価履歴（/reviews/history API）から、売ってくれたセラー一覧を抽出する（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
@@ -20,6 +20,23 @@
     const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
     let captured = null;
 
+    // 2026-10-09追加：Step2（セラーのSOLD一覧API探し）調査用。item/listing関連らしき通信を
+    // 広めに拾っておく（静的ファイル・既知の外部トラッカーは除外）。見つかったら本番用に絞る。
+    const itemCalls = [];
+    const EXCLUDE_EXT = /\.(js|css|png|jpe?g|svg|woff2?|ico|webmanifest)(\?|$)/i;
+    const EXCLUDE_HOST = /(google|doubleclick|sentry|segment|facebook|gtm|newrelic|datadog|forter|id5-sync|eagle-insight)/i;
+    function maybeLogItemCall(url, bodyPromiseOrText) {
+        if (!url || EXCLUDE_EXT.test(url) || EXCLUDE_HOST.test(url)) return;
+        if (!/item|listing|sold|product/i.test(url)) return;
+        const entry = { url, body: '' };
+        itemCalls.push(entry);
+        if (bodyPromiseOrText && typeof bodyPromiseOrText.then === 'function') {
+            bodyPromiseOrText.then(t => { entry.body = (t || '').slice(0, 2000); }).catch(() => {});
+        } else if (typeof bodyPromiseOrText === 'string') {
+            entry.body = bodyPromiseOrText.slice(0, 2000);
+        }
+    }
+
     const origFetch = _uw.fetch;
     _uw.fetch = async function (...args) {
         const res = await origFetch.apply(this, args);
@@ -28,6 +45,7 @@
             if (url.includes('/reviews/history')) {
                 res.clone().json().then(json => { captured = json; }).catch(() => {});
             }
+            maybeLogItemCall(url, res.clone().text());
         } catch (e) {}
         return res;
     };
@@ -48,6 +66,7 @@
                 if (_url.includes('/reviews/history')) {
                     captured = JSON.parse(xhr.responseText);
                 }
+                maybeLogItemCall(_url, xhr.responseText);
             } catch (e) {}
         });
         return xhr;
@@ -114,6 +133,20 @@
             GM_setClipboard(report);
             updateStatus('完了！クリップボードにコピーしました（' + report.length + '文字）');
             console.log(report);
+        };
+
+        // Step2調査用ボタン
+        const btn2 = document.createElement('button');
+        document.body.appendChild(btn2);
+        btn2.style.cssText = 'position:fixed;top:130px;right:20px;z-index:99999;padding:12px 20px;background:#607D8B;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+        setInterval(() => {
+            btn2.textContent = '商品関連通信をコピー(' + itemCalls.length + ')';
+        }, 500);
+        btn2.onclick = () => {
+            const text = itemCalls.map((c, i) => `[${i}] ${c.url}\n${c.body}`).join('\n\n');
+            GM_setClipboard(text || '（何も捕まえていません）');
+            updateStatus('商品関連通信 ' + itemCalls.length + '件をコピーしました');
+            console.log(text);
         };
     }
 
