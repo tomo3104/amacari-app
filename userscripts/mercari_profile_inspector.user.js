@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Profile Inspector (調査用)
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  プロフィールページの「評価」タブのDOM構造を調査するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
 // @match        https://jp.mercari.com/user/profile/*
 // @match        https://jp.mercari.com/user/reviews/*
@@ -29,7 +29,7 @@
         const report = [];
 
         // mer-rating要素（レビュー1件ずつの入れ物と判明）を直接調査する
-        const ratings = document.querySelectorAll('mer-rating');
+        const ratings = document.querySelectorAll('[data-testid="mer-rating"]');
         report.push('=== mer-rating要素の件数: ' + ratings.length + ' ===');
         [...ratings].slice(0, 5).forEach((el, i) => {
             report.push(`\n--- mer-rating[${i}] ---`);
