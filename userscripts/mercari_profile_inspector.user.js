@@ -4,6 +4,7 @@
 // @version      1.0
 // @description  プロフィールページの「評価」タブのDOM構造を調査するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
 // @match        https://jp.mercari.com/user/profile/*
+// @match        https://jp.mercari.com/user/reviews/*
 // @grant        GM_setClipboard
 // ==/UserScript==
 
@@ -12,11 +13,11 @@
 
     const btn = document.createElement('button');
     btn.textContent = '評価欄を調査';
-    btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+    btn.style.cssText = 'position:fixed;bottom:20px;left:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
     document.body.appendChild(btn);
 
     const statusEl = document.createElement('div');
-    statusEl.style.cssText = 'position:fixed;bottom:70px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
+    statusEl.style.cssText = 'position:fixed;bottom:70px;left:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
     document.body.appendChild(statusEl);
 
     function updateStatus(msg) {
