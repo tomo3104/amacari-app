@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Mercari Profile Inspector (調査用)
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  プロフィールページ「評価」タブの実データ取得APIを特定するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
 // @match        https://jp.mercari.com/user/profile/*
 // @match        https://jp.mercari.com/user/reviews/*
 // @grant        GM_setClipboard
+// @grant        unsafeWindow
 // @run-at       document-start
 // ==/UserScript==
 
@@ -37,8 +38,9 @@
         }
     }
 
-    const origFetch = window.fetch;
-    window.fetch = async function (...args) {
+    const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    const origFetch = _uw.fetch;
+    _uw.fetch = async function (...args) {
         const res = await origFetch.apply(this, args);
         try {
             const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
@@ -48,7 +50,7 @@
         return res;
     };
 
-    const OrigXHR = window.XMLHttpRequest;
+    const OrigXHR = _uw.XMLHttpRequest;
     function PatchedXHR() {
         const xhr = new OrigXHR();
         let _method = 'GET', _url = '';
@@ -64,7 +66,7 @@
         });
         return xhr;
     }
-    window.XMLHttpRequest = PatchedXHR;
+    _uw.XMLHttpRequest = PatchedXHR;
 
     function mountUI() {
         const btn = document.createElement('button');
