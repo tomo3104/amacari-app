@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Mercari Reseller Tracker
+// @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.0
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設）。
+// @version      6.1
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -161,7 +161,7 @@
         const itemList = sold.map(it => ({
             name: it.name, price: Number(it.price) || 0,
             url: `https://jp.mercari.com/item/${it.id}`,
-            source: 'せどらー追跡:' + sellerName,
+            source: 'バイヤーチェイス:' + sellerName,
         }));
         GM_xmlhttpRequest({
             method: 'POST', url: 'http://localhost:8765/collect-items',
