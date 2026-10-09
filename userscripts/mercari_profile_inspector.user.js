@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Profile Inspector (調査用)
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  プロフィールページの「評価」タブのDOM構造を調査するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
 // @match        https://jp.mercari.com/user/profile/*
 // @match        https://jp.mercari.com/user/reviews/*
@@ -28,13 +28,32 @@
     function dumpCandidates() {
         const report = [];
 
-        // list-slot要素（個々のレビュー項目の入れ物の可能性）を直接調査する
-        const slots = document.querySelectorAll('[data-testid="list-slot"]');
-        report.push('=== list-slot要素の件数: ' + slots.length + ' ===');
-        [...slots].slice(0, 3).forEach((el, i) => {
-            report.push(`\n--- list-slot[${i}] ---`);
-            report.push('innerHTML(先頭2000文字): ' + el.innerHTML.slice(0, 2000));
-        });
+        // DOM側が仮想化等で空のため、Next.jsのRSCストリーミングペイロード（scriptタグ内の
+        // self.__next_f.push(...)）に埋め込まれた生データからキーワード周辺を直接探す
+        const scripts = [...document.querySelectorAll('script')]
+            .map(s => s.textContent)
+            .filter(t => t && t.includes('self.__next_f.push'));
+        report.push('=== 対象スクリプト数: ' + scripts.length + ' / 合計文字数: ' + scripts.reduce((a, t) => a + t.length, 0) + ' ===');
+
+        const keywords = ['comment', 'Comment', 'rating', 'Rating', '良い', '残念', 'reviewee', 'reviewer', 'review'];
+        const seen = new Set();
+        let hits = 0;
+        for (const text of scripts) {
+            for (const kw of keywords) {
+                let idx = 0;
+                while (hits < 15) {
+                    const pos = text.indexOf(kw, idx);
+                    if (pos === -1) break;
+                    const snippet = text.slice(Math.max(0, pos - 80), pos + 150);
+                    if (!seen.has(snippet)) {
+                        seen.add(snippet);
+                        report.push(`\n--- "${kw}" 周辺 ---\n${snippet}`);
+                        hits++;
+                    }
+                    idx = pos + kw.length;
+                }
+            }
+        }
 
         return report.join('\n');
     }
