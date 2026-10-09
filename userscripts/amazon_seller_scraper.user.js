@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Amazon Seller ASIN Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出してクリップボードにコピー（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にするテスト用、2026-10-09新設）
+// @version      2.0
+// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）
 // @match        https://www.amazon.co.jp/s?me=*
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      localhost
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/amazon_seller_scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/amazon_seller_scraper.user.js
 // ==/UserScript==
@@ -68,13 +70,36 @@
         statusEl.textContent = msg;
     }
 
+    function sendToCheckAsins(asins) {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST', url: 'http://localhost:8766/check-asins',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ asins }),
+                timeout: 300000, // ASIN数次第で時間がかかるため長めに取る
+                onload: res => { try { resolve(JSON.parse(res.responseText)); } catch (e) { resolve(null); } },
+                onerror: () => resolve(null),
+                ontimeout: () => resolve(null),
+            });
+        });
+    }
+
     btn.onclick = async () => {
         btn.disabled = true;
         updateStatus('取得中...');
         const items = await scrapeAllPages();
-        const asinList = items.map(it => it.asin).join('\n');
-        GM_setClipboard(asinList);
-        updateStatus('完了: ' + items.length + '件のASINをコピーしました（クリップボードに貼付可能）');
+        const asinList = items.map(it => it.asin);
+        GM_setClipboard(asinList.join('\n'));
+        updateStatus(items.length + '件のASINを取得。list.jsonと照合して新規分を処理中...（時間がかかります）');
+        const result = await sendToCheckAsins(asinList);
+        if (result && result.ok) {
+            updateStatus(
+                '完了！ 取得' + items.length + '件 / 新規' + result.new + '件を処理 / 既知' + result.already_known + '件はスキップ' +
+                '\n（ASIN一覧はクリップボードにもコピー済み）'
+            );
+        } else {
+            updateStatus('完了: ' + items.length + '件のASINをコピーしました。ただしサーバーへの送信に失敗しました（asin-toolsのserver.pyが起動しているか確認してください）');
+        }
         btn.disabled = false;
     };
 })();
