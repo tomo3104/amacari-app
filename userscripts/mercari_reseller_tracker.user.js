@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      4.0
 // @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
@@ -43,8 +43,25 @@
         }
     }
 
+    // 2026-10-09追加：1人のセラーを見つけた時にスクロール操作なしで直近分を一気に取れるよう、
+    // ページ自身が発行するitems/get_items通信のlimitを横取り時に100へ書き換える。認証ヘッダー等は
+    // ページが用意したものがそのまま使われるため、呼び先を変えずに済み400にならない。
+    function bumpLimitIfNeeded(url) {
+        if (url.includes('/items/get_items') && /limit=\d+/.test(url)) {
+            return url.replace(/limit=\d+/, 'limit=100');
+        }
+        return url;
+    }
+
     const origFetch = _uw.fetch;
     _uw.fetch = async function (...args) {
+        try {
+            const origUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+            const newUrl = bumpLimitIfNeeded(origUrl);
+            if (newUrl !== origUrl) {
+                args[0] = (typeof args[0] === 'string') ? newUrl : new Request(newUrl, args[0]);
+            }
+        } catch (e) {}
         const res = await origFetch.apply(this, args);
         try {
             const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
@@ -61,8 +78,8 @@
         let _url = '';
         const origOpen = xhr.open;
         xhr.open = function (method, url, ...rest) {
-            _url = url;
-            return origOpen.call(xhr, method, url, ...rest);
+            _url = bumpLimitIfNeeded(url);
+            return origOpen.call(xhr, method, _url, ...rest);
         };
         xhr.addEventListener('loadend', function () {
             try {
