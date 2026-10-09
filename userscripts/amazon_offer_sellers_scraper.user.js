@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
+// @match        https://www.amazon.co.jp/dp/*
+// @match        https://www.amazon.co.jp/*/dp/*
 // @grant        GM_setClipboard
 // ==/UserScript==
 
@@ -12,7 +14,7 @@
     'use strict';
 
     function getAsinFromUrl() {
-        const m = location.pathname.match(/\/gp\/offer-listing\/([A-Z0-9]{10})/);
+        const m = location.pathname.match(/\/(?:gp\/offer-listing|dp)\/([A-Z0-9]{10})/);
         return m ? m[1] : null;
     }
 
