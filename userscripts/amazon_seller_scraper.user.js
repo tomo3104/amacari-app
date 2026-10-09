@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Amazon Seller ASIN Scraper
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）
 // @match        https://www.amazon.co.jp/s?me=*
 // @grant        GM_setClipboard
@@ -70,12 +70,16 @@
         statusEl.textContent = msg;
     }
 
-    function sendToCheckAsins(asins) {
+    function getSellerIdFromUrl() {
+        return new URL(location.href).searchParams.get('me');
+    }
+
+    function sendToCheckAsins(asins, source) {
         return new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'POST', url: 'http://localhost:8766/check-asins',
                 headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ asins }),
+                data: JSON.stringify({ asins, source }),
                 timeout: 300000, // ASIN数次第で時間がかかるため長めに取る
                 onload: res => { try { resolve(JSON.parse(res.responseText)); } catch (e) { resolve(null); } },
                 onerror: () => resolve(null),
@@ -91,7 +95,9 @@
         const asinList = items.map(it => it.asin);
         GM_setClipboard(asinList.join('\n'));
         updateStatus(items.length + '件のASINを取得。list.jsonと照合して新規分を処理中...（時間がかかります）');
-        const result = await sendToCheckAsins(asinList);
+        const sellerId = getSellerIdFromUrl();
+        const source = 'Amazon出品者追跡:' + (sellerId || '不明');
+        const result = await sendToCheckAsins(asinList, source);
         if (result && result.ok) {
             updateStatus(
                 '完了！ 取得' + items.length + '件 / 新規' + result.new + '件を処理 / 既知' + result.already_known + '件はスキップ' +
