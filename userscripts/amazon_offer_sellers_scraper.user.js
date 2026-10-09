@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      2.0
 // @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
@@ -18,19 +18,50 @@
         return m ? m[1] : null;
     }
 
-    // 2026-10-09：個別リンクから祖先を遡る方式では、オファー行によってセラー名がリンクに
-    // なっていない（詳細を見るリンクだけがseller=を持つ）ケースがあり不確実だった。
-    // id="aod-offer..."で始まる要素（オファー行自体のコンテナと見られる）を直接調査する。
-    function buildReport() {
-        const lines = [];
-        const offerEls = document.querySelectorAll('[id^="aod-offer"]');
-        lines.push(`id^="aod-offer" に一致する要素数: ${offerEls.length}`);
-        lines.push('');
-        [...offerEls].forEach((el, i) => {
-            lines.push(`=== [${i}] id="${el.id}" tag=${el.tagName} 文字数=${el.textContent.length} ===`);
-            lines.push(el.textContent.replace(/\s+/g, ' ').trim().slice(0, 300));
-            lines.push('');
+    // 2026-10-09：調査の結果、1オファーごとに aod-offer-heading（コンディション）→
+    // aod-offer-shipsFrom（発送元）→ aod-offer-soldBy（セラー名＋プロフィールリンク）が
+    // この順でDOM上に出現することが判明。出現順に走査して1オファーずつ組み立てる。
+    function scrapeOffers() {
+        const nodes = document.querySelectorAll('[id="aod-offer-heading"], [id="aod-offer-shipsFrom"], [id="aod-offer-soldBy"]');
+        const offers = [];
+        let current = null;
+        nodes.forEach(el => {
+            if (el.id === 'aod-offer-heading') {
+                current = { condition: el.textContent.trim(), shipsFrom: '', sellerId: null, sellerName: '' };
+                offers.push(current);
+            } else if (!current) {
+                return;
+            } else if (el.id === 'aod-offer-shipsFrom') {
+                current.shipsFrom = el.textContent.replace('出荷元', '').trim();
+            } else if (el.id === 'aod-offer-soldBy') {
+                const a = el.querySelector('a[href*="seller="]');
+                if (a) {
+                    const m = a.href.match(/seller=([A-Z0-9]{10,})/);
+                    current.sellerId = m ? m[1] : null;
+                    current.sellerName = a.textContent.trim();
+                } else {
+                    current.sellerName = el.textContent.replace('販売元', '').trim();
+                }
+            }
         });
+        return offers;
+    }
+
+    function buildReport() {
+        const offers = scrapeOffers();
+        const fbaNew = offers.filter(o => o.condition.includes('新品') && o.shipsFrom === 'Amazon' && o.sellerId);
+        const seen = new Map();
+        for (const o of fbaNew) {
+            if (!seen.has(o.sellerId)) seen.set(o.sellerId, o.sellerName);
+        }
+
+        const lines = [];
+        lines.push(`全オファー数: ${offers.length} / 新品・FBA(出荷元Amazon)のセラー数: ${seen.size}`);
+        lines.push('');
+        lines.push('sellerId\tsellerName\tストアURL');
+        for (const [id, name] of seen) {
+            lines.push(`${id}\t${name}\thttps://www.amazon.co.jp/s?me=${id}`);
+        }
         return lines.join('\n');
     }
 
