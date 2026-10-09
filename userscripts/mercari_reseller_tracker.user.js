@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
@@ -28,7 +28,7 @@
     function recordItems(json) {
         const items = (json && json.data) || [];
         for (const it of items) {
-            const sid = it.seller && it.seller.id;
+            const sid = it.seller && String(it.seller.id);
             if (!sid) continue;
             if (!capturedItemsBySeller.has(sid)) capturedItemsBySeller.set(sid, new Map());
             capturedItemsBySeller.get(sid).set(it.id, it);
