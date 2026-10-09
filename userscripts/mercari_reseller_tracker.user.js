@@ -1,54 +1,56 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker - Step1 評価履歴取得
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      2.0
 // @description  せどらーと思われる購入者の評価履歴（/reviews/history API）から、売ってくれたセラー一覧を抽出する（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
+// @grant        unsafeWindow
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    function getUserIdFromUrl() {
-        const m = location.pathname.match(/\/user\/(?:reviews|profile)\/(\d+)/);
-        return m ? m[1] : null;
-    }
+    // 2026-10-09：/reviews/history を自前でfetchするとHTTP 400になった（おそらく
+    // ページ自身が付与している認証ヘッダー類が再現できていない）。そのため自前で
+    // 呼び直すのではなく、ページ自身が成功させた本物の通信を横取りして使う
+    // （mercari_auto_collector.user.jsのテンプレート捕捉と同じ発想）。
+    const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    let captured = null;
 
-    async function fetchReviewHistory(userId) {
-        const url = `https://api.mercari.jp/reviews/history?user_id=${userId}&subject=seller,buyer&fame=good,normal,bad&limit=100`;
-        const res = await fetch(url, { credentials: 'include' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const json = await res.json();
-        return json.data || [];
-    }
+    const origFetch = _uw.fetch;
+    _uw.fetch = async function (...args) {
+        const res = await origFetch.apply(this, args);
+        try {
+            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+            if (url.includes('/reviews/history')) {
+                res.clone().json().then(json => { captured = json; }).catch(() => {});
+            }
+        } catch (e) {}
+        return res;
+    };
 
     function formatDate(unixSec) {
-        const d = new Date(unixSec * 1000);
-        return d.toISOString().slice(0, 10);
+        return new Date(unixSec * 1000).toISOString().slice(0, 10);
     }
 
-    function buildReport(userId, entries) {
-        // subject==="buyer" ＝ このユーザーが買い手として受け取った評価＝相手(user)はその取引の売り手
+    function buildReport(entries) {
         const asBuyer = entries.filter(e => e.subject === 'buyer');
-
         const bySeller = new Map();
         for (const e of asBuyer) {
             const sid = e.user.id;
             if (!bySeller.has(sid)) {
-                bySeller.set(sid, { id: sid, name: e.user.name, count: 0, lastCreated: 0, dates: [] });
+                bySeller.set(sid, { id: sid, name: e.user.name, count: 0, lastCreated: 0 });
             }
             const s = bySeller.get(sid);
             s.count++;
-            s.dates.push(e.created);
             if (e.created > s.lastCreated) s.lastCreated = e.created;
         }
-
         const sellers = [...bySeller.values()].sort((a, b) => b.lastCreated - a.lastCreated);
 
         const lines = [];
-        lines.push(`対象ユーザーID: ${userId}`);
         lines.push(`取得件数: ${entries.length}件（うち買い手として受けた評価: ${asBuyer.length}件）`);
         lines.push(`ユニークなセラー数: ${sellers.length}`);
         lines.push('');
@@ -60,7 +62,7 @@
         lines.push('');
         lines.push('=== 評価の生データ（日付が新しい順） ===');
         lines.push('日付\tsellerId\tsellerName\t評価\tコメント');
-        for (const e of asBuyer.sort((a, b) => b.created - a.created)) {
+        for (const e of [...asBuyer].sort((a, b) => b.created - a.created)) {
             lines.push(`${formatDate(e.created)}\t${e.user.id}\t${e.user.name}\t${e.fame}\t${(e.message || '').replace(/\n/g, ' ')}`);
         }
         return lines.join('\n');
@@ -68,7 +70,6 @@
 
     function mountUI() {
         const btn = document.createElement('button');
-        btn.textContent = '評価履歴→セラー一覧を抽出';
         btn.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
         document.body.appendChild(btn);
 
@@ -81,21 +82,16 @@
             statusEl.textContent = msg;
         }
 
-        btn.onclick = async () => {
-            const userId = getUserIdFromUrl();
-            if (!userId) { updateStatus('ユーザーIDがURLから取得できません'); return; }
-            btn.disabled = true;
-            updateStatus('取得中...');
-            try {
-                const entries = await fetchReviewHistory(userId);
-                const report = buildReport(userId, entries);
-                GM_setClipboard(report);
-                updateStatus('完了！クリップボードにコピーしました（' + report.length + '文字）');
-                console.log(report);
-            } catch (e) {
-                updateStatus('失敗: ' + e.message);
-            }
-            btn.disabled = false;
+        setInterval(() => {
+            btn.textContent = captured ? 'セラー一覧を抽出してコピー' : '評価データ待機中...（ページを更新）';
+        }, 500);
+
+        btn.onclick = () => {
+            if (!captured) { updateStatus('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
+            const report = buildReport(captured.data || []);
+            GM_setClipboard(report);
+            updateStatus('完了！クリップボードにコピーしました（' + report.length + '文字）');
+            console.log(report);
         };
     }
 
