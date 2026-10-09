@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.28
-// @description  メルカリ検索結果を全ページ自動収集（重複率が高いページが3ページ続いたら自動で打ち切る機能を追加(v6.24)・クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に・クローラーコレクトが全メーカー完走後に1回だけ送信する作りで途中中断時に収集済み全データが消失する事故が発生したため、10メーカーごとに随時送信する方式に変更(v6.28)）
+// @version      6.29
+// @description  メルカリ検索結果を全ページ自動収集（重複率が高いページが3ページ続いたら自動で打ち切る機能を追加(v6.24)・クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に・クローラーコレクトが全メーカー完走後に1回だけ送信する作りで途中中断時に収集済み全データが消失する事故が発生したため、10メーカーごとに随時送信する方式に変更(v6.28)・送信済みアイテムも含め全件を実行中ずっとメモリ上に保持しておりタブがメモリ不足でChromeに強制再読み込みされる一因になっていたため、送信済み分は本体データを捨ててID集合のみ保持する方式に変更しメモリ使用量を削減(v6.29)）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -707,7 +707,11 @@
         });
 
         let errors = 0;
-        const allItems = {};
+        // 2026-10-09変更：以前は全メーカー分のアイテムを丸ごとallItemsに保持し続けており、
+        // 実行中ずっとメモリ使用量が増え続けていた（366件完走時点で10万件超）。これが長時間
+        // 実行時にタブがメモリ不足で強制再読み込みされる一因と判明したため、送信済みの
+        // アイテムは本体データを持たずID(seenIds)だけ残す方式に変更し、メモリ使用量を抑える。
+        const seenIds = new Set();
         let pendingItems = {};
         let sentNew = 0, sentAdd = 0, lastTotal = 0;
 
@@ -720,10 +724,11 @@
             try {
                 const fetched = await fetchCollectorItems(url, { name: mfr.name, idx: i + 1, total: filtered.length });
                 errors = 0;
-                Object.assign(allItems, fetched);
-                Object.assign(pendingItems, fetched);
+                for (const [id, it] of Object.entries(fetched)) {
+                    if (!seenIds.has(id)) { seenIds.add(id); pendingItems[id] = it; }
+                }
                 const cnt   = Object.keys(fetched).length;
-                const total = Object.keys(allItems).length;
+                const total = seenIds.size;
                 addLog('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + '  ' + cnt + '件  (累計' + total + '件)');
                 updateStatus('[' + (i+1) + '/' + filtered.length + '] ' + mfr.name + ' ' + cnt + '件');
                 // サーバーに進捗通知（新規型番候補カウント用にitemsも送る）
@@ -794,8 +799,7 @@
             return;
         }
 
-        items = allItems;
-        const grandTotal = Object.keys(items).length;
+        const grandTotal = seenIds.size;
         // 2026-10-09変更：送信はメーカーごとにSEND_EVERY件区切りで既に完了しているため、
         // ここでのまとめ送信は不要（flushPendingItemsの累計結果を表示するだけ）。
         running = false;
