@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Mercari Reseller Tracker - Step1 評価履歴取得
+// @name         Mercari Reseller Tracker
 // @namespace    http://tampermonkey.net/
-// @version      2.2
-// @description  せどらーと思われる購入者の評価履歴（/reviews/history API）から、売ってくれたセラー一覧を抽出する（2026-10-09新設）。
+// @version      3.0
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -13,15 +13,14 @@
 (function () {
     'use strict';
 
-    // 2026-10-09：/reviews/history を自前でfetchするとHTTP 400になった（おそらく
-    // ページ自身が付与している認証ヘッダー類が再現できていない）。そのため自前で
-    // 呼び直すのではなく、ページ自身が成功させた本物の通信を横取りして使う
-    // （mercari_auto_collector.user.jsのテンプレート捕捉と同じ発想）。
+    // 2026-10-09：/reviews/history を自前でfetchするとHTTP 400になった（ページ自身が
+    // 付与している認証ヘッダー類が再現できていないと思われる）。そのため自前で呼び直す
+    // のではなく、ページ自身が成功させた本物の通信を横取りして使う
+    // （mercari_auto_collector.user.jsのテンプレート捕捉と同じ発想）。Step1はこの方式。
     const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-    let captured = null;
+    let capturedReviews = null;
 
-    // 2026-10-09追加：Step2（セラーのSOLD一覧API探し）調査用。item/listing関連らしき通信を
-    // 広めに拾っておく（静的ファイル・既知の外部トラッカーは除外）。見つかったら本番用に絞る。
+    // item_callsは調査時の予備フォールバック用（Step2の自前fetchが失敗した場合に備え残す）
     const itemCalls = [];
     const EXCLUDE_EXT = /\.(js|css|png|jpe?g|svg|woff2?|ico|webmanifest)(\?|$)/i;
     const EXCLUDE_HOST = /(google|doubleclick|sentry|segment|facebook|gtm|newrelic|datadog|forter|id5-sync|eagle-insight)/i;
@@ -43,15 +42,13 @@
         try {
             const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
             if (url.includes('/reviews/history')) {
-                res.clone().json().then(json => { captured = json; }).catch(() => {});
+                res.clone().json().then(json => { capturedReviews = json; }).catch(() => {});
             }
             maybeLogItemCall(url, res.clone().text());
         } catch (e) {}
         return res;
     };
 
-    // 2026-10-09追加：前回の調査ではXHR経由で捕まっていた可能性があるため、fetchだけでなく
-    // XMLHttpRequestも監視対象にする（どちらの経路で呼ばれても取り逃さないようにする）。
     const OrigXHR = _uw.XMLHttpRequest;
     function PatchedXHR() {
         const xhr = new OrigXHR();
@@ -64,7 +61,7 @@
         xhr.addEventListener('loadend', function () {
             try {
                 if (_url.includes('/reviews/history')) {
-                    captured = JSON.parse(xhr.responseText);
+                    capturedReviews = JSON.parse(xhr.responseText);
                 }
                 maybeLogItemCall(_url, xhr.responseText);
             } catch (e) {}
@@ -77,7 +74,13 @@
         return new Date(unixSec * 1000).toISOString().slice(0, 10);
     }
 
-    function buildReport(entries) {
+    function getUserIdFromUrl() {
+        const m = location.pathname.match(/\/user\/(?:reviews|profile)\/(\d+)/);
+        return m ? m[1] : null;
+    }
+
+    // ========== Step1: 評価履歴→セラー一覧 ==========
+    function buildReviewReport(entries) {
         const asBuyer = entries.filter(e => e.subject === 'buyer');
         const bySeller = new Map();
         for (const e of asBuyer) {
@@ -94,28 +97,57 @@
         const lines = [];
         lines.push(`取得件数: ${entries.length}件（うち買い手として受けた評価: ${asBuyer.length}件）`);
         lines.push(`ユニークなセラー数: ${sellers.length}`);
+        lines.push('（注：createdは実際の取引日ではなく評価公開バッチの日付のため目安程度）');
         lines.push('');
-        lines.push('=== セラー一覧（直近の取引日が新しい順） ===');
-        lines.push('sellerId\tsellerName\t取引回数\t直近取引日\tストアURL');
+        lines.push('sellerId\tsellerName\t取引回数\t直近評価日\tストアURL');
         for (const s of sellers) {
             lines.push(`${s.id}\t${s.name}\t${s.count}\t${formatDate(s.lastCreated)}\thttps://jp.mercari.com/user/profile/${s.id}`);
         }
+        return lines.join('\n');
+    }
+
+    // ========== Step2: セラーのSOLD一覧取得 ==========
+    async function fetchSellerItems(sellerId, maxPages = 5) {
+        const all = [];
+        let pageToken = null;
+        for (let page = 0; page < maxPages; page++) {
+            let url = `https://api.mercari.jp/items/get_items?seller_id=${sellerId}&limit=30&with_auction=true&status=on_sale,trading,sold_out`;
+            if (pageToken) url += `&page_token=${encodeURIComponent(pageToken)}`;
+            const res = await fetch(url, { credentials: 'include' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const json = await res.json();
+            const items = json.data || [];
+            all.push(...items);
+            if (!json.meta || !json.meta.has_next || items.length === 0) break;
+            pageToken = items[items.length - 1].pager_id;
+            await new Promise(r => setTimeout(r, 400));
+        }
+        return all;
+    }
+
+    function buildSoldReport(sellerId, items) {
+        const sold = items.filter(it => it.status === 'sold_out').sort((a, b) => b.created - a.created);
+        const lines = [];
+        lines.push(`セラーID: ${sellerId}`);
+        lines.push(`取得件数: ${items.length}件（うちSOLD: ${sold.length}件）`);
         lines.push('');
-        lines.push('=== 評価の生データ（日付が新しい順） ===');
-        lines.push('日付\tsellerId\tsellerName\t評価\tコメント');
-        for (const e of [...asBuyer].sort((a, b) => b.created - a.created)) {
-            lines.push(`${formatDate(e.created)}\t${e.user.id}\t${e.user.name}\t${e.fame}\t${(e.message || '').replace(/\n/g, ' ')}`);
+        lines.push('日付\t商品名\t価格\tブランド');
+        for (const it of sold) {
+            lines.push(`${formatDate(it.created)}\t${it.name}\t${it.price}\t${(it.item_brand && it.item_brand.name) || ''}`);
         }
         return lines.join('\n');
     }
 
     function mountUI() {
-        const btn = document.createElement('button');
-        btn.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
-        document.body.appendChild(btn);
+        const userId = getUserIdFromUrl();
+
+        // --- Step1ボタン ---
+        const btn1 = document.createElement('button');
+        btn1.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;padding:12px 20px;background:#9C27B0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+        document.body.appendChild(btn1);
 
         const statusEl = document.createElement('div');
-        statusEl.style.cssText = 'position:fixed;top:70px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
+        statusEl.style.cssText = 'position:fixed;top:140px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
         document.body.appendChild(statusEl);
 
         function updateStatus(msg) {
@@ -124,28 +156,50 @@
         }
 
         setInterval(() => {
-            btn.textContent = captured ? 'セラー一覧を抽出してコピー' : '評価データ待機中...（ページを更新）';
+            btn1.textContent = capturedReviews ? 'Step1: セラー一覧を抽出してコピー' : 'Step1: 評価データ待機中...（更新待ち）';
         }, 500);
 
-        btn.onclick = () => {
-            if (!captured) { updateStatus('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
-            const report = buildReport(captured.data || []);
+        btn1.onclick = () => {
+            if (!capturedReviews) { updateStatus('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
+            const report = buildReviewReport(capturedReviews.data || []);
             GM_setClipboard(report);
-            updateStatus('完了！クリップボードにコピーしました（' + report.length + '文字）');
+            updateStatus('Step1完了！クリップボードにコピーしました（' + report.length + '文字）');
             console.log(report);
         };
 
-        // Step2調査用ボタン
+        // --- Step2ボタン（セラーのプロフィールページでも使えるよう常に表示） ---
         const btn2 = document.createElement('button');
+        btn2.textContent = 'Step2: このセラーのSOLD一覧を取得';
+        btn2.style.cssText = 'position:fixed;top:75px;right:20px;z-index:99999;padding:12px 20px;background:#00897B;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
         document.body.appendChild(btn2);
-        btn2.style.cssText = 'position:fixed;top:130px;right:20px;z-index:99999;padding:12px 20px;background:#607D8B;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+
+        btn2.onclick = async () => {
+            if (!userId) { updateStatus('ユーザーIDがURLから取得できません'); return; }
+            btn2.disabled = true;
+            updateStatus('Step2: 取得中...');
+            try {
+                const items = await fetchSellerItems(userId);
+                const report = buildSoldReport(userId, items);
+                GM_setClipboard(report);
+                updateStatus('Step2完了！クリップボードにコピーしました（' + report.length + '文字）');
+                console.log(report);
+            } catch (e) {
+                updateStatus('Step2失敗: ' + e.message + '（下のフォールバックボタンを試してください）');
+            }
+            btn2.disabled = false;
+        };
+
+        // --- フォールバック（Step2の自前fetchが失敗した場合の調査用） ---
+        const btn3 = document.createElement('button');
+        document.body.appendChild(btn3);
+        btn3.style.cssText = 'position:fixed;top:130px;right:20px;z-index:99999;padding:8px 16px;background:#607D8B;color:#fff;border:none;border-radius:8px;font-size:12px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
         setInterval(() => {
-            btn2.textContent = '商品関連通信をコピー(' + itemCalls.length + ')';
+            btn3.textContent = '(予備)商品関連通信をコピー(' + itemCalls.length + ')';
         }, 500);
-        btn2.onclick = () => {
+        btn3.onclick = () => {
             const text = itemCalls.map((c, i) => `[${i}] ${c.url}\n${c.body}`).join('\n\n');
             GM_setClipboard(text || '（何も捕まえていません）');
-            updateStatus('商品関連通信 ' + itemCalls.length + '件をコピーしました');
+            updateStatus('予備: 商品関連通信 ' + itemCalls.length + '件をコピーしました');
             console.log(text);
         };
     }
