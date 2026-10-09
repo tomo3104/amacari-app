@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Profile Inspector (調査用)
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  プロフィールページの「評価」タブのDOM構造を調査するための一時ツール（せどらー追跡の自動化準備、2026-10-09新設）
 // @match        https://jp.mercari.com/user/profile/*
 // @match        https://jp.mercari.com/user/reviews/*
@@ -28,20 +28,18 @@
     function dumpCandidates() {
         const report = [];
 
-        // 「評価」という文字を含む要素を手がかりに、周辺のdata-testid属性を探す
-        const allEls = document.querySelectorAll('[data-testid]');
-        const testids = new Set();
-        allEls.forEach(el => testids.add(el.getAttribute('data-testid')));
-        report.push('=== ページ内の全data-testid一覧 ===');
-        report.push([...testids].sort().join('\n'));
-
-        // 評価件数らしきテキストを含む要素
-        report.push('\n=== 「評価」を含むテキスト要素（上位20件） ===');
-        const texted = [...document.querySelectorAll('body *')]
-            .filter(el => el.children.length === 0 && el.textContent && el.textContent.includes('評価'))
-            .slice(0, 20);
-        texted.forEach(el => {
-            report.push(`[${el.tagName}.${el.className}] "${el.textContent.trim()}"`);
+        // mer-rating要素（レビュー1件ずつの入れ物と判明）を直接調査する
+        const ratings = document.querySelectorAll('mer-rating');
+        report.push('=== mer-rating要素の件数: ' + ratings.length + ' ===');
+        [...ratings].slice(0, 5).forEach((el, i) => {
+            report.push(`\n--- mer-rating[${i}] ---`);
+            report.push('属性: ' + [...el.attributes].map(a => `${a.name}="${a.value}"`).join(' '));
+            report.push('shadowRoot: ' + (el.shadowRoot ? 'あり(open)' : 'なし(closedまたは未使用)'));
+            if (el.shadowRoot) {
+                report.push('shadowRoot内HTML(先頭1500文字): ' + el.shadowRoot.innerHTML.slice(0, 1500));
+            }
+            report.push('lightDOM innerHTML(先頭1500文字): ' + el.innerHTML.slice(0, 1500));
+            report.push('textContent: ' + el.textContent.trim().slice(0, 300));
         });
 
         return report.join('\n');
