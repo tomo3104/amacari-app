@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Reseller Tracker - Step1 評価履歴取得
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  せどらーと思われる購入者の評価履歴（/reviews/history API）から、売ってくれたセラー一覧を抽出する（2026-10-09新設）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
@@ -31,6 +31,28 @@
         } catch (e) {}
         return res;
     };
+
+    // 2026-10-09追加：前回の調査ではXHR経由で捕まっていた可能性があるため、fetchだけでなく
+    // XMLHttpRequestも監視対象にする（どちらの経路で呼ばれても取り逃さないようにする）。
+    const OrigXHR = _uw.XMLHttpRequest;
+    function PatchedXHR() {
+        const xhr = new OrigXHR();
+        let _url = '';
+        const origOpen = xhr.open;
+        xhr.open = function (method, url, ...rest) {
+            _url = url;
+            return origOpen.call(xhr, method, url, ...rest);
+        };
+        xhr.addEventListener('loadend', function () {
+            try {
+                if (_url.includes('/reviews/history')) {
+                    captured = JSON.parse(xhr.responseText);
+                }
+            } catch (e) {}
+        });
+        return xhr;
+    }
+    _uw.XMLHttpRequest = PatchedXHR;
 
     function formatDate(unixSec) {
         return new Date(unixSec * 1000).toISOString().slice(0, 10);
