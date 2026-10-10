@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Seller ASIN Scraper
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）
+// @version      2.2
+// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示する（2026-10-10追加）
 // @match        https://www.amazon.co.jp/s?me=*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -65,9 +65,37 @@
     statusEl.style.cssText = 'position:fixed;bottom:70px;right:20px;z-index:99999;background:rgba(0,0,0,0.78);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:280px;';
     document.body.appendChild(statusEl);
 
+    const resultsEl = document.createElement('div');
+    resultsEl.style.cssText = 'position:fixed;bottom:115px;right:20px;z-index:99999;background:rgba(0,0,0,0.9);color:#fff;padding:10px 12px;border-radius:6px;font-size:12px;display:none;max-width:340px;max-height:320px;overflow-y:auto;line-height:1.5;';
+    document.body.appendChild(resultsEl);
+
     function updateStatus(msg) {
         statusEl.style.display = 'block';
         statusEl.textContent = msg;
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function showResults(newItems) {
+        if (!newItems || newItems.length === 0) {
+            resultsEl.style.display = 'none';
+            return;
+        }
+        const sorted = [...newItems].sort((a, b) => (b.pmax || 0) - (a.pmax || 0));
+        resultsEl.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">新規登録 ' + sorted.length + '件</div>' +
+            sorted.map(it => {
+                const model = escapeHtml(it.model || '(型番不明)');
+                const title = escapeHtml((it.title || '').slice(0, 28));
+                const pmax = it.pmax != null ? it.pmax + '円' : '-';
+                const price = it.price != null ? it.price + '円' : '-';
+                const flag = it.brand_restricted ? ' 🚫規制' : '';
+                return '<div style="border-top:1px solid rgba(255,255,255,0.15);padding:4px 0;">' +
+                    '<b>' + model + '</b> ' + flag + '<br>' + title + '<br>価格' + price + ' / pmax' + pmax +
+                    '</div>';
+            }).join('');
+        resultsEl.style.display = 'block';
     }
 
     function getSellerIdFromUrl() {
@@ -103,8 +131,10 @@
                 '完了！ 取得' + items.length + '件 / 新規' + result.new + '件を処理 / 既知' + result.already_known + '件はスキップ' +
                 '\n（ASIN一覧はクリップボードにもコピー済み）'
             );
+            showResults(result.results);
         } else {
             updateStatus('完了: ' + items.length + '件のASINをコピーしました。ただしサーバーへの送信に失敗しました（asin-toolsのserver.pyが起動しているか確認してください）');
+            showResults(null);
         }
         btn.disabled = false;
     };
