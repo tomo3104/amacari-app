@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.7
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時の送信失敗を検知して巡回を停止する機能（v6.5）が、保存自体は成功したのに応答だけ届かない既知の無害なケース（ConnectionAbortedError）まで失敗と誤判定していたため、経過時間で両者を区別するよう修正（v6.6）。巡回状態の失効時間を30分→2時間に延長（長時間の巡回や中断からの再開を考慮、2026-10-10）。
+// @version      6.8
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時の送信失敗を検知して巡回を停止する機能（v6.5）が、保存自体は成功したのに応答だけ届かない既知の無害なケース（ConnectionAbortedError）まで失敗と誤判定していたため、経過時間で両者を区別するよう修正（v6.6）。巡回状態の失効時間を30分→2時間に延長（v6.7）。巡回中にページがハング（ボタン消滅のまま停止）する事象のコンソールにReactハイドレーションエラーが出ていたため、UI構築をdocument-start直後ではなく500ms遅延させ、メルカリ側Reactとの競合を避けるよう変更（2026-10-10）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -407,9 +407,18 @@
         };
     }
 
+    // 2026-10-10：@run-at document-startで即座にdocument.bodyへボタン・表示用divを
+    // 追加していたため、メルカリ側のReactアプリがまだハイドレーション（サーバー生成HTMLと
+    // クライアント側の組み立てを一致させる処理）を完了する前にDOMを変更してしまい、
+    // Reactのハイドレーションエラー（コンソールに"Minified React error #418"）を
+    // 誘発していた可能性が高い（巡回中にページが実質固まって進まなくなる症状と一致）。
+    // DOMContentLoaded後にも少し待ってからUIを構築するよう変更し、競合の可能性を減らす。
+    function mountUIDelayed() {
+        setTimeout(mountUI, 500);
+    }
     if (document.body) {
-        mountUI();
+        mountUIDelayed();
     } else {
-        document.addEventListener('DOMContentLoaded', mountUI);
+        document.addEventListener('DOMContentLoaded', mountUIDelayed);
     }
 })();
