@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。
+// @version      3.0
+// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/dp/*
 // @match        https://www.amazon.co.jp/*/dp/*
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      localhost
 // ==/UserScript==
 
 (function () {
@@ -62,7 +64,33 @@
         for (const [id, name] of seen) {
             lines.push(`${id}\t${name}\thttps://www.amazon.co.jp/s?me=${id}`);
         }
-        return lines.join('\n');
+        const sellers = [...seen].map(([sellerId, sellerName]) => ({ sellerId, sellerName }));
+        return { report: lines.join('\n'), sellers };
+    }
+
+    // 2026-10-10：amacari-tools/server.pyの/collect-items・/check-asinsと同じく、
+    // サーバー側はGoogleスプレッドシートへの読み書きを済ませてから応答するため、保存自体は
+    // 成功したのに応答だけ届かない（ConnectionAbortedError、既知の無害なパターン）ことがある。
+    // 本当にサーバー未起動なら接続エラーはほぼ即時に返るのに対し、このケースは数秒後に
+    // 発生するため、経過時間で区別する（バイヤーチェイスv6.6と同じ教訓）。
+    const LIKELY_SAVED_AFTER_MS = 2000;
+    function trackAmazonSellers(sellers, asin) {
+        if (sellers.length === 0) return Promise.resolve({ ok: true, results: [] });
+        const startedAt = Date.now();
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST', url: 'http://localhost:8766/track-amazon-sellers',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ sellers, asin }),
+                timeout: 30000,
+                onload: res => {
+                    try { resolve({ ok: true, ...JSON.parse(res.responseText) }); }
+                    catch (e) { resolve({ ok: false }); }
+                },
+                onerror: () => resolve({ ok: Date.now() - startedAt >= LIKELY_SAVED_AFTER_MS, unknown: true }),
+                ontimeout: () => resolve({ ok: Date.now() - startedAt >= LIKELY_SAVED_AFTER_MS, unknown: true }),
+            });
+        });
     }
 
     function mountUI() {
@@ -75,16 +103,53 @@
         statusEl.style.cssText = 'position:fixed;top:70px;right:20px;z-index:2147483647;background:rgba(0,0,0,0.9);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;display:none;max-width:400px;white-space:pre-wrap;';
         document.body.appendChild(statusEl);
 
+        const resultsEl = document.createElement('div');
+        resultsEl.style.cssText = 'position:fixed;top:115px;right:20px;z-index:2147483647;background:rgba(0,0,0,0.92);color:#fff;padding:10px 12px;border-radius:6px;font-size:12px;display:none;max-width:360px;max-height:320px;overflow-y:auto;line-height:1.5;';
+        document.body.appendChild(resultsEl);
+
         function updateStatus(msg) {
             statusEl.style.display = 'block';
             statusEl.textContent = msg;
         }
 
-        btn.onclick = () => {
-            const report = buildReport();
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // 2026-10-10：出現回数2回以上＝今回より前の別ASINでも見つかったセラー＝
+        // メルカリ仕入れ→Amazon販売の濃厚候補とみなして強調表示する。
+        const FREQUENT_THRESHOLD = 2;
+        function showTrackResults(results) {
+            if (!results || results.length === 0) { resultsEl.style.display = 'none'; return; }
+            const sorted = [...results].sort((a, b) => b.count - a.count);
+            resultsEl.innerHTML = sorted.map(r => {
+                const mark = r.count >= FREQUENT_THRESHOLD ? '🔥' : '';
+                return `<div style="border-top:1px solid rgba(255,255,255,0.15);padding:4px 0;">${mark}累計${r.count}回目　${escapeHtml(r.sellerId)}　${escapeHtml(r.sellerName)}</div>`;
+            }).join('');
+            resultsEl.style.display = 'block';
+        }
+
+        btn.onclick = async () => {
+            const { report, sellers } = buildReport();
             GM_setClipboard(report);
-            updateStatus('調査結果をコピーしました（' + report.length + '文字）');
+            updateStatus('調査結果をコピーしました（' + report.length + '文字）\n定点観測サーバーへ送信中...');
             console.log(report);
+            const asin = getAsinFromUrl();
+            const trackResult = await trackAmazonSellers(sellers, asin);
+            if (trackResult.ok && trackResult.results) {
+                const frequent = trackResult.results.filter(r => r.count >= FREQUENT_THRESHOLD);
+                updateStatus(
+                    '調査結果をコピーしました（' + report.length + '文字）\n' +
+                    `定点観測に記録済み（濃厚候補🔥${frequent.length}件 / 今回${trackResult.results.length}件）`
+                );
+                showTrackResults(trackResult.results);
+            } else {
+                updateStatus(
+                    '調査結果をコピーしました（' + report.length + '文字）\n' +
+                    '⚠️ 定点観測サーバー(8766)への送信に失敗しました（起動確認を）。クリップボードのコピーは完了済み'
+                );
+                showTrackResults(null);
+            }
         };
     }
 
