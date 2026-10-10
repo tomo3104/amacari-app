@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.3
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴をスクロール分も含めてMapに蓄積するよう修正（従来は毎回上書きで直近ロード分のみしか見れず、頻繁に出品するアカウントだと買い手評価が0件に見えてしまう問題があった、2026-10-10修正）。
+// @version      6.4
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。買い手評価0件は対象アカウントによっては正常な結果（スクロールでは増えない仕様と検証済み、2026-10-10）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -21,12 +21,14 @@
     // （mercari_auto_collector.user.jsのテンプレート捕捉と同じ発想）。Step1はこの方式。
     const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
-    // 2026-10-10：プロフィールの直近評価は「売った側」の評価で埋め尽くされていることが多く
-    // （頻繁に出品するせどらーほど顕著）、1回のロード（最大100件）だけでは「買った側」の
-    // 評価が1件も含まれないケースがある。ページをスクロールして追加読み込みされた分も
-    // 取り逃さないよう、pager_idをキーにMapで蓄積する（capturedItemsBySellerと同じ考え方。
-    // 以前は`capturedReviews = json`で毎回上書きしていたため、スクロールしても古い評価が
-    // 反映されなかった）。
+    // 2026-10-10：以前は`capturedReviews = json`で毎回上書きしていたため、もし複数回
+    // /reviews/historyへの通信が発生した場合に古い分が失われる作りだった。pager_idを
+    // キーにしたMapで蓄積するよう修正（capturedItemsBySellerと同じ考え方）。
+    // ただし検証の結果、このページは評価履歴をスクロールしても追加の通信を発生させない
+    // （タブ切り替え等の追加読み込み手段も無い）ことが判明。つまり1回のロード分が
+    // 取得できる全データであり、その中に「買った側」の評価が無ければ、このアカウントの
+    // 取得可能な評価履歴には買った証拠が無いということ（スクロールしても増えないのは
+    // バグではなく仕様。2026-10-10検証済み）。
     const capturedReviewsByPagerId = new Map(); // pager_id -> entry
 
     // 2026-10-09：items/get_itemsも自前fetchはHTTP 400だったため、/reviews/historyと
@@ -290,16 +292,15 @@
 
         setInterval(() => {
             const n = capturedReviewsByPagerId.size;
-            btn1.textContent = n > 0 ? `Step1: セラー一覧を抽出してコピー（捕捉${n}件・スクロールで追加取得可）` : 'Step1: 評価データ待機中...（更新待ち）';
+            btn1.textContent = n > 0 ? `Step1: セラー一覧を抽出してコピー（捕捉${n}件）` : 'Step1: 評価データ待機中...（更新待ち）';
         }, 500);
 
         btn1.onclick = () => {
             if (capturedReviewsByPagerId.size === 0) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
             const raw = [...capturedReviewsByPagerId.values()];
-            console.log('[バイヤーチェイス debug] 生データ先頭3件:', JSON.stringify(raw.slice(0, 3), null, 2));
             const report = buildReviewReport(raw);
             GM_setClipboard(report);
-            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）\n（デバッグ用に生データ先頭3件をコンソールに出力しました）\n買い手評価が0件の場合は下にスクロールして古い評価を読み込んでから再度押してみて');
+            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）');
             console.log(report);
         };
 
@@ -317,7 +318,7 @@
                 if (!bySeller.has(e.user.id)) bySeller.set(e.user.id, { id: e.user.id, name: e.user.name });
             }
             const queue = [...bySeller.values()];
-            if (queue.length === 0) { updateStatus0(`セラーが見つかりませんでした（捕捉${capturedReviewsByPagerId.size}件中、買い手評価0件）。直近は売った側の評価で埋まっていることが多いので、下にスクロールして古い評価を読み込んでから再度押してみて`); return; }
+            if (queue.length === 0) { updateStatus0(`セラーが見つかりませんでした（捕捉${capturedReviewsByPagerId.size}件中、買い手評価0件）。このページで取得できる評価履歴に買った側としての評価が含まれていない対象です`); return; }
             saveWalkState({ active: true, startedAt: Date.now(), queue, currentIndex: 0, results: [] });
             updateStatus0(`自動巡回開始... (0/${queue.length})`);
             setTimeout(() => {
