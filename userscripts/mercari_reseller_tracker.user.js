@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.5
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時に送信が全部失敗していても「送信済み」と表示してしまうバグを修正：巡回開始前にサーバー起動を確認、各送信も成否を見て失敗時は巡回を停止・明示警告するように変更（2026-10-10）。
+// @version      6.6
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時の送信失敗を検知して巡回を停止する機能（v6.5）が、保存自体は成功したのに応答だけ届かない既知の無害なケース（ConnectionAbortedError）まで失敗と誤判定していたため、経過時間で両者を区別するよう修正（2026-10-10）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -188,6 +188,16 @@
     // そのまま流し込む。新しい受け口を作らず、mercariシート→型番候補検出→Amazon価格チェックの
     // 既存パイプラインにそのまま乗せる。1人処理するごとに随時送信する（最後にまとめて送ると
     // 巡回が途中で止まった時に全部失われる、クローラーコレクトで実際に起きた事故と同じ教訓）。
+    //
+    // 2026-10-10：サーバー側はGoogleスプレッドシートへの読み書きを済ませてから応答を返す
+    // 作りのため、「保存（collect完了のログ）は成功したが、応答を返す前にクライアント側の
+    // 接続が切れて結果だけ届かない」ケースがある（ConnectionAbortedError、既知の無害な
+    // パターン。CLAUDE.md参照）。本当にサーバーが起動していない場合は接続エラーがほぼ
+    // 即時（数百ms以内）に返るのに対し、このケースはスプレッドシートの複数回の通信が
+    // 終わるまでの数秒〜十数秒後に発生する。この経過時間で両者を区別し、十分待った後の
+    // エラーは「おそらく保存自体は成功している」と判断して成功扱いにする
+    // （そうしないと保存できているのに巡回を止めてしまう誤判定になる）。
+    const LIKELY_SAVED_AFTER_MS = 2000;
     function sendToCollectItems(sellerName, sold) {
         if (sold.length === 0) return Promise.resolve(true); // 送る物が無いのは失敗ではない
         const itemList = sold.map(it => ({
@@ -195,6 +205,7 @@
             url: `https://jp.mercari.com/item/${it.id}`,
             source: 'バイヤーチェイス:' + sellerName,
         }));
+        const startedAt = Date.now();
         return new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'POST', url: 'http://localhost:8765/collect-items',
@@ -202,8 +213,8 @@
                 data: JSON.stringify({ items: itemList }),
                 timeout: 30000,
                 onload: res => resolve(res.status >= 200 && res.status < 300),
-                onerror: () => resolve(false),
-                ontimeout: () => resolve(false),
+                onerror: () => resolve(Date.now() - startedAt >= LIKELY_SAVED_AFTER_MS),
+                ontimeout: () => resolve(Date.now() - startedAt >= LIKELY_SAVED_AFTER_MS),
             });
         });
     }
