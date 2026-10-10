@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.2
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。Step1で買い手評価が0件の時の原因調査用に生データをコンソールへデバッグ出力（2026-10-10追加）。
+// @version      6.3
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴をスクロール分も含めてMapに蓄積するよう修正（従来は毎回上書きで直近ロード分のみしか見れず、頻繁に出品するアカウントだと買い手評価が0件に見えてしまう問題があった、2026-10-10修正）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -20,12 +20,27 @@
     // のではなく、ページ自身が成功させた本物の通信を横取りして使う
     // （mercari_auto_collector.user.jsのテンプレート捕捉と同じ発想）。Step1はこの方式。
     const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-    let capturedReviews = null;
+
+    // 2026-10-10：プロフィールの直近評価は「売った側」の評価で埋め尽くされていることが多く
+    // （頻繁に出品するせどらーほど顕著）、1回のロード（最大100件）だけでは「買った側」の
+    // 評価が1件も含まれないケースがある。ページをスクロールして追加読み込みされた分も
+    // 取り逃さないよう、pager_idをキーにMapで蓄積する（capturedItemsBySellerと同じ考え方。
+    // 以前は`capturedReviews = json`で毎回上書きしていたため、スクロールしても古い評価が
+    // 反映されなかった）。
+    const capturedReviewsByPagerId = new Map(); // pager_id -> entry
 
     // 2026-10-09：items/get_itemsも自前fetchはHTTP 400だったため、/reviews/historyと
     // 同じく横取り方式にする。seller_idごと・item idごとにMapで蓄積し、ページをスクロール
     // して追加で読み込まれた分も取り逃さないようにする（1回のロードでは30件しか来ない）。
     const capturedItemsBySeller = new Map(); // sellerId -> Map(itemId -> item)
+
+    function recordReviews(json) {
+        const entries = (json && json.data) || [];
+        for (const e of entries) {
+            const key = e.pager_id != null ? e.pager_id : JSON.stringify(e);
+            capturedReviewsByPagerId.set(key, e);
+        }
+    }
 
     function recordItems(json) {
         const items = (json && json.data) || [];
@@ -39,7 +54,7 @@
 
     function handleResponse(url, json) {
         if (url.includes('/reviews/history')) {
-            capturedReviews = json;
+            recordReviews(json);
         } else if (url.includes('/items/get_items')) {
             recordItems(json);
         }
@@ -274,16 +289,17 @@
         document.body.appendChild(btn1);
 
         setInterval(() => {
-            btn1.textContent = capturedReviews ? 'Step1: セラー一覧を抽出してコピー' : 'Step1: 評価データ待機中...（更新待ち）';
+            const n = capturedReviewsByPagerId.size;
+            btn1.textContent = n > 0 ? `Step1: セラー一覧を抽出してコピー（捕捉${n}件・スクロールで追加取得可）` : 'Step1: 評価データ待機中...（更新待ち）';
         }, 500);
 
         btn1.onclick = () => {
-            if (!capturedReviews) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
-            const raw = capturedReviews.data || [];
+            if (capturedReviewsByPagerId.size === 0) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
+            const raw = [...capturedReviewsByPagerId.values()];
             console.log('[バイヤーチェイス debug] 生データ先頭3件:', JSON.stringify(raw.slice(0, 3), null, 2));
             const report = buildReviewReport(raw);
             GM_setClipboard(report);
-            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）\n（デバッグ用に生データ先頭3件をコンソールに出力しました）');
+            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）\n（デバッグ用に生データ先頭3件をコンソールに出力しました）\n買い手評価が0件の場合は下にスクロールして古い評価を読み込んでから再度押してみて');
             console.log(report);
         };
 
@@ -294,14 +310,14 @@
         document.body.appendChild(btnWalk);
 
         btnWalk.onclick = () => {
-            if (!capturedReviews) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
-            const asBuyer = (capturedReviews.data || []).filter(e => e.subject === 'buyer');
+            if (capturedReviewsByPagerId.size === 0) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
+            const asBuyer = [...capturedReviewsByPagerId.values()].filter(e => e.subject === 'buyer');
             const bySeller = new Map();
             for (const e of asBuyer) {
                 if (!bySeller.has(e.user.id)) bySeller.set(e.user.id, { id: e.user.id, name: e.user.name });
             }
             const queue = [...bySeller.values()];
-            if (queue.length === 0) { updateStatus0('セラーが見つかりませんでした'); return; }
+            if (queue.length === 0) { updateStatus0(`セラーが見つかりませんでした（捕捉${capturedReviewsByPagerId.size}件中、買い手評価0件）。直近は売った側の評価で埋まっていることが多いので、下にスクロールして古い評価を読み込んでから再度押してみて`); return; }
             saveWalkState({ active: true, startedAt: Date.now(), queue, currentIndex: 0, results: [] });
             updateStatus0(`自動巡回開始... (0/${queue.length})`);
             setTimeout(() => {
