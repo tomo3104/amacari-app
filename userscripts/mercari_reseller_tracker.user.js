@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.4
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。買い手評価0件は対象アカウントによっては正常な結果（スクロールでは増えない仕様と検証済み、2026-10-10）。
+// @version      6.5
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時に送信が全部失敗していても「送信済み」と表示してしまうバグを修正：巡回開始前にサーバー起動を確認、各送信も成否を見て失敗時は巡回を停止・明示警告するように変更（2026-10-10）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -169,22 +169,42 @@
         return capturedItemsBySeller.get(sellerId) || new Map();
     }
 
+    // 2026-10-10：サーバー（amacari-tools:8765）が起動していなくても、以前は送信の成否を
+    // 確認せずに「送信済み」と表示してしまっていた（実際は接続エラーで何も記録されていなかった）。
+    // GM_xmlhttpRequestのonload/onerrorを見て実際の成否を返すよう修正。
+    function pingServer() {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'GET', url: 'http://localhost:8765/',
+                timeout: 2000,
+                onload: () => resolve(true),
+                onerror: () => resolve(false),
+                ontimeout: () => resolve(false),
+            });
+        });
+    }
+
     // 2026-10-09追加：既存のクローラーコレクトと同じ/collect-items（amacari-tools:8765）に
     // そのまま流し込む。新しい受け口を作らず、mercariシート→型番候補検出→Amazon価格チェックの
     // 既存パイプラインにそのまま乗せる。1人処理するごとに随時送信する（最後にまとめて送ると
     // 巡回が途中で止まった時に全部失われる、クローラーコレクトで実際に起きた事故と同じ教訓）。
     function sendToCollectItems(sellerName, sold) {
-        if (sold.length === 0) return;
+        if (sold.length === 0) return Promise.resolve(true); // 送る物が無いのは失敗ではない
         const itemList = sold.map(it => ({
             name: it.name, price: Number(it.price) || 0,
             url: `https://jp.mercari.com/item/${it.id}`,
             source: 'バイヤーチェイス:' + sellerName,
         }));
-        GM_xmlhttpRequest({
-            method: 'POST', url: 'http://localhost:8765/collect-items',
-            headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ items: itemList }),
-            timeout: 30000,
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST', url: 'http://localhost:8765/collect-items',
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ items: itemList }),
+                timeout: 30000,
+                onload: res => resolve(res.status >= 200 && res.status < 300),
+                onerror: () => resolve(false),
+                ontimeout: () => resolve(false),
+            });
         });
     }
 
@@ -194,7 +214,12 @@
         const sold = [...itemsMap.values()]
             .filter(it => it.status === 'sold_out')
             .sort((a, b) => b.created - a.created);
-        sendToCollectItems(current.name, sold);
+        const sendOk = await sendToCollectItems(current.name, sold);
+        if (!sendOk) {
+            // 2026-10-10：送信失敗時はcurrentIndexを進めず・ページ遷移もしない（巡回を停止）。
+            // サーバーを起動してこのページを再読み込みすれば、同じセラーからやり直せる。
+            return { done: false, failed: true, sellerName: current.name };
+        }
         state.results.push({
             sellerId: current.id,
             sellerName: current.name,
@@ -280,6 +305,8 @@
                 if (r.done) {
                     updateStatus0('巡回完了！mercariシートへ送信済み＋クリップボードにもコピーしました（' + r.report.length + '文字）');
                     console.log(r.report);
+                } else if (r.failed) {
+                    updateStatus0(`⚠️ 送信失敗（${r.sellerName}）。amacari-toolsサーバー(8765)が起動しているか確認し、起動してからこのページを再読み込みしてください（巡回はこのセラーで停止中・やり直せば続きから再開します）`);
                 }
             });
             return; // 通常のStep1/2ボタンは出さない（遷移中なので）
@@ -310,7 +337,7 @@
         btnWalk.style.cssText = 'position:fixed;top:75px;right:20px;z-index:99999;padding:12px 20px;background:#E65100;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
         document.body.appendChild(btnWalk);
 
-        btnWalk.onclick = () => {
+        btnWalk.onclick = async () => {
             if (capturedReviewsByPagerId.size === 0) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
             const asBuyer = [...capturedReviewsByPagerId.values()].filter(e => e.subject === 'buyer');
             const bySeller = new Map();
@@ -319,6 +346,12 @@
             }
             const queue = [...bySeller.values()];
             if (queue.length === 0) { updateStatus0(`セラーが見つかりませんでした（捕捉${capturedReviewsByPagerId.size}件中、買い手評価0件）。このページで取得できる評価履歴に買った側としての評価が含まれていない対象です`); return; }
+            updateStatus0('サーバー確認中...');
+            const serverUp = await pingServer();
+            if (!serverUp) {
+                updateStatus0('⚠️ amacari-toolsサーバー(8765)が起動していません。先に起動してからやり直してください（今回は巡回を開始しません）');
+                return;
+            }
             saveWalkState({ active: true, startedAt: Date.now(), queue, currentIndex: 0, results: [] });
             updateStatus0(`自動巡回開始... (0/${queue.length})`);
             setTimeout(() => {
@@ -336,7 +369,7 @@
             btn2.textContent = 'Step2: SOLD一覧を抽出してコピー(' + n + '件捕捉)';
         }, 500);
 
-        btn2.onclick = () => {
+        btn2.onclick = async () => {
             if (!userId) { updateStatus0('ユーザーIDがURLから取得できません'); return; }
             const itemsMap = capturedItemsBySeller.get(userId);
             if (!itemsMap || itemsMap.size === 0) {
@@ -346,10 +379,15 @@
             const items = [...itemsMap.values()];
             const sold = items.filter(it => it.status === 'sold_out').sort((a, b) => b.created - a.created);
             const sellerName = (sold[0] && sold[0].seller && sold[0].seller.name) || userId;
-            sendToCollectItems(sellerName, sold);
             const report = buildSoldReport(userId, itemsMap);
             GM_setClipboard(report);
-            updateStatus0('Step2完了！mercariシートへ送信＋クリップボードにコピーしました（' + report.length + '文字）');
+            updateStatus0('送信中...');
+            const sendOk = await sendToCollectItems(sellerName, sold);
+            if (sendOk) {
+                updateStatus0('Step2完了！mercariシートへ送信＋クリップボードにコピーしました（' + report.length + '文字）');
+            } else {
+                updateStatus0('⚠️ mercariシートへの送信に失敗しました（amacari-toolsサーバー(8765)が起動しているか確認してください）。クリップボードへのコピーは完了済み（' + report.length + '文字）');
+            }
             console.log(report);
         };
     }
