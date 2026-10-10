@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.6
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時の送信失敗を検知して巡回を停止する機能（v6.5）が、保存自体は成功したのに応答だけ届かない既知の無害なケース（ConnectionAbortedError）まで失敗と誤判定していたため、経過時間で両者を区別するよう修正（2026-10-10）。
+// @version      6.7
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。評価履歴はpager_idでMap蓄積（上書きバグ防止）。サーバー(8765)未起動時の送信失敗を検知して巡回を停止する機能（v6.5）が、保存自体は成功したのに応答だけ届かない既知の無害なケース（ConnectionAbortedError）まで失敗と誤判定していたため、経過時間で両者を区別するよう修正（v6.6）。巡回状態の失効時間を30分→2時間に延長（長時間の巡回や中断からの再開を考慮、2026-10-10）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -125,7 +125,11 @@
     // localStorageに保存しながら1人ずつプロフィールページへ自動遷移する
     // （mercari_auto_collector.user.jsのautoPipeline連鎖と同じ考え方）。
     const LS_KEY = 'mercariResellerWalk';
-    const WALK_STALE_MS = 30 * 60 * 1000; // 30分より古い状態は放棄済みとみなす
+    // 2026-10-10：30分だと、セラー数が多い巡回は正常処理中でも合計時間がこれを超えて
+    // 「放棄済み」と誤判定される恐れがある（startedAtは巡回開始時刻で、アイドル時間では
+    // なく巡回全体の経過時間を見ているため）。デバッグ等で長時間放置した場合の救済も兼ねて
+    // 2時間に延長。
+    const WALK_STALE_MS = 2 * 60 * 60 * 1000; // 2時間より古い状態は放棄済みとみなす
     const WAIT_PER_SELLER_MS = 8000;
     const NAV_DELAY_MS = 800;
 
