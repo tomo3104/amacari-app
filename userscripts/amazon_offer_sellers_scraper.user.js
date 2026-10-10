@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。
+// @version      4.0
+// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/dp/*
@@ -93,6 +93,28 @@
         });
     }
 
+    // 2026-10-10：見つけたセラーのストアページへ自動で巡回し、amazon_seller_scraper.user.js
+    // 側にそのまま出品ASIN抜き出し→list.json登録までやらせる（芋づる式の深掘りを全自動化）。
+    // 両スクリプトはamazon.co.jp上の同一オリジンなので、localStorageで状態を共有できる。
+    // キー名・状態の形はamazon_seller_scraper.user.js側と完全に一致させること。
+    const DEEP_DIVE_LS_KEY     = 'amazonSellerDeepDiveWalk';
+    const DEEP_DIVE_NAV_DELAY_MS = 1200;
+
+    function startDeepDiveWalk(sellers, originAsin) {
+        const state = {
+            active: true,
+            startedAt: Date.now(),
+            originAsin,
+            queue: sellers.map(s => ({ sellerId: s.sellerId, sellerName: s.sellerName })),
+            currentIndex: 0,
+        };
+        localStorage.setItem(DEEP_DIVE_LS_KEY, JSON.stringify(state));
+        const first = state.queue[0];
+        setTimeout(() => {
+            location.href = `https://www.amazon.co.jp/s?me=${first.sellerId}`;
+        }, DEEP_DIVE_NAV_DELAY_MS);
+    }
+
     function mountUI() {
         const btn = document.createElement('button');
         btn.textContent = '他セラー一覧を抽出';
@@ -136,19 +158,23 @@
             console.log(report);
             const asin = getAsinFromUrl();
             const trackResult = await trackAmazonSellers(sellers, asin);
+            let msg = '調査結果をコピーしました（' + report.length + '文字）\n';
             if (trackResult.ok && trackResult.results) {
                 const frequent = trackResult.results.filter(r => r.count >= FREQUENT_THRESHOLD);
-                updateStatus(
-                    '調査結果をコピーしました（' + report.length + '文字）\n' +
-                    `定点観測に記録済み（濃厚候補🔥${frequent.length}件 / 今回${trackResult.results.length}件）`
-                );
+                msg += `定点観測に記録済み（濃厚候補🔥${frequent.length}件 / 今回${trackResult.results.length}件）`;
                 showTrackResults(trackResult.results);
             } else {
-                updateStatus(
-                    '調査結果をコピーしました（' + report.length + '文字）\n' +
-                    '⚠️ 定点観測サーバー(8766)への送信に失敗しました（起動確認を）。クリップボードのコピーは完了済み'
-                );
+                msg += '⚠️ 定点観測サーバー(8766)への送信に失敗しました（起動確認を）。クリップボードのコピーは完了済み';
                 showTrackResults(null);
+            }
+            if (sellers.length > 0) {
+                // 2026-10-10：せっかく見つけたセラー一覧をここで終わらせず、各セラーの
+                // ストアページへ自動巡回して出品ASINも抜き出す（芋づる式の深掘り）。
+                msg += `\n続けて${sellers.length}セラーのASIN抜き出しへ自動移動します...`;
+                updateStatus(msg);
+                startDeepDiveWalk(sellers, asin);
+            } else {
+                updateStatus(msg);
             }
         };
     }
