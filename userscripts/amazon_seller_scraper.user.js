@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Seller ASIN Scraper
 // @namespace    http://tampermonkey.net/
-// @version      2.2
-// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示する（2026-10-10追加）
+// @version      2.3
+// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示（10-10追加）。実行前にサーバー起動を確認し、未起動ならスクレイピング前に警告して中断する（10-10追加・サーバー起動忘れで中途半端に終わる事故防止）
 // @match        https://www.amazon.co.jp/s?me=*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -69,9 +69,22 @@
     resultsEl.style.cssText = 'position:fixed;bottom:115px;right:20px;z-index:99999;background:rgba(0,0,0,0.9);color:#fff;padding:10px 12px;border-radius:6px;font-size:12px;display:none;max-width:340px;max-height:320px;overflow-y:auto;line-height:1.5;';
     document.body.appendChild(resultsEl);
 
-    function updateStatus(msg) {
+    function updateStatus(msg, isWarning) {
         statusEl.style.display = 'block';
+        statusEl.style.background = isWarning ? 'rgba(180,30,30,0.92)' : 'rgba(0,0,0,0.78)';
         statusEl.textContent = msg;
+    }
+
+    function pingServer() {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'GET', url: 'http://localhost:8766/',
+                timeout: 2000,
+                onload: () => resolve(true),   // 404でも応答があれば起動している
+                onerror: () => resolve(false),
+                ontimeout: () => resolve(false),
+            });
+        });
     }
 
     function escapeHtml(s) {
@@ -118,6 +131,14 @@
 
     btn.onclick = async () => {
         btn.disabled = true;
+        showResults(null);
+        updateStatus('サーバー確認中...');
+        const serverUp = await pingServer();
+        if (!serverUp) {
+            updateStatus('⚠️ asin-toolsサーバー(8766)が起動していません。先に起動してからやり直してください（今回はスクレイピングを行いません）', true);
+            btn.disabled = false;
+            return;
+        }
         updateStatus('取得中...');
         const items = await scrapeAllPages();
         const asinList = items.map(it => it.asin);
@@ -133,7 +154,7 @@
             );
             showResults(result.results);
         } else {
-            updateStatus('完了: ' + items.length + '件のASINをコピーしました。ただしサーバーへの送信に失敗しました（asin-toolsのserver.pyが起動しているか確認してください）');
+            updateStatus('完了: ' + items.length + '件のASINをコピーしました。ただしサーバーへの送信に失敗しました（起動中に落ちた可能性があります）', true);
             showResults(null);
         }
         btn.disabled = false;
