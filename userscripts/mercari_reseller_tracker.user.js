@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         バイヤーチェイス (Mercari Buyer Chase)
 // @namespace    http://tampermonkey.net/
-// @version      6.1
-// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。
+// @version      6.2
+// @description  せどらーと思われる購入者の評価履歴からセラー一覧を抽出し(Step1)、各セラーのSOLD商品一覧を取得する(Step2)。Step1→2を自動連鎖させ全セラーを自動巡回する機能も搭載（2026-10-09新設・命名「バイヤーチェイス」に変更）。Step1で買い手評価が0件の時の原因調査用に生データをコンソールへデバッグ出力（2026-10-10追加）。
 // @match        https://jp.mercari.com/user/reviews/*
 // @match        https://jp.mercari.com/user/profile/*
 // @grant        GM_setClipboard
@@ -279,9 +279,11 @@
 
         btn1.onclick = () => {
             if (!capturedReviews) { updateStatus0('まだ評価データを捕まえていません。ページを更新してもう一度お試しください'); return; }
-            const report = buildReviewReport(capturedReviews.data || []);
+            const raw = capturedReviews.data || [];
+            console.log('[バイヤーチェイス debug] 生データ先頭3件:', JSON.stringify(raw.slice(0, 3), null, 2));
+            const report = buildReviewReport(raw);
             GM_setClipboard(report);
-            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）');
+            updateStatus0('Step1完了！クリップボードにコピーしました（' + report.length + '文字）\n（デバッグ用に生データ先頭3件をコンソールに出力しました）');
             console.log(report);
         };
 
