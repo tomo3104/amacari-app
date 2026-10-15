@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.74
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加
+// @version      3.75
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -684,6 +684,20 @@
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+    // 2026-10-15追加：テンプレート再取得の待ちが「10秒待って1回だけ確認」の固定待機
+    // だったため、新タブの読み込みが10秒よりわずかに遅れただけで再取得失敗と誤判定
+    // されるケースがあった（根本原因のMercari側トークン失効理由自体は特定不能だが、
+    // この「待ち方」自体は改善できる）。1秒おきに最大20秒までポーリングするよう変更。
+    async function waitForTemplate(maxMs) {
+        const interval = 1000;
+        const deadline = Date.now() + (maxMs || 20000);
+        while (Date.now() < deadline) {
+            if (_getSharedTpl()) return true;
+            await sleep(interval);
+        }
+        return !!_getSharedTpl();
+    }
+
     // ========== fetch化: 共有テンプレートから直接API呼び出し（v2.2） ==========
     const _SHARED_TPL_KEY = 'mercari_api_shared_tpl';
     const _uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
@@ -860,10 +874,9 @@
 
         // ===== テンプレート自動取得 =====
         if (!_getSharedTpl()) {
-            updateStatus('テンプレート取得中... 10秒待機');
+            updateStatus('テンプレート取得中... 最大20秒待機');
             GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
-            await sleep(10000);
-            if (!_getSharedTpl()) {
+            if (!(await waitForTemplate(20000))) {
                 updateStatus('テンプレート取得失敗 → 中断（リアルタイムリサーチを起動してから再試行）');
                 running = false; setRunningUI(false); return;
             }
@@ -920,7 +933,7 @@
                     updateStatus(`[${i+1}/${filtered.length}] ${name} テンプレート更新中...`);
                     _uw.localStorage.removeItem(_SHARED_TPL_KEY);
                     GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
-                    await sleep(10000);
+                    await waitForTemplate(20000);
                     if (_getSharedTpl()) {
                         // テンプレート自体の再取得は成功しても、同じ件で再度HTTP 4xxに
                         // なるケース（レート制限等）があり、その場合i--が無限に繰り返される
