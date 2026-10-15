@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      4.0
-// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。
+// @version      4.1
+// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。2026-10-15：同じセラーが別ASIN経由で繰り返し見つかるたびに800件規模のストア全件スキャンをやり直していたのを解消するため、直近24時間以内に芋づる済みのセラーはDeepDive巡回の対象から自動的に除外するよう変更。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/dp/*
@@ -159,21 +159,32 @@
             const asin = getAsinFromUrl();
             const trackResult = await trackAmazonSellers(sellers, asin);
             let msg = '調査結果をコピーしました（' + report.length + '文字）\n';
+            // 2026-10-15追加：同じセラーが別ASIN経由で何度も出てくると、そのたびに
+            // 800件規模のストアページ巡回を丸ごとやり直していた（無駄な再スキャン）。
+            // track_amazon_sellers()が返すrecently_scanned（直近24時間以内に芋づる済み）
+            // を使って、クールダウン中のセラーは今回のDeepDive巡回から除外する。
+            let walkTargets = sellers;
             if (trackResult.ok && trackResult.results) {
                 const frequent = trackResult.results.filter(r => r.count >= FREQUENT_THRESHOLD);
+                const recentIds = new Set(trackResult.results.filter(r => r.recently_scanned).map(r => r.sellerId));
                 msg += `定点観測に記録済み（濃厚候補🔥${frequent.length}件 / 今回${trackResult.results.length}件）`;
+                if (recentIds.size > 0) {
+                    walkTargets = sellers.filter(s => !recentIds.has(s.sellerId));
+                    msg += `\n直近24時間以内に巡回済みの${recentIds.size}セラーはスキップします`;
+                }
                 showTrackResults(trackResult.results);
             } else {
                 msg += '⚠️ 定点観測サーバー(8766)への送信に失敗しました（起動確認を）。クリップボードのコピーは完了済み';
                 showTrackResults(null);
             }
-            if (sellers.length > 0) {
+            if (walkTargets.length > 0) {
                 // 2026-10-10：せっかく見つけたセラー一覧をここで終わらせず、各セラーの
                 // ストアページへ自動巡回して出品ASINも抜き出す（芋づる式の深掘り）。
-                msg += `\n続けて${sellers.length}セラーのASIN抜き出しへ自動移動します...`;
+                msg += `\n続けて${walkTargets.length}セラーのASIN抜き出しへ自動移動します...`;
                 updateStatus(msg);
-                startDeepDiveWalk(sellers, asin);
+                startDeepDiveWalk(walkTargets, asin);
             } else {
+                msg += '\n巡回対象なし（全セラーが直近巡回済み）';
                 updateStatus(msg);
             }
         };
