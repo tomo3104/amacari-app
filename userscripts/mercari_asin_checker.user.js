@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.71
+// @version      3.72
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -522,10 +522,16 @@
                             // 2026-09-20変更：以前は全カテゴリ行のgroupを'CAT'に上書きしていたが、
                             // シートのグループ名（カテゴリ家電/PC/AV/住宅工具等）を保持して個別に選べるようにした。
                             // 深さの上限(20ページ)はURL判定(isCategoryUrl)で適用するのでgroupに依存しない。
-                            // 「カテゴリ〜」で始まる新カテゴリ群は、夜間の自動実行(ALL)が際限なく長くなるのを
-                            // 防ぐため、ALLには含めず明示的に選んだ時だけ回す(optIn)。
+                            // 2026-09-23：「カテゴリ〜」で始まる新カテゴリ群(構造2)を文字通りの「ALL」から
+                            // 除外してoptIn（明示的に選んだ時だけ回す）扱いにしていた。
+                            // 2026-10-15：optInを廃止し、「ALL」にも含めるようにした。
+                            // ※訂正：一気通貫バッチは「ALL」ではなくグループ名(1〜24,CAT,CAT2,TEST,
+                            // カテゴリAV/PC/家電/住宅工具)を列挙して渡しているため、optInの影響は受けて
+                            // おらず、構造2は9/29〜10/13の夜間巡回の大半で88件とも巡回されていた
+                            // （server_202609/10*.logの【構造2】行で確認。例外は10/11の274社の回で0件）。optInで外れていたのは画面の「ALL」選択や旧ALLバッチ
+                            // （アーカイブ済み）を使った場合だけ。廃止は「ALL＝全部」に揃えるための整理。
                             const categories = all.filter(m => isCategoryUrl(m.url)).map(m => ({
-                                ...m, group: m.group || 'CAT', isCat: true, optIn: /^カテゴリ/.test(m.group || ''),
+                                ...m, group: m.group || 'CAT', isCat: true, optIn: false,
                             }));
                             resolve({ mfrs, categories });
                             return;
@@ -819,7 +825,9 @@
         // 2026-09-07修正：呼び出し元(showGroupPicker・auto_research)で既にメーカー+
         // カテゴリを結合済みのリストを渡すようにしたため、ここでの再結合は不要になった。
         const allMfrs = mfrs;
-        // optIn(新カテゴリ群)はALLに含めず、グループを明示的に選んだ時だけ対象にする
+        // 2026-10-15：optIn自体を廃止したため、ALLには全メーカー・カテゴリが含まれる
+        // （以前は文字通りの「ALL」の時だけ「カテゴリ〜」群を除外していた。グループ名を
+        // 列挙して渡す一気通貫バッチはもともと右側の分岐なので、この変更の影響は受けない）。
         const filtered = targets.includes('ALL') ? allMfrs.filter(m => !m.optIn) : allMfrs.filter(m => targets.includes((m.group || '').toUpperCase()));
         if (filtered.length === 0) { updateStatus('対象なし'); return; }
 
@@ -841,6 +849,22 @@
         const batchStart = Date.now();
         const groupLabel = selected.join(',');
         let totalCollected = 0, totalMatched = 0, totalHits = 0, totalNewCands = 0;
+        // 2026-10-15追加：以前は完了報告のtotalに常にfiltered.length（予定件数）を送っていたため、
+        // 途中で抜けても「318社 完了」と表示され、早期終了に気づけなかった（10/14夜の巡回は
+        // 実際には238社目のキーボードで止まり、構造2の残り80件が丸ごと未巡回だったのに、
+        // ログ上は318社完了に見えていた。10/07の「402社 0分10秒 収集0」も同じ見え方）。
+        // さらに終了理由（テンプレート再取得失敗・エラー連続・中止ボタン）は画面の
+        // ステータス表示にしか出ず、サーバーログに残らないため後から原因を特定できなかった。
+        // 実際に取得→照合まで終えた件数・予定件数・終了理由をすべて完了報告に載せる。
+        let completed = 0;       // 取得→照合まで終わった件数（エラーで飛ばした分は含まない）
+        let skippedErrors = 0;   // エラーで飛ばした件数（連続3回未満で回復した分も含む）
+        const postEnd = (reason, detail) => postTiming({
+            type: 'end', group: groupLabel, total: completed, target: filtered.length,
+            reason, detail: detail || '', skipped: skippedErrors,
+            elapsed_ms: Date.now() - batchStart,
+            collected: totalCollected, matched: totalMatched,
+            hits: totalHits, new_candidates: totalNewCands,
+        });
         postTiming({ type: 'start', group: groupLabel, total: filtered.length });
 
         for (let i = 0; i < filtered.length; i++) {
@@ -863,6 +887,7 @@
                 totalHits     += (result.matches || []).length;
                 totalNewCands += result.new_candidates_count || 0;
                 postTiming({ type: 'mfr', name, group: mfr.group, elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched: result.n_model_match || 0, hits: (result.matches || []).length, new_cands: result.new_candidates_count || 0 });
+                completed++;
                 await sleep(500);
             } catch(e) {
                 if (/HTTP 4/.test(e.message) || e.message === 'NO_TEMPLATE') {
@@ -875,22 +900,18 @@
                         await sleep(1000);
                         continue;
                     }
-                    updateStatus('テンプレート再取得失敗 → 中断');
-                    await postTiming({ type: 'end', group: groupLabel, total: filtered.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
+                    updateStatus(`テンプレート再取得失敗 → 中断（${completed}/${filtered.length}件で終了）`);
+                    await postEnd('テンプレート再取得失敗', `${i+1}件目 ${name} で ${e.message}`);
                     running = false; setRunningUI(false);
                     chainToPayPayIfAuto();
                     return;
                 }
                 errors++;
+                skippedErrors++;
                 updateStatus(`[${i+1}/${filtered.length}] ${name} エラー(${errors}): ${e.message}`);
                 if (errors >= 3) {
                     updateStatus(`エラー連続${errors}回 → 再試行してください: ${e.message}`);
-                    await postTiming({
-                        type: 'end', group: groupLabel, total: filtered.length,
-                        elapsed_ms: Date.now() - batchStart,
-                        collected: totalCollected, matched: totalMatched,
-                        hits: totalHits, new_candidates: totalNewCands,
-                    });
+                    await postEnd(`エラー連続${errors}回`, `${i+1}件目 ${name} で ${e.message}`);
                     await sleep(2000);
                     running = false;
                     setRunningUI(false);
@@ -901,16 +922,14 @@
             }
         }
 
-        await postTiming({
-            type: 'end', group: groupLabel, total: filtered.length,
-            elapsed_ms: Date.now() - batchStart,
-            collected: totalCollected, matched: totalMatched,
-            hits: totalHits, new_candidates: totalNewCands,
-        });
+        // ループを抜けた時点でrunningがfalseなら、中止ボタンでbreakしたということ
+        // （それ以外でループ途中に抜ける経路は上のreturn2つだけ）。
+        const stoppedByUser = !running;
+        await postEnd(stoppedByUser ? '中止ボタン' : '完走');
         await sleep(2000);
         running = false;
         setRunningUI(false);
-        updateStatus(`クローラーリサーチ完了 全${filtered.length}件`);
+        updateStatus(`クローラーリサーチ${stoppedByUser ? '中止' : '完了'} ${completed}/${filtered.length}件`);
         chainToPayPayIfAuto();
     }
 
@@ -1140,7 +1159,10 @@
             return wrap;
         }
 
-        const allCheckEl = makeOption('ALL', `ALL（${allCount}件・新カテゴリ群は除く）`, true);
+        // 2026-10-15修正：画面の「ALL」は「カテゴリ〜」群（構造2）を除外する仕様だった。
+        // optIn自体を廃止したため、ALLに構造2も含まれるようになった（表示もそれに合わせる）。
+        // ※一気通貫バッチはグループ名列挙で起動しているため、構造2はこれ以前から毎晩回っていた。
+        const allCheckEl = makeOption('ALL', `ALL（${allCount}件・新カテゴリ群も含む）`, true);
         list.appendChild(allCheckEl);
         const groupEls = groups.map(g => {
             const el = makeOption(g, `${g}（${groupCounts[g]}件）`, false);
@@ -1148,14 +1170,6 @@
             return el;
         });
         box.appendChild(list);
-
-        // 2026-09-23追加：ALLは新カテゴリ群(optIn)を意図的に除くため、新カテゴリ含めて
-        // 全部回したい時は個別グループを1つずつ手動でチェックするしかなかった。
-        // 個別グループを全部チェック済みにするだけのショートカットボタンを追加する。
-        const selectAllLink = document.createElement('div');
-        selectAllLink.textContent = '↳ 全選択（新カテゴリ含む・個別グループを全てチェック）';
-        selectAllLink.style.cssText = 'font-size:12px; color:#9C27B0; cursor:pointer; margin:-4px 0 12px 0; text-decoration:underline;';
-        box.insertBefore(selectAllLink, list.nextSibling);
 
         const unopenedWrap = document.createElement('label');
         unopenedWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:#555; cursor:pointer; margin-bottom:14px; padding-top:8px; border-top:1px solid #eee;';
@@ -1178,10 +1192,6 @@
             c.addEventListener('change', () => {
                 if (c.checked) allCheckbox.checked = false;
             });
-        });
-        selectAllLink.addEventListener('click', () => {
-            allCheckbox.checked = false;
-            groupCheckboxes.forEach(c => { c.checked = true; });
         });
 
         const btnRow = document.createElement('div');
