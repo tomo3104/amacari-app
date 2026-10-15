@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.73
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正
+// @version      3.74
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -802,6 +802,7 @@
     function chainToPayPayIfAuto() {
         if (localStorage.getItem('autoResearch') === 'true') {
             localStorage.removeItem('autoResearch');
+            localStorage.removeItem(AR_RETRY_KEY);
             updateStatus('→ ヤフーフリマのリサーチへ自動移行中...');
             setTimeout(() => {
                 window.location.href = 'https://paypayfleamarket.yahoo.co.jp/?auto_research=ALL';
@@ -809,6 +810,28 @@
             return true;
         }
         return false;
+    }
+
+    // 2026-10-15追加：テンプレート再取得失敗・エラー連続3回などで自動リサーチが
+    // 途中終了した場合、今までは気づかない限り復旧手段が無かった（10/7・10/14で
+    // 実際に発生、詳細は[[project_resale]]参照）。自動実行(?auto_research=)の時だけ、
+    // 残りの件数から1回だけ自動で再開を試みる安全網。手動実行時は邪魔になるため動かさない。
+    const AR_RETRY_KEY = 'arAutoRetryState';
+    function scheduleAutoRetry(groupLabel, resumeFrom, targetLen) {
+        if (localStorage.getItem('autoResearch') !== 'true') return false;
+        const prev = JSON.parse(localStorage.getItem(AR_RETRY_KEY) || 'null');
+        const attempt = (prev && prev.group === groupLabel) ? prev.attempt + 1 : 1;
+        if (attempt > 1) {
+            // 再開後も再び早期終了した場合、無限ループ防止のため2回目の自動リトライはしない
+            localStorage.removeItem(AR_RETRY_KEY);
+            return false;
+        }
+        localStorage.setItem(AR_RETRY_KEY, JSON.stringify({ group: groupLabel, resumeFrom, attempt }));
+        updateStatus(`${resumeFrom}/${targetLen}件まで完了 → 10秒後に自動で再開します（自動リトライ${attempt}回目）`);
+        setTimeout(() => {
+            window.location.href = 'https://jp.mercari.com/?auto_research=' + encodeURIComponent(groupLabel);
+        }, 10000);
+        return true;
     }
 
     // 「未開封」で絞り込む場合、URLのkeywordパラメータを強制的に上書きする。
@@ -820,7 +843,8 @@
         return u.toString();
     }
 
-    async function runBatchFetch(mfrs, selected, unopenedOnly) {
+    async function runBatchFetch(mfrs, selected, unopenedOnly, resumeFrom) {
+        resumeFrom = resumeFrom || 0;
         const targets = selected.map(s => s.toUpperCase());
         // 2026-09-07修正：呼び出し元(showGroupPicker・auto_research)で既にメーカー+
         // カテゴリを結合済みのリストを渡すようにしたため、ここでの再結合は不要になった。
@@ -857,7 +881,7 @@
         // さらに終了理由（テンプレート再取得失敗・エラー連続・中止ボタン）は画面の
         // ステータス表示にしか出ず、サーバーログに残らないため後から原因を特定できなかった。
         // 実際に取得→照合まで終えた件数・予定件数・終了理由をすべて完了報告に載せる。
-        let completed = 0;       // 取得→照合まで終わった件数（エラーで飛ばした分は含まない）
+        let completed = resumeFrom;  // 取得→照合まで終わった件数（エラーで飛ばした分は含まない）
         let skippedErrors = 0;   // エラーで飛ばした件数（連続3回未満で回復した分も含む）
         const postEnd = (reason, detail) => postTiming({
             type: 'end', group: groupLabel, total: completed, target: filtered.length,
@@ -866,9 +890,9 @@
             collected: totalCollected, matched: totalMatched,
             hits: totalHits, new_candidates: totalNewCands,
         });
-        postTiming({ type: 'start', group: groupLabel, total: filtered.length });
+        postTiming({ type: 'start', group: groupLabel, total: filtered.length, resume_from: resumeFrom || undefined });
 
-        for (let i = 0; i < filtered.length; i++) {
+        for (let i = resumeFrom; i < filtered.length; i++) {
             if (!running) break;
             const mfr = filtered[i];
             const name = mfr.name || mfr;
@@ -911,13 +935,13 @@
                         updateStatus(`${name}で再取得後も3回連続失敗 → 中断（${completed}/${filtered.length}件で終了）`);
                         await postEnd('同一件でテンプレート再取得後も3回連続失敗', `${i+1}件目 ${name} で ${e.message}`);
                         running = false; setRunningUI(false);
-                        chainToPayPayIfAuto();
+                        if (!scheduleAutoRetry(groupLabel, completed, filtered.length)) chainToPayPayIfAuto();
                         return;
                     }
                     updateStatus(`テンプレート再取得失敗 → 中断（${completed}/${filtered.length}件で終了）`);
                     await postEnd('テンプレート再取得失敗', `${i+1}件目 ${name} で ${e.message}`);
                     running = false; setRunningUI(false);
-                    chainToPayPayIfAuto();
+                    if (!scheduleAutoRetry(groupLabel, completed, filtered.length)) chainToPayPayIfAuto();
                     return;
                 }
                 errors++;
@@ -929,7 +953,7 @@
                     await sleep(2000);
                     running = false;
                     setRunningUI(false);
-                    chainToPayPayIfAuto();
+                    if (!scheduleAutoRetry(groupLabel, completed, filtered.length)) chainToPayPayIfAuto();
                     return;
                 }
                 await sleep(2000);
@@ -937,9 +961,10 @@
         }
 
         // ループを抜けた時点でrunningがfalseなら、中止ボタンでbreakしたということ
-        // （それ以外でループ途中に抜ける経路は上のreturn2つだけ）。
+        // （それ以外でループ途中に抜ける経路は上の3つのreturnだけ）。
         const stoppedByUser = !running;
         await postEnd(stoppedByUser ? '中止ボタン' : '完走');
+        localStorage.removeItem(AR_RETRY_KEY);  // 完走または中止ボタン＝正常終了なので自動リトライ状態は不要
         await sleep(2000);
         running = false;
         setRunningUI(false);
@@ -1460,7 +1485,16 @@
                 setTimeout(async () => {
                     const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
                     const { mfrs, categories } = await getManufacturersDynamic();
-                    runBatchFetch([...mfrs, ...categories], groups);
+                    // 2026-10-15追加：直前の試行がテンプレート再取得失敗等で途中終了し、
+                    // scheduleAutoRetry()が自動リトライ状態を残して再読み込みしてきた場合、
+                    // 既に終わった件数の続きから再開する（最初からやり直すと時間の無駄なため）。
+                    const groupLabel = groups.join(',');
+                    let resumeFrom = 0;
+                    const retryState = JSON.parse(localStorage.getItem(AR_RETRY_KEY) || 'null');
+                    if (retryState && retryState.group === groupLabel) {
+                        resumeFrom = retryState.resumeFrom;
+                    }
+                    runBatchFetch([...mfrs, ...categories], groups, false, resumeFrom);
                 }, 3000);
             });
         }
