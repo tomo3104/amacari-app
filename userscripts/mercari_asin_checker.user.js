@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.72
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更
+// @version      3.73
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -846,6 +846,7 @@
         }
 
         let errors = 0;
+        let tplRetryIndex = -1, tplRetryCount = 0;  // テンプレート再取得ループの同一件数カウント（無限ループ防止）
         const batchStart = Date.now();
         const groupLabel = selected.join(',');
         let totalCollected = 0, totalMatched = 0, totalHits = 0, totalNewCands = 0;
@@ -883,6 +884,7 @@
                 updateStatus(`[${i+1}/${filtered.length}] ${name} ${itemList.length}件 → 照合中`);
                 totalCollected += itemList.length;
                 const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: name, unopened: unopenedOnly }));
+                if (result._serverDown) throw new Error('サーバー未起動');
                 totalMatched  += result.n_model_match || 0;
                 totalHits     += (result.matches || []).length;
                 totalNewCands += result.new_candidates_count || 0;
@@ -896,9 +898,21 @@
                     GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
                     await sleep(10000);
                     if (_getSharedTpl()) {
-                        i--;
-                        await sleep(1000);
-                        continue;
+                        // テンプレート自体の再取得は成功しても、同じ件で再度HTTP 4xxに
+                        // なるケース（レート制限等）があり、その場合i--が無限に繰り返される
+                        // おそれがあった。同一indexでの再取得成功が3回続いたら諦めて中断する。
+                        tplRetryCount = (i === tplRetryIndex) ? tplRetryCount + 1 : 1;
+                        tplRetryIndex = i;
+                        if (tplRetryCount < 3) {
+                            i--;
+                            await sleep(1000);
+                            continue;
+                        }
+                        updateStatus(`${name}で再取得後も3回連続失敗 → 中断（${completed}/${filtered.length}件で終了）`);
+                        await postEnd('同一件でテンプレート再取得後も3回連続失敗', `${i+1}件目 ${name} で ${e.message}`);
+                        running = false; setRunningUI(false);
+                        chainToPayPayIfAuto();
+                        return;
                     }
                     updateStatus(`テンプレート再取得失敗 → 中断（${completed}/${filtered.length}件で終了）`);
                     await postEnd('テンプレート再取得失敗', `${i+1}件目 ${name} で ${e.message}`);
@@ -1074,7 +1088,10 @@
             },
             onerror: function() {
                 updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）');
-                if (onDone) onDone({});
+                // 2026-10-15修正：以前は{}を返してヒット0件の正常完了として扱われていたため、
+                // 巡回中にサーバーが落ちると残り全件が「完了」ログのまま無照合で飛ばされて
+                // いた。_serverDownを立てて呼び出し元(runBatchFetch)でエラーとして拾わせる。
+                if (onDone) onDone({ _serverDown: true });
             },
         });
     }
