@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Amazon Seller ASIN Scraper
 // @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示（10-10追加）。実行前にサーバー起動を確認し、未起動ならスクレイピング前に警告して中断する（10-10追加・サーバー起動忘れで中途半端に終わる事故防止）。Amazon Offer Sellers Scraperからの自動巡回（芋づる式）に対応：localStorageの共有状態を見て、対象セラーのページなら自動的にスクレイピング→送信→次のセラーへ遷移する（10-10追加）。2026-10-16：新規登録した型番はlist.json登録だけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、pmax確定済みの型番に「今すぐメルカリで確認」リンクを追加（mercari_asin_checker.user.jsのinstant_checkで受ける）。
+// @version      3.2
+// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示（10-10追加）。実行前にサーバー起動を確認し、未起動ならスクレイピング前に警告して中断する（10-10追加・サーバー起動忘れで中途半端に終わる事故防止）。Amazon Offer Sellers Scraperからの自動巡回（芋づる式）に対応：localStorageの共有状態を見て、対象セラーのページなら自動的にスクレイピング→送信→次のセラーへ遷移する（10-10追加）。2026-10-16：新規登録した型番はlist.json登録だけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、pmax確定済みの型番に「今すぐメルカリで確認」リンクを追加（mercari_asin_checker.user.jsのinstant_checkで受ける）。同日さらに追加：クリック不要にするため、新規登録のたびにバックグラウンドタブを自動で開いて全自動チェックするよう変更（amazon.co.jpとjp.mercari.comは別オリジンのためURLクエリで型番一覧を渡す）。
 // @match        https://www.amazon.co.jp/s?me=*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @connect      localhost
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/amazon_seller_scraper.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/amazon_seller_scraper.user.js
@@ -99,6 +100,21 @@
         function mercariInstantCheckUrl(model) {
             return 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(model) +
                 '&status=on_sale&item_condition_id=1&shipping_payer_id=2&sort=created_time&order=desc&instant_check=1';
+        }
+
+        // 2026-10-16さらに追加：「クリックしないと確認が始まらない」のは全自動の芋づる
+        // 巡回と噛み合わないという指摘を受け、クリック不要でバックグラウンドタブを
+        // 自動的に開くようにした。amazon.co.jpとjp.mercari.comは別オリジンでlocalStorageを
+        // 共有できないため、複数の型番をまとめてURLクエリ（カンマ区切り）で渡し、
+        // mercari_asin_checker.user.js側で1タブ内で順番に処理させる（タブを量産しない）。
+        function openInstantCheckQueue(newItems) {
+            if (!newItems || newItems.length === 0) return;
+            const models = newItems
+                .filter(it => it.model && it.pmax > 0 && !it.brand_restricted)
+                .map(it => it.model);
+            if (models.length === 0) return;
+            const url = 'https://jp.mercari.com/?instant_check_queue=' + encodeURIComponent(models.join(','));
+            GM_openInTab(url, { active: false });
         }
 
         function showResults(newItems) {
@@ -196,6 +212,7 @@
                     '\n（ASIN一覧はクリップボードにもコピー済み）'
                 );
                 showResults(result.results);
+                openInstantCheckQueue(result.results);
                 return { ok: true, items, result };
             } else {
                 updateStatus('完了: ' + items.length + '件のASINをコピーしました。ただしサーバーへの送信に失敗しました（起動中に落ちた可能性があります）', true);
