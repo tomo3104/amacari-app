@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.75
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更
+// @version      3.76
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -1511,6 +1511,55 @@
                 }, 3000);
             });
         }
+    }
+
+    // ========== 即時チェック（芋づるで新規登録された型番をその場で確認・2026-10-16追加） ==========
+    // 以前は芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり、
+    // 「今メルカリに出ているか」は次のAR/RT巡回を待つまで分からなかった。
+    // amazon_seller_scraper.user.jsの結果一覧に「今すぐメルカリで確認」リンクを追加し、
+    // ここ（?instant_check=1&keyword=型番）で受けて即座に1回だけチェックする。
+    if (localStorage.getItem('batchMode') !== 'true' && new URLSearchParams(location.search).get('instant_check') === '1') {
+        window.addEventListener('load', () => {
+            setTimeout(async () => {
+                const keyword = new URLSearchParams(location.search).get('keyword') || '';
+                const banner = document.createElement('div');
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:16px;text-align:center;font-size:16px;font-weight:700;color:#fff;background:#555;white-space:pre-wrap;';
+                banner.textContent = `「${keyword}」を今すぐ確認中...`;
+                document.body.appendChild(banner);
+
+                if (!_getSharedTpl()) {
+                    banner.textContent = `「${keyword}」：テンプレート取得中...`;
+                    GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+                    if (!(await waitForTemplate(20000))) {
+                        banner.style.background = '#c62828';
+                        banner.textContent = `「${keyword}」：テンプレート取得失敗。リアルタイムリサーチ等を一度起動してから再試行してください`;
+                        return;
+                    }
+                }
+
+                try {
+                    const items = await fetchCheckerItems(location.href, { name: keyword, idx: 1, total: 1, group: 'instant' });
+                    const itemList = Object.values(items);
+                    if (itemList.length === 0) {
+                        banner.style.background = '#757575';
+                        banner.textContent = `「${keyword}」：メルカリに出品が見つかりませんでした`;
+                        return;
+                    }
+                    const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: keyword, unopened: false }));
+                    const hits = (result && result.matches) || [];
+                    if (hits.length > 0) {
+                        banner.style.background = '#2e7d32';
+                        banner.textContent = `🎯「${keyword}」：${itemList.length}件中${hits.length}件ヒット！Amacariで確認してください`;
+                    } else {
+                        banner.style.background = '#757575';
+                        banner.textContent = `「${keyword}」：${itemList.length}件出品中ですが、今は条件を満たすものはありません`;
+                    }
+                } catch (e) {
+                    banner.style.background = '#c62828';
+                    banner.textContent = `「${keyword}」：即時チェック失敗（${e.message}）`;
+                }
+            }, 1500);
+        });
     }
 
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });

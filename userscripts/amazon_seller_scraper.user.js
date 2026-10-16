@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Seller ASIN Scraper
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示（10-10追加）。実行前にサーバー起動を確認し、未起動ならスクレイピング前に警告して中断する（10-10追加・サーバー起動忘れで中途半端に終わる事故防止）。Amazon Offer Sellers Scraperからの自動巡回（芋づる式）に対応：localStorageの共有状態を見て、対象セラーのページなら自動的にスクレイピング→送信→次のセラーへ遷移する（10-10追加）。
+// @version      3.1
+// @description  Amazonセラーストアページ(/s?me=...)の出品ASIN一覧を全ページ抜き出し、asin-toolsサーバー(8766)の/check-asinsへ直接送信してlist.json未登録分を自動処理する（seller-chase発想の転換：競合セラーの出品ASINを仕入れ候補の種にする、2026-10-09新設）。新規追加分の型番・価格・pmaxを画面に一覧表示（10-10追加）。実行前にサーバー起動を確認し、未起動ならスクレイピング前に警告して中断する（10-10追加・サーバー起動忘れで中途半端に終わる事故防止）。Amazon Offer Sellers Scraperからの自動巡回（芋づる式）に対応：localStorageの共有状態を見て、対象セラーのページなら自動的にスクレイピング→送信→次のセラーへ遷移する（10-10追加）。2026-10-16：新規登録した型番はlist.json登録だけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、pmax確定済みの型番に「今すぐメルカリで確認」リンクを追加（mercari_asin_checker.user.jsのinstant_checkで受ける）。
 // @match        https://www.amazon.co.jp/s?me=*
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -91,6 +91,16 @@
             return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
 
+        // 2026-10-16追加：list.jsonに新規登録しただけで終わっていた（次のAR/RT巡回を
+        // 待たないと「今メルカリに出ているか」が分からなかった）。pmaxが確定した
+        // （＝今メルカリに出ていれば即仕入れ候補になる）新規型番は、その場で
+        // メルカリ検索→即チェックできるリンクを出す。mercari_asin_checker.user.js側の
+        // instant_checkパラメータで受ける。
+        function mercariInstantCheckUrl(model) {
+            return 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(model) +
+                '&status=on_sale&item_condition_id=1&shipping_payer_id=2&sort=created_time&order=desc&instant_check=1';
+        }
+
         function showResults(newItems) {
             if (!newItems || newItems.length === 0) {
                 resultsEl.style.display = 'none';
@@ -104,8 +114,14 @@
                     const pmax = it.pmax != null ? it.pmax + '円' : '-';
                     const price = it.price != null ? it.price + '円' : '-';
                     const flag = it.brand_restricted ? ' 🚫規制' : '';
+                    const canCheck = it.model && it.pmax > 0 && !it.brand_restricted;
+                    const checkLink = canCheck
+                        ? '<a href="' + mercariInstantCheckUrl(it.model) + '" target="_blank" ' +
+                          'style="color:#4fc3f7;text-decoration:underline;">今すぐメルカリで確認</a>'
+                        : '';
                     return '<div style="border-top:1px solid rgba(255,255,255,0.15);padding:4px 0;">' +
                         '<b>' + model + '</b> ' + flag + '<br>' + title + '<br>価格' + price + ' / pmax' + pmax +
+                        (checkLink ? '<br>' + checkLink : '') +
                         '</div>';
                 }).join('');
             resultsEl.style.display = 'block';
