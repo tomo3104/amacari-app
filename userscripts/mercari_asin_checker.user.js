@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.77
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした
+// @version      3.78
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -1547,29 +1547,51 @@
 
                     const lines = [];
                     let hitTotal = 0;
+                    // 2026-10-16修正：実機で7件中7件が「HTTP 401」で失敗する事故が発生。
+                    // runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が
+                    // ここには無く、一度テンプレートが古くなると以降全件が失敗し続けていた。
+                    // 同じ回復ロジックをここにも追加する（1キーワードにつき最大2回まで試行）。
                     for (let i = 0; i < _instantModels.length; i++) {
                         const keyword = _instantModels[i];
                         banner.style.background = '#555';
                         banner.textContent = `即時チェック中 [${i + 1}/${_instantModels.length}]：${keyword}\n` + lines.join('\n');
                         const searchUrl = 'https://jp.mercari.com/search?keyword=' + encodeURIComponent(keyword) +
                             '&status=on_sale&item_condition_id=1&shipping_payer_id=2&sort=created_time&order=desc';
-                        try {
-                            const items = await fetchCheckerItems(searchUrl, { name: keyword, idx: i + 1, total: _instantModels.length, group: 'instant' });
-                            const itemList = Object.values(items);
-                            if (itemList.length === 0) {
-                                lines.push(`－「${keyword}」：出品なし`);
-                            } else {
-                                const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: keyword, unopened: false }));
-                                const hits = (result && result.matches) || [];
-                                if (hits.length > 0) {
-                                    hitTotal += hits.length;
-                                    lines.push(`🎯「${keyword}」：${itemList.length}件中${hits.length}件ヒット！`);
+
+                        let lastError = null;
+                        let succeeded = false;
+                        for (let attempt = 0; attempt < 2 && !succeeded; attempt++) {
+                            try {
+                                const items = await fetchCheckerItems(searchUrl, { name: keyword, idx: i + 1, total: _instantModels.length, group: 'instant' });
+                                const itemList = Object.values(items);
+                                if (itemList.length === 0) {
+                                    lines.push(`－「${keyword}」：出品なし`);
                                 } else {
-                                    lines.push(`－「${keyword}」：${itemList.length}件出品中だが条件未達`);
+                                    const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: keyword, unopened: false }));
+                                    const hits = (result && result.matches) || [];
+                                    if (hits.length > 0) {
+                                        hitTotal += hits.length;
+                                        lines.push(`🎯「${keyword}」：${itemList.length}件中${hits.length}件ヒット！`);
+                                    } else {
+                                        lines.push(`－「${keyword}」：${itemList.length}件出品中だが条件未達`);
+                                    }
                                 }
+                                succeeded = true;
+                            } catch (e) {
+                                lastError = e;
+                                if (attempt === 0 && (/HTTP 4/.test(e.message) || e.message === 'NO_TEMPLATE')) {
+                                    banner.textContent = `[${i + 1}/${_instantModels.length}] ${keyword}：テンプレート失効 → 再取得中...`;
+                                    _uw.localStorage.removeItem(_SHARED_TPL_KEY);
+                                    GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+                                    if (await waitForTemplate(20000)) {
+                                        continue; // テンプレート再取得に成功 → このキーワードをもう1回試す
+                                    }
+                                }
+                                break; // 再取得対象外のエラー、または再取得も失敗 → このキーワードは諦める
                             }
-                        } catch (e) {
-                            lines.push(`⚠「${keyword}」：チェック失敗（${e.message}）`);
+                        }
+                        if (!succeeded) {
+                            lines.push(`⚠「${keyword}」：チェック失敗（${lastError ? lastError.message : '不明なエラー'}）`);
                         }
                         await sleep(800);
                     }
