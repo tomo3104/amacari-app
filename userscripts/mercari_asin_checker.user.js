@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.78
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加
+// @version      3.79
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -506,9 +506,21 @@
         return /category_id=/.test(url || '') && !/brand_id=/.test(url || '');
     }
 
-    let _dynMfrsPromise = null;
-    function fetchDynamicManufacturers() {
-        return new Promise((resolve) => {
+    // 2026-10-18修正：以前はサーバー未起動・取得失敗時にSTATIC_MANUFACTURERS/
+    // STATIC_CATEGORIES（手動更新が前提の古い固定配列）へ黙ってフォールバックしていた。
+    // 10/18夜、PCを1日放置した後のコールドスタート（サーバー起動直後）で発生：
+    // サーバーのリスト読み込みが終わる前にこの取得が走り、フォールバックが発動して
+    // 326社の現行リストではなく274社（206+68＝固定配列の件数と完全一致）の古いリストで
+    // 一晩分のARが実行されていた（新規追加した5ブランド・3カテゴリが丸ごと巡回対象外に
+    // なっていたことに気づけなかった）。「動くが古いデータ」は「エラーで中断」より
+    // タチが悪いという判断（feedback_fail_fast_no_degraded_mode）で、黙ったフォールバックを
+    // 廃止。サーバーがまだ起動中なだけの一時的な失敗はリトライで吸収し、それでも
+    // ダメなら明確に失敗として知らせ、古いデータで実行しない。
+    const MFR_FETCH_MAX_RETRY    = 5;
+    const MFR_FETCH_RETRY_DELAY  = 4000;
+
+    function fetchDynamicManufacturersOnce() {
+        return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method:  'GET',
                 url:     'http://localhost:8766/get-manufacturers',
@@ -522,30 +534,42 @@
                             // 2026-09-20変更：以前は全カテゴリ行のgroupを'CAT'に上書きしていたが、
                             // シートのグループ名（カテゴリ家電/PC/AV/住宅工具等）を保持して個別に選べるようにした。
                             // 深さの上限(20ページ)はURL判定(isCategoryUrl)で適用するのでgroupに依存しない。
-                            // 2026-09-23：「カテゴリ〜」で始まる新カテゴリ群(構造2)を文字通りの「ALL」から
-                            // 除外してoptIn（明示的に選んだ時だけ回す）扱いにしていた。
-                            // 2026-10-15：optInを廃止し、「ALL」にも含めるようにした。
-                            // ※訂正：一気通貫バッチは「ALL」ではなくグループ名(1〜24,CAT,CAT2,TEST,
-                            // カテゴリAV/PC/家電/住宅工具)を列挙して渡しているため、optInの影響は受けて
-                            // おらず、構造2は9/29〜10/13の夜間巡回の大半で88件とも巡回されていた
-                            // （server_202609/10*.logの【構造2】行で確認。例外は10/11の274社の回で0件）。optInで外れていたのは画面の「ALL」選択や旧ALLバッチ
-                            // （アーカイブ済み）を使った場合だけ。廃止は「ALL＝全部」に揃えるための整理。
                             const categories = all.filter(m => isCategoryUrl(m.url)).map(m => ({
                                 ...m, group: m.group || 'CAT', isCat: true, optIn: false,
                             }));
                             resolve({ mfrs, categories });
                             return;
                         }
-                    } catch (e) {}
-                    resolve({ mfrs: STATIC_MANUFACTURERS, categories: STATIC_CATEGORIES });
+                        reject(new Error('manufacturersシートが空、またはURL有効な行が0件'));
+                    } catch (e) {
+                        reject(new Error('応答の解析に失敗: ' + e.message));
+                    }
                 },
-                onerror:   () => resolve({ mfrs: STATIC_MANUFACTURERS, categories: STATIC_CATEGORIES }),
-                ontimeout: () => resolve({ mfrs: STATIC_MANUFACTURERS, categories: STATIC_CATEGORIES }),
+                onerror:   () => reject(new Error('サーバーに接続できません')),
+                ontimeout: () => reject(new Error('サーバー応答タイムアウト')),
             });
         });
     }
-    function getManufacturersDynamic() {
-        if (!_dynMfrsPromise) _dynMfrsPromise = fetchDynamicManufacturers();
+
+    async function fetchDynamicManufacturers(onRetry) {
+        let lastError;
+        for (let attempt = 0; attempt <= MFR_FETCH_MAX_RETRY; attempt++) {
+            try {
+                return await fetchDynamicManufacturersOnce();
+            } catch (e) {
+                lastError = e;
+                if (attempt < MFR_FETCH_MAX_RETRY) {
+                    if (onRetry) onRetry(attempt + 1, MFR_FETCH_MAX_RETRY, e);
+                    await sleep(MFR_FETCH_RETRY_DELAY);
+                }
+            }
+        }
+        throw new Error(`メーカーリスト取得失敗（${MFR_FETCH_MAX_RETRY + 1}回試行）: ${lastError.message}`);
+    }
+
+    let _dynMfrsPromise = null;
+    function getManufacturersDynamic(onRetry) {
+        if (!_dynMfrsPromise) _dynMfrsPromise = fetchDynamicManufacturers(onRetry);
         return _dynMfrsPromise;
     }
 
@@ -1301,8 +1325,14 @@
 
     async function startBatch() {
         updateStatus('メーカーリストを取得中...');
-        const { mfrs, categories } = await getManufacturersDynamic();
-        showGroupPicker(mfrs, categories);
+        try {
+            const { mfrs, categories } = await getManufacturersDynamic(
+                (attempt, max, e) => updateStatus(`メーカーリスト取得失敗（${e.message}）→ 再試行中 ${attempt}/${max}`)
+            );
+            showGroupPicker(mfrs, categories);
+        } catch (e) {
+            updateStatus(`メーカーリスト取得失敗 → 中断（${e.message}）。サーバー(8766)が起動しているか確認してください`);
+        }
     }
 
     // ========== コジマShopsウォッチ ==========
@@ -1497,7 +1527,21 @@
             window.addEventListener('load', () => {
                 setTimeout(async () => {
                     const groups = autoGroup.toUpperCase() === 'ALL' ? ['ALL'] : autoGroup.split(',');
-                    const { mfrs, categories } = await getManufacturersDynamic();
+                    let mfrs, categories;
+                    try {
+                        const result = await getManufacturersDynamic(
+                            (attempt, max, e) => updateStatus(`メーカーリスト取得失敗（${e.message}）→ 再試行中 ${attempt}/${max}`)
+                        );
+                        mfrs = result.mfrs; categories = result.categories;
+                    } catch (e) {
+                        // 2026-10-18：古い固定配列への黙ったフォールバックを廃止したため、
+                        // ここで失敗したら古いデータでは実行しない。サーバーログに残し、
+                        // 夜間チェーンの残り（PayPay・入念調査）は止めずに進める。
+                        updateStatus(`メーカーリスト取得失敗 → 今回の自動リサーチは中断（${e.message}）`);
+                        await postTiming({ type: 'mfr_list_failed', error: e.message });
+                        chainToPayPayIfAuto();
+                        return;
+                    }
                     // 2026-10-15追加：直前の試行がテンプレート再取得失敗等で途中終了し、
                     // scheduleAutoRetry()が自動リトライ状態を残して再読み込みしてきた場合、
                     // 既に終わった件数の続きから再開する（最初からやり直すと時間の無駄なため）。
