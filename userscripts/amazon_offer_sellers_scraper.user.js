@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      4.2
-// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。2026-10-15：同じセラーが別ASIN経由で繰り返し見つかるたびに800件規模のストア全件スキャンをやり直していたのを解消するため、直近24時間以内に芋づる済みのセラーはDeepDive巡回の対象から自動的に除外するよう変更。2026-10-19：自分が過去に取り扱った商品を出品しているセラーを探す運用（自分の出品リストをこのツールで巡回）を始めたところ、自分自身のセラーIDが毎回「他の出品者」として引っかかってしまう問題が発生したため、自分のセラーID(MY_SELLER_ID)を除外するよう変更。
+// @version      4.3
+// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。2026-10-15：同じセラーが別ASIN経由で繰り返し見つかるたびに800件規模のストア全件スキャンをやり直していたのを解消するため、直近24時間以内に芋づる済みのセラーはDeepDive巡回の対象から自動的に除外するよう変更。2026-10-19：自分が過去に取り扱った商品を出品しているセラーを探す運用（自分の出品リストをこのツールで巡回）を始めたところ、自分自身のセラーIDが毎回「他の出品者」として引っかかってしまう問題が発生したため、自分のセラーID(MY_SELLER_ID)を除外するよう変更。同日さらに追加：「リサーチが始まらない」という問い合わせの原因が「見つかった全セラーが直近24時間以内に巡回済みでスキップされた」だと分かりにくかったため、どのセラーがスキップされたかをパネル・コンソールの両方に明示するよう変更。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/dp/*
@@ -148,12 +148,16 @@
         // 2026-10-10：出現回数2回以上＝今回より前の別ASINでも見つかったセラー＝
         // メルカリ仕入れ→Amazon販売の濃厚候補とみなして強調表示する。
         const FREQUENT_THRESHOLD = 2;
+        // 2026-10-19追加：「リサーチが始まらない」という問い合わせを受け、原因（直近24時間
+        // 以内に巡回済みでスキップされた）が分かりにくかったため、どのセラーがスキップ対象か
+        // パネル・コンソールの両方に明示するよう変更。
         function showTrackResults(results) {
             if (!results || results.length === 0) { resultsEl.style.display = 'none'; return; }
             const sorted = [...results].sort((a, b) => b.count - a.count);
             resultsEl.innerHTML = sorted.map(r => {
                 const mark = r.count >= FREQUENT_THRESHOLD ? '🔥' : '';
-                return `<div style="border-top:1px solid rgba(255,255,255,0.15);padding:4px 0;">${mark}累計${r.count}回目　${escapeHtml(r.sellerId)}　${escapeHtml(r.sellerName)}</div>`;
+                const skipTag = r.recently_scanned ? '　⏭️スキップ済み(24時間以内に巡回済み)' : '';
+                return `<div style="border-top:1px solid rgba(255,255,255,0.15);padding:4px 0;">${mark}累計${r.count}回目　${escapeHtml(r.sellerId)}　${escapeHtml(r.sellerName)}${skipTag}</div>`;
             }).join('');
             resultsEl.style.display = 'block';
         }
@@ -173,11 +177,14 @@
             let walkTargets = sellers;
             if (trackResult.ok && trackResult.results) {
                 const frequent = trackResult.results.filter(r => r.count >= FREQUENT_THRESHOLD);
-                const recentIds = new Set(trackResult.results.filter(r => r.recently_scanned).map(r => r.sellerId));
+                const recentOnes = trackResult.results.filter(r => r.recently_scanned);
+                const recentIds = new Set(recentOnes.map(r => r.sellerId));
                 msg += `定点観測に記録済み（濃厚候補🔥${frequent.length}件 / 今回${trackResult.results.length}件）`;
                 if (recentIds.size > 0) {
                     walkTargets = sellers.filter(s => !recentIds.has(s.sellerId));
-                    msg += `\n直近24時間以内に巡回済みの${recentIds.size}セラーはスキップします`;
+                    const skipList = recentOnes.map(r => `${r.sellerName}(${r.sellerId})`).join('、');
+                    msg += `\n直近24時間以内に巡回済みの${recentIds.size}セラーはスキップ：${skipList}`;
+                    console.log(`[芋づる] 24時間以内に巡回済みのためスキップ: ${skipList}`);
                 }
                 showTrackResults(trackResult.results);
             } else {
@@ -191,7 +198,7 @@
                 updateStatus(msg);
                 startDeepDiveWalk(walkTargets, asin);
             } else {
-                msg += '\n巡回対象なし（全セラーが直近巡回済み）';
+                msg += '\n巡回対象なし（見つかった全セラーが直近24時間以内に巡回済みのため今回は何もしません）';
                 updateStatus(msg);
             }
         };
