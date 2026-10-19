@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Amazon Offer Sellers Scraper
 // @namespace    http://tampermonkey.net/
-// @version      4.1
-// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。2026-10-15：同じセラーが別ASIN経由で繰り返し見つかるたびに800件規模のストア全件スキャンをやり直していたのを解消するため、直近24時間以内に芋づる済みのセラーはDeepDive巡回の対象から自動的に除外するよう変更。
+// @version      4.2
+// @description  Amazonの「他の出品者から購入」ページ(/gp/offer-listing/ASIN)から、そのASINを現在販売している他セラーの一覧を抜き出す（競合発見ループの輪を広げる用、2026-10-09新設）。見つけたセラーをasin-toolsサーバー(8766)の/track-amazon-sellersへ送り定点観測（同じセラーが別ASINでも繰り返し出てくるほど、メルカリ仕入れ→Amazon販売の濃厚候補という仮説、2026-10-10追加）。見つけた全セラーのストアページへ自動巡回し、amazon_seller_scraper.user.jsに出品ASIN抜き出し→list.json登録まで行わせる芋づる式の全自動深掘りに対応（2026-10-10追加）。2026-10-15：同じセラーが別ASIN経由で繰り返し見つかるたびに800件規模のストア全件スキャンをやり直していたのを解消するため、直近24時間以内に芋づる済みのセラーはDeepDive巡回の対象から自動的に除外するよう変更。2026-10-19：自分が過去に取り扱った商品を出品しているセラーを探す運用（自分の出品リストをこのツールで巡回）を始めたところ、自分自身のセラーIDが毎回「他の出品者」として引っかかってしまう問題が発生したため、自分のセラーID(MY_SELLER_ID)を除外するよう変更。
 // @match        https://www.amazon.co.jp/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/*/gp/offer-listing/*
 // @match        https://www.amazon.co.jp/dp/*
@@ -49,9 +49,16 @@
         return offers;
     }
 
+    // 2026-10-19追加：「自分が過去に取り扱った商品を出品しているセラーほど、メルカリ
+    // 仕入れ→Amazon販売の濃厚候補」という発想で、自分の出品リストをこのツールに
+    // 読み込ませる運用を始めたところ、自分自身のセラーID（asin_check.pyのSELLER_IDと
+    // 同じ）が「他の出品者」として毎回引っかかってしまう問題が発生。自分自身を芋づる
+    // 対象にしても無意味なので除外する。
+    const MY_SELLER_ID = 'A3L1UJTQ47MXRK';
+
     function buildReport() {
         const offers = scrapeOffers();
-        const fbaNew = offers.filter(o => o.condition.includes('新品') && o.shipsFrom === 'Amazon' && o.sellerId);
+        const fbaNew = offers.filter(o => o.condition.includes('新品') && o.shipsFrom === 'Amazon' && o.sellerId && o.sellerId !== MY_SELLER_ID);
         const seen = new Map();
         for (const o of fbaNew) {
             if (!seen.has(o.sellerId)) seen.set(o.sellerId, o.sellerName);
