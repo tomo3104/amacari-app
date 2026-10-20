@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.93
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）
+// @version      2.94
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）・広告ドメイン遮断・画像読み込み遮断・3並列化はいずれも実測で効果なしと確認（残る4秒台はメルカリ自身のNext.jsアプリの起動コストそのもので、何を遮断しても削れないと判明）・商品ごとにiframeを作り直すのをやめ、起動済みのiframeをwindow.next.router.push()で軽量遷移させる方式に変更、2件目以降は起動コストを払わずに済むため実測4.4秒→1.4〜2.3秒に短縮（起動済みiframeが壊れていた場合は自動でフル再起動にフォールバック）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -1131,14 +1131,37 @@
     // 精度分析で「説明文取得失敗」がメーカーによって極端に偏っている（データシステム93%等）
     // ことが判明したが、原因が「本当にiframe取得が機能していない」のか「そのメーカーの
     // 出品は元々説明文がほぼ空欄なだけ」なのか、この理由の区別が無いと切り分けられなかった。
+    // 2026-10-20追加：商品ごとにiframeを作り直すとNext.jsアプリの起動コスト(~4.4秒)を毎回払うことになる。
+    // 一度起動したiframeを使い回し、2件目以降はiframe内部のNext.jsルーター(next.router.push)で
+    // 軽量な画面遷移をさせることで、起動コストを払うのを初回だけに抑える（実測で1.4〜2.3秒に短縮）。
+    // 100件ごとの予防的リロード（下のprocessOne）でページ全体が再読み込みされる際、このiframeも
+    // 一緒に破棄されるので、累積によるメモリ肥大の心配はそこで自然にリセットされる。
+    let _descIframe = null;
+
     function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
         dlog(`fetchItemDesc(iframe): ${itemId}`);
         localStorage.removeItem(DESC_API_CAPTURE_KEY); // 前回分の横取り結果が残って誤爆しないようにクリア
+
+        let canReuse = false;
+        if (_descIframe && _descIframe.isConnected) {
+            try {
+                canReuse = !!(_descIframe.contentWindow && _descIframe.contentWindow.next && _descIframe.contentWindow.next.router);
+            } catch (e) {
+                canReuse = false; // crossorigin等でアクセス不能になっていた場合
+            }
+        }
+
         return new Promise(resolve => {
-            const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
-            document.body.appendChild(iframe);
+            let iframe;
+            if (canReuse) {
+                iframe = _descIframe;
+            } else {
+                iframe = document.createElement('iframe');
+                iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
+                document.body.appendChild(iframe);
+                _descIframe = iframe;
+            }
 
             let done = false;
             let lastSeenShortText = ''; // タイムアウト時、要素はあったが短すぎた場合の最後のテキスト（原因切り分け用）
@@ -1146,14 +1169,22 @@
                 if (done) return;
                 done = true;
                 clearInterval(apiPoll);
-                try { iframe.remove(); } catch(_) {}
+                // iframeは使い回すため削除しない（次回のfetchItemDescで再利用する）
                 resolve({ desc, reason });
+            };
+            const abandonIframeAndRetryFresh = () => {
+                clearTimeout(hardTimer);
+                clearInterval(apiPoll);
+                _descIframe = null;
+                try { iframe.remove(); } catch (_) {}
+                fetchItemDesc(url).then(resolve);
             };
 
             // 2026-09-03：3並列化が原因で同時多発タイムアウトが発生したため8秒に戻した
             // （並列化自体を撤回したので、このタイムアウト短縮も合わせて元に戻す）
             const hardTimer = setTimeout(() => {
                 dlog(`iframe timeout: ${itemId}`);
+                if (canReuse) { abandonIframeAndRetryFresh(); return; } // 使い回し中に詰まった場合は作り直して再試行
                 finish(null, lastSeenShortText ? 'desc_too_short' : 'timeout_no_element');
             }, 8000);
 
@@ -1171,6 +1202,17 @@
                     }
                 } catch (e) {}
             }, 150);
+
+            if (canReuse) {
+                // 2026-10-20追加：起動済みiframeをNext.jsルーターで軽量遷移させる（フル再読み込みより高速）
+                try {
+                    iframe.contentWindow.next.router.push('/item/' + itemId);
+                } catch (e) {
+                    dlog(`router.push失敗、フル再起動にフォールバック: ${e.message}`);
+                    abandonIframeAndRetryFresh();
+                }
+                return;
+            }
 
             iframe.onload = () => {
                 let tries = 0;
@@ -1216,7 +1258,7 @@
                 }, 200);
             };
 
-            iframe.onerror = () => { clearTimeout(hardTimer); dlog(`iframe onerror`); finish(null, 'onerror'); };
+            iframe.onerror = () => { clearTimeout(hardTimer); clearInterval(apiPoll); dlog(`iframe onerror`); finish(null, 'onerror'); };
             iframe.src = url;
         });
     }
