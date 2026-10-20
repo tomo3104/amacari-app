@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.92
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）
+// @version      2.93
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -60,6 +60,12 @@
     const DESC_STATS_KEY      = 'desc_crawler_stats';     // 2026-09-02追加：発掘クローラー全体の内訳（収集→型番なし候補→抽出成功→説明文取得失敗）を
                                                            // メーカーをまたいで集計するためのカウンター。ページ遷移のたびに変数がリセットされるため
                                                            // localStorageで永続化する（RESULT_KEY等と同じパターン）
+    const DESC_API_CAPTURE_KEY = 'desc_api_capture';      // 2026-10-20追加：商品ページを読み込むiframeの中で動く
+                                                           // 別スクリプト(mercari_item_desc_sniffer.user.js)が、ページ内部の
+                                                           // items/get API通信を横取りして書き込む場所。DOM描画(画面に説明文が
+                                                           // 表示される)を待たずに済むため、実測で1件平均7秒→4.4秒に短縮できた。
+                                                           // 横取りスクリプトが入っていない環境でも壊れないよう、従来のDOM描画待ちと
+                                                           // 並行して監視し、どちらか先に取れた方を採用するフォールバック構成にする。
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     // 発掘クローラーの内訳カウンターを加算する（delta例：{collected:12, noModel:5}）
@@ -1128,6 +1134,7 @@
     function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
         dlog(`fetchItemDesc(iframe): ${itemId}`);
+        localStorage.removeItem(DESC_API_CAPTURE_KEY); // 前回分の横取り結果が残って誤爆しないようにクリア
         return new Promise(resolve => {
             const iframe = document.createElement('iframe');
             iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:390px;height:844px;border:none;visibility:hidden;pointer-events:none;';
@@ -1138,6 +1145,7 @@
             const finish = (desc, reason) => {
                 if (done) return;
                 done = true;
+                clearInterval(apiPoll);
                 try { iframe.remove(); } catch(_) {}
                 resolve({ desc, reason });
             };
@@ -1148,6 +1156,21 @@
                 dlog(`iframe timeout: ${itemId}`);
                 finish(null, lastSeenShortText ? 'desc_too_short' : 'timeout_no_element');
             }, 8000);
+
+            // 2026-10-20追加：items/get API横取り結果の監視（DOM描画待ちと並行・先着優先）
+            const apiPoll = setInterval(() => {
+                try {
+                    const raw = localStorage.getItem(DESC_API_CAPTURE_KEY);
+                    if (!raw) return;
+                    const cap = JSON.parse(raw);
+                    if (cap.itemId !== itemId) return; // 前のアイテムの残骸や別iframeの結果は無視
+                    if (cap.desc && cap.desc.length > 5) {
+                        clearTimeout(hardTimer);
+                        dlog(`api capture desc: ${cap.desc.slice(0, 50)}`);
+                        finish(cap.desc, 'ok_api');
+                    }
+                } catch (e) {}
+            }, 150);
 
             iframe.onload = () => {
                 let tries = 0;
