@@ -68,6 +68,14 @@
                                                            // 並行して監視し、どちらか先に取れた方を採用するフォールバック構成にする。
     const _uw             = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
+    // 2026-10-20追加：fetchItemDescでiframeを使い回すための参照。381行目付近の「モード判定」の
+    // 早期return（クローラー再開処理）より前で初期化しておく必要がある。他のconstと同じ場所に
+    // 置かなかった場合、早期return経由でfetchItemDescに到達した時に「宣言より前にアクセスした」
+    // というTDZ(temporal dead zone)エラーで毎回即座に停止する（DIAG_LOG_MAXや_dlogSendCounterで
+    // 過去に起きたのと同種の事故。実機で「Cannot access '_descIframe' before initialization」
+    // という形で発覚した）。
+    let _descIframe = null;
+
     // 発掘クローラーの内訳カウンターを加算する（delta例：{collected:12, noModel:5}）
     function bumpDescStats(delta) {
         let s;
@@ -1136,7 +1144,8 @@
     // 軽量な画面遷移をさせることで、起動コストを払うのを初回だけに抑える（実測で1.4〜2.3秒に短縮）。
     // 100件ごとの予防的リロード（下のprocessOne）でページ全体が再読み込みされる際、このiframeも
     // 一緒に破棄されるので、累積によるメモリ肥大の心配はそこで自然にリセットされる。
-    let _descIframe = null;
+    // （_descIframe自体の宣言は69行目付近、早期returnより前に移動済み。TDZ事故の経緯は
+    // そちらのコメント参照）
 
     function fetchItemDesc(url) {
         const itemId = (url.match(/\/item\/(m[A-Za-z0-9]+)/) || [])[1] || '';
