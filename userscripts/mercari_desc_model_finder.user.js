@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.97
+// @version      2.98
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）・広告ドメイン遮断・画像読み込み遮断・3並列化はいずれも実測で効果なしと確認（残る4秒台はメルカリ自身のNext.jsアプリの起動コストそのもので、何を遮断しても削れないと判明）・商品ごとにiframeを作り直すのをやめ、起動済みのiframeをwindow.next.router.push()で軽量遷移させる方式に変更、2件目以降は起動コストを払わずに済むため実測4.4秒→1.4〜2.3秒に短縮（起動済みiframeが壊れていた場合は自動でフル再起動にフォールバック）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -36,14 +36,18 @@
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
     const DESC_HEARTBEAT      = 'desc_finder_hb';        // ウォッチドッグ用ハートビート
     const DESC_WD_TIMEOUT     = 300000;                  // ウォッチドッグ5分（フリーズ検知→自動リロード）
-    const MAX_PAGES_CRAWLER   = 10;                      // クローラーモードの1メーカーあたり最大ページ数（デフォルト）
+    const MAX_PAGES_CRAWLER   = 10;                      // クローラーモードの1メーカーあたり最大ページ数（2回目以降の巡回用）
                                                            // 2026-10-20：iframe使い回し+API横取りで1件あたり7秒→2.73秒まで
                                                            // 高速化できたため、優先メーカー(MAX_PAGES_PRIORITY)と同じ3ページに統一
                                                            // 2026-10-22：夜間放置運用のため3→10に増加。fetchItems()には
                                                            // 「2回目以降の巡回で新着が無いページに来たら即打ち切り」という
                                                            // 仕組みが既にあるため（1497行目付近）、上限を上げても毎晩律儀に
                                                            // 10ページ消化するわけではなく、新着が尽きたら自動で早期終了する。
-                                                           // 上限が実際に効くのは初回巡回のメーカーか新着が多い夜だけ。
+                                                           // 上限が実際に効くのは2回目以降で新着が多い夜だけ。
+    const MAX_PAGES_CRAWLER_FIRST = 3;                   // 2026-10-22追加：初回巡回（lastRunTime未記録）専用の上限。
+                                                           // 初回は早期打ち切りが効かず末尾まで律儀に掘ってしまうため、
+                                                           // 新規メーカー追加時の想定外の時間肥大を防ぐため3ページに制限する。
+                                                           // 2回目以降はMAX_PAGES_CRAWLER(10)に切り替わる。
     // 2026-09-09追加：server_*.logの[発掘:メーカー]行を16日分集計した結果、51社中
     // 20社が一度もヒットせず、逆に上位5社（アイ・オー・データ・藤井電工・LOGITEC・
     // サンワサプライ・TWINBIRD）に大半のヒットが集中していると判明。ヒット0件の
@@ -752,11 +756,11 @@
         }
 
         const maxPages = PRIORITY_MAKERS.has(maker.name) ? MAX_PAGES_PRIORITY : MAX_PAGES_CRAWLER;
-        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — ${maxPages}ページ収集中...`);
+        showStatus(`[${makerIdx + 1}/${makersTotal}] ${maker.name} — 最大${maxPages}ページ収集中...`);
 
         let allItems;
         try {
-            allItems = await fetchItems(tpl, maxPages);
+            allItems = await fetchItems(tpl, maxPages, MAX_PAGES_CRAWLER_FIRST);
         } catch(e) {
             showStatus(`収集エラー: ${e.message} → スキップ`, 'rgba(160,0,0,0.88)');
             await sleep(2000);
@@ -1437,7 +1441,7 @@
     // ========================================================
     //  商品収集（Search API）
     // ========================================================
-    async function fetchItems(tpl, maxPages = MAX_PAGES) {
+    async function fetchItems(tpl, maxPages = MAX_PAGES, maxPagesFirstRun = null) {
         const allItems = {};
 
         // 日次運用：前回実行時刻（メーカー単位で記録）
@@ -1448,9 +1452,13 @@
         const lastRunTime = parseInt(localStorage.getItem(runKey) || '0', 10);
         const isFirstRun  = lastRunTime === 0;
 
+        // 2026-10-22追加：初回巡回は新着無し判定による早期打ち切りが効かないため、
+        // maxPagesFirstRunが渡されていればそちらを優先して使う（渡されなければ従来通りmaxPages）
+        const effectiveMaxPages = (isFirstRun && maxPagesFirstRun != null) ? maxPagesFirstRun : maxPages;
+
         let pageToken = '';
 
-        for (let page = 0; page < maxPages; page++) {
+        for (let page = 0; page < effectiveMaxPages; page++) {
             const bodyObj = JSON.parse(tpl.body);
             bodyObj.pageToken = pageToken;
             bodyObj.pageSize  = 120;
