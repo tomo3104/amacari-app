@@ -1,8 +1,12 @@
 // GAS Web AppのデプロイURL（/exec で終わるもの）に置き換えてください
 const GAS_URL = "https://script.google.com/macros/s/AKfycbz6W83NlKgz8ieDfRrXL2AfaPWo4xFqv_8vr5NT1-NQglc1tuOC50uT-CWEHrG95c64/exec";
 
+// 2026-09-12追加：GASのWebアプリは同一URLへのGETリクエストをGoogle側で
+// キャッシュすることがあり、「リロードしても件数が変わらない」原因になっていた
+// （RTタブでシミュレーション上21件残るはずが実際には1件しか表示されない、
+// という食い違いから発覚）。毎回ユニークなクエリパラメータを付けてキャッシュを回避する。
 function gasUrl(action, params) {
-  const usp = new URLSearchParams(Object.assign({ action }, params || {}));
+  const usp = new URLSearchParams(Object.assign({ action, _: Date.now() }, params || {}));
   return `${GAS_URL}?${usp.toString()}`;
 }
 
@@ -24,6 +28,32 @@ async function gasPost(action, body, attempt) {
     if (attempt < 3) {
       await new Promise(r => setTimeout(r, 500 * attempt));
       return gasPost(action, body, attempt + 1);
+    }
+    throw err;
+  }
+}
+
+// 2026-09-22追加：書き込み(gasPost)にはリトライがあるのに、読み込み（カード取得等の
+// GET）には無く、スマホでの回線切替の一瞬の途切れだけで各タブが即「読み込みに失敗
+// しました」になっていた。同じ理由・同じリトライ回数で読み込み側にも追加する。
+//
+// 2026-09-22さらに修正：上記のリトライはfetch()自体が例外を投げた場合（DNS・接続
+// 拒否等）しか拾えておらず、「fetch自体は成功したがGAS側が実行エラーのHTMLページを
+// 返した／レスポンスがJSONとして壊れている」ケースは1回目の失敗で即座に諦めていた
+// （呼び出し側でres.json()する際にSyntaxErrorになるが、それはgasFetchの外）。
+// これがリトライ追加後も「読み込みに失敗しました」が変わらず頻発していた原因と考え、
+// fetch＋レスポンス検証＋JSONパースまでを丸ごとリトライ対象にし、パース済みデータを
+// 直接返す形に変更した（呼び出し側の`res.json()`は不要になる）。
+async function gasFetch(action, params, attempt) {
+  attempt = attempt || 1;
+  try {
+    const res = await fetch(gasUrl(action, params));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    if (attempt < 3) {
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      return gasFetch(action, params, attempt + 1);
     }
     throw err;
   }
@@ -139,8 +169,7 @@ async function loadCards() {
   els.empty.textContent = "読み込み中…";
   els.empty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("cards", { sort: state.sort }));
-    const data = await res.json();
+    const data = await gasFetch("cards", { sort: state.sort });
     state.cards = data.cards || [];
     state.skipStack = [];
     state.totalCount = state.cards.length;
@@ -161,8 +190,7 @@ async function loadArchive() {
   els.archiveEmpty.style.display = "block";
   els.archiveList.innerHTML = "";
   try {
-    const res = await fetch(gasUrl("archive"));
-    const data = await res.json();
+    const data = await gasFetch("archive");
     renderArchive(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
@@ -176,8 +204,7 @@ async function loadRejected() {
   els.archiveEmpty.style.display = "block";
   els.autoRejectedList.innerHTML = "";
   try {
-    const res = await fetch(gasUrl("rejected"));
-    const data = await res.json();
+    const data = await gasFetch("rejected");
     renderRejected(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
@@ -190,8 +217,7 @@ async function loadStats() {
   els.statsMonthlyList.innerHTML = "";
   els.statsDailyList.innerHTML = "";
   try {
-    const res = await fetch(gasUrl("purchasedStats"));
-    const data = await res.json();
+    const data = await gasFetch("purchasedStats");
     renderStats(data.items || []);
   } catch (e) {
     els.statsEmpty.textContent = "読み込みに失敗しました。";
@@ -202,8 +228,7 @@ async function loadFurimaCards() {
   els.furimaEmpty.textContent = "読み込み中…";
   els.furimaEmpty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("furimaCards"));
-    const data = await res.json();
+    const data = await gasFetch("furimaCards");
     state.furimaCards = data.cards || [];
     state.furimaSkipStack = [];
     state.furimaTotalCount = state.furimaCards.length;
@@ -217,8 +242,7 @@ async function loadDescCards() {
   els.descEmpty.textContent = "読み込み中…";
   els.descEmpty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("descCards"));
-    const data = await res.json();
+    const data = await gasFetch("descCards");
     state.descCards = data.cards || [];
     state.descSkipStack = [];
     state.descTotalCount = state.descCards.length;
@@ -232,8 +256,7 @@ async function loadRtCards() {
   els.rtEmpty.textContent = "読み込み中…";
   els.rtEmpty.style.display = "block";
   try {
-    const res = await fetch(gasUrl("rtCards"));
-    const data = await res.json();
+    const data = await gasFetch("rtCards");
     state.rtCards = data.cards || [];
     state.rtSkipStack = [];
     state.rtTotalCount = state.rtCards.length;
@@ -329,13 +352,23 @@ function formatPastJudgment(card) {
 function buildCardEl(card) {
   const el = document.createElement("div");
   const isHot = Number(card.real_margin) >= 50;
-  el.className = isHot ? "card card--hot" : "card";
+  // 2026-09-11追加：server.py側のfind_matches()が付与する[お宝]タグ（ランク5万位
+  // 以内かつ差益3000円以上、またはランク不明でも利益率40%以上かつ差益6000円以上）
+  // を検出して専用バッジを表示する。RTタブの通知が多すぎて慣れが生じ、本当に
+  // 良い商品を見逃していた問題への対応（Discord通知の絞り込みと同じ基準）。
+  const isTreasure = (card.name || "").includes("[お宝]");
+  el.className = [
+    "card",
+    isTreasure ? "card--treasure" : "",
+    isHot ? "card--hot" : "",
+  ].filter(Boolean).join(" ");
 
   const thumb = card.image_url
     ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
     : `<div class="card-thumb"></div>`;
 
   el.innerHTML = `
+    ${isTreasure ? '<div class="treasure-badge">💎 お宝</div>' : ''}
     ${isHot ? '<div class="hot-badge">🔥 激熱</div>' : ''}
     <div class="swipe-flag flag-like">仕入れ対象</div>
     <div class="swipe-flag flag-nope">却下</div>
@@ -348,6 +381,7 @@ function buildCardEl(card) {
       <p class="card-sub">
         型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         ／ ASIN：${escapeHtml(card.asin)}<button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        ／ 検知：${escapeHtml(formatHitTime(card.date))}
       </p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
@@ -360,19 +394,22 @@ function buildCardEl(card) {
         </div>
       </div>
       <div class="card-grid">
-        <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="edit-price-btn no-swipe" data-row="${card.row}" aria-label="価格を編集">✏</button></div>
+        <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
         <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
         <div><span>実利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
+        <div><span>仕入れ目標(4割引)</span>${formatYen(negotiationTarget(card.pmax))}</div>
+        <div><span>交渉目安</span>${formatNegotiation(card.mercari_price, card.pmax)}</div>
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
       <div class="card-links">
-        <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}" target="_blank" rel="noopener">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
-        <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>
-        <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
+        <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}">Amazon</a>
+        <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}">モノトレ</a>
+        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}">Keepa</a>
         <button class="link-btn link-asin-fix no-swipe" data-row="${card.row}">ASIN修正</button>
         <button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>
+        <button class="link-btn link-report-model no-swipe" data-model="${escapeAttr(card.model)}" data-asin="${escapeAttr(card.asin)}" data-name="${escapeAttr(card.name)}" data-url="${escapeAttr(card.mercari_url)}">🚩型番通報</button>
       </div>
       <div class="card-keepa">
         <p class="keepa-label">Keepa（90日）</p>
@@ -421,14 +458,21 @@ function buildFurimaCardEl(card) {
     : `<div class="card-thumb"></div>`;
 
   const links = [
-    `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}" target="_blank" rel="noopener">商品ページ</a>`,
+    `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}">商品ページ</a>`,
   ];
   if (card.asin) {
-    links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Amazon</a>`);
-    links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">モノトレ</a>`);
-    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}" target="_blank" rel="noopener">Keepa</a>`);
+    links.push(`<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}">Amazon</a>`);
+    links.push(`<a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}">モノトレ</a>`);
+    links.push(`<a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}">Keepa</a>`);
     links.push(`<button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>`);
   }
+  if (card.model) {
+    links.push(`<button class="link-btn link-exclude-model no-swipe" data-model="${escapeAttr(card.model)}">🚫型番除外報告</button>`);
+  }
+
+  const modelLine = card.model
+    ? `型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button> ／ `
+    : "";
 
   el.innerHTML = `
     <div class="swipe-flag flag-like">仕入れ対象</div>
@@ -438,7 +482,7 @@ function buildFurimaCardEl(card) {
     ${thumb}
     <div class="card-body">
       <p class="card-name">${escapeHtml(card.name)}</p>
-      <p class="card-sub">サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
+      <p class="card-sub">${modelLine}サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
@@ -449,6 +493,8 @@ function buildFurimaCardEl(card) {
         <div><span>価格</span>${formatYen(card.price)}</div>
         <div><span>上限価格</span>${formatYen(card.limit_price)}</div>
         <div><span>差額</span>${formatYen(card.diff)}</div>
+        <div><span>仕入れ目標(4割引)</span>${formatYen(negotiationTarget(card.limit_price))}</div>
+        <div><span>交渉目安</span>${formatNegotiation(card.price, card.limit_price)}</div>
       </div>
       <div class="card-links">
         ${links.join("\n")}
@@ -461,65 +507,54 @@ function buildFurimaCardEl(card) {
 // ---------- Amazon価格インライン編集 ----------
 
 function recalcWithNewPrice(card, newPrice) {
-  const pmax = Math.round(Number(card.pmax) + (newPrice - Number(card.amazon_price)) * 0.85);
+  // 2026-09-11：pmaxを純粋な損益分岐点（Amazon価格-手数料）に変更したため、
+  // Amazon価格が変わった分はそのまま1:1でpmaxに反映される（旧×0.85は不要）。
+  // diffがそのまま実利益額になるため、real_profit/real_marginの補正も不要。
+  const pmax = Math.round(Number(card.pmax) + (newPrice - Number(card.amazon_price)));
   const mercariPrice = Number(card.mercari_price);
   const diff = Math.round(pmax - mercariPrice);
   const roi = mercariPrice ? Math.round(diff / mercariPrice * 1000) / 10 : 0;
   const margin = newPrice ? Math.round(diff / newPrice * 1000) / 10 : 0;
   const score = Math.round((roi * 0.5 + margin * 0.3 + newPrice / 1000 * 0.2) * 10) / 10;
-  const real_profit = Math.round(diff + newPrice * 0.15);
-  const real_margin = newPrice ? Math.round(real_profit / newPrice * 1000) / 10 : 0;
+  const real_profit = diff;
+  const real_margin = margin;
   return { amazon_price: newPrice, pmax, diff, roi, margin, score, real_profit, real_margin };
 }
 
-els.stack.addEventListener("click", e => {
-  const btn = e.target.closest(".edit-price-btn");
+// 2026-09-11：手入力での価格編集は「利益少ない」に見える商品をわざわざ調べ直す
+// 手間が大きく結局そのまま却下されがちだったため廃止し、その場でSP-APIから
+// 最新のAmazon価格を取得するボタンに置き換えた（GAS側でprice_recheck_queue
+// シートにも積まれ、後でasin-tools/server.pyがlist.jsonへ反映する）。
+els.stack.addEventListener("click", async e => {
+  const btn = e.target.closest(".recheck-price-btn");
   if (!btn) return;
   e.stopPropagation();
+  if (btn.disabled) return;
   const row = Number(btn.dataset.row);
-  const div = btn.parentElement;
-  const valEl = div.querySelector(".price-val");
-  if (div.querySelector(".edit-price-input")) return;
-
-  valEl.style.display = "none";
-  btn.style.display = "none";
-
-  const input = Object.assign(document.createElement("input"), {
-    type: "number", className: "edit-price-input no-swipe",
-    value: Number(valEl.dataset.price), min: "0"
-  });
-  const ok = Object.assign(document.createElement("button"), {
-    className: "edit-price-confirm no-swipe", textContent: "確定", type: "button"
-  });
-  const ng = Object.assign(document.createElement("button"), {
-    className: "edit-price-cancel no-swipe", textContent: "×", type: "button"
-  });
-  div.append(input, ok, ng);
-  input.focus(); input.select();
-
-  function apply() {
-    const newPrice = Math.round(Number(input.value));
-    if (!newPrice || newPrice <= 0) { cancel(); return; }
+  const asin = btn.dataset.asin;
+  const model = btn.dataset.model;
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const res = await gasPost("recheckPrice", { asin, model });
+    const data = await res.json();
+    if (data.error || !data.price) {
+      alert(data.error || "価格を取得できませんでした");
+      return;
+    }
     const card = state.cards.find(c => c.row === row);
-    if (!card) { cancel(); return; }
-    const upd = recalcWithNewPrice(card, newPrice);
+    if (!card) return;
+    const upd = recalcWithNewPrice(card, data.price);
     Object.assign(card, upd);
-    gasPost("updateAmazonPrice", { row, ...upd });
+    await gasPost("updateAmazonPrice", { row, ...upd });
     renderStack();
+  } catch (err) {
+    alert("価格再調査に失敗しました: " + err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
   }
-
-  function cancel() {
-    valEl.style.display = "";
-    btn.style.display = "";
-    [input, ok, ng].forEach(el => el.remove());
-  }
-
-  ok.addEventListener("click", e => { e.stopPropagation(); apply(); });
-  ng.addEventListener("click", e => { e.stopPropagation(); cancel(); });
-  input.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.stopPropagation(); apply(); }
-    if (e.key === "Escape") { e.stopPropagation(); cancel(); }
-  });
 });
 
 // ---------- Keepaグラフ再読込 ----------
@@ -765,8 +800,7 @@ async function handleCheckRestrictionClick(e) {
   btn.textContent = "確認中…";
   btn.disabled = true;
   try {
-    const res = await fetch(gasUrl("checkRestriction", { asin }));
-    const data = await res.json();
+    const data = await gasFetch("checkRestriction", { asin });
     if (!data.ok) {
       alert("確認に失敗しました：" + (data.error || "不明なエラー"));
     } else if (data.restricted) {
@@ -786,6 +820,60 @@ els.stack.addEventListener("click", handleCheckRestrictionClick);
 els.rtStack.addEventListener("click", handleCheckRestrictionClick);
 els.descStack.addEventListener("click", handleCheckRestrictionClick);
 els.furimaStack.addEventListener("click", handleCheckRestrictionClick);
+
+// ---------- 型番通報 ----------
+// 2026-09-14追加：精査中に「この型番はおかしい」と気づいても、後でまとめて
+// 伝えようとすると忘れてしまうとの指摘を受け、その場でワンタップ記録できる
+// ボタンを追加。判定操作とは独立で、押しても却下・仕入れ対象にはならない。
+async function handleReportModelClick(e) {
+  const btn = e.target.closest(".link-report-model");
+  if (!btn) return;
+  e.stopPropagation();
+  const model = btn.dataset.model;
+  const asin = btn.dataset.asin;
+  const name = btn.dataset.name;
+  const url = btn.dataset.url;
+  const original = btn.textContent;
+  btn.textContent = "送信中…";
+  btn.disabled = true;
+  try {
+    await gasPost("reportModel", { model, asin, name, mercari_url: url });
+    btn.textContent = "✅ 報告済み";
+  } catch (err) {
+    btn.textContent = "⚠ 失敗";
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  }
+}
+
+els.stack.addEventListener("click", handleReportModelClick);
+els.rtStack.addEventListener("click", handleReportModelClick);
+els.descStack.addEventListener("click", handleReportModelClick);
+
+// ---------- 型番除外報告（FRタブ専用） ----------
+// 2026-09-16追加：FR（フリマウォッチ常時監視）タブでノイズ型番に気づいたら、
+// reportModel（後日まとめて人力判断）とは別に、即座に除外を確定できるように
+// する。押した型番はexport_frima.pyの次回CSV生成から自動的に除外される。
+// 判定操作とは独立で、押しても却下・仕入れ対象にはならない。
+async function handleExcludeFurimaModelClick(e) {
+  const btn = e.target.closest(".link-exclude-model");
+  if (!btn) return;
+  e.stopPropagation();
+  const model = btn.dataset.model;
+  const original = btn.textContent;
+  btn.textContent = "送信中…";
+  btn.disabled = true;
+  try {
+    await gasPost("excludeFurimaModel", { model });
+    btn.textContent = "✅ 除外済み";
+  } catch (err) {
+    btn.textContent = "⚠ 失敗";
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  }
+}
+
+els.furimaStack.addEventListener("click", handleExcludeFurimaModelClick);
 
 // ---------- ASIN修正 ----------
 
@@ -809,8 +897,9 @@ document.getElementById("asin-fix-submit").addEventListener("click", async () =>
   const newAsin = els.asinFixNew.value.trim().toUpperCase();
   const newPrice = Math.round(Number(els.asinFixPrice.value));
   if (!newAsin || !newPrice) { alert("ASINとAmazon価格を両方入力してください"); return; }
-  const oldFee = Math.max(Math.round(Number(card.amazon_price) * 0.85 - Number(card.pmax)), 450);
-  const newPmax = Math.round(newPrice * 0.85 - oldFee);
+  // 2026-09-11：pmaxを純粋な損益分岐点（Amazon価格-手数料）に変更
+  const oldFee = Math.max(Math.round(Number(card.amazon_price) - Number(card.pmax)), 450);
+  const newPmax = Math.round(newPrice - oldFee);
   await gasPost("saveAsinCorrection", {
     row: card.row, model: card.model,
     old_asin: card.asin, new_asin: newAsin,
@@ -923,8 +1012,8 @@ els.reasonGrid.addEventListener("click", e => {
   if (!card) return;
   judge(card, "却下", reason, source);
   // 2026-10-23追加：「価格変動」「不一致」は却下に加えて、後から自動で
-  // 再調査できるようバックエンドのキュー／通報シートに積んでおく（結果は
-  // バックグラウンド処理なのでここでは待たず、失敗してもconsoleログのみ）。
+  // 再調査できるようバックエンドのキュー／シートに積んでおく（バックグラウンド
+  // 処理なのでここでは待たず、失敗してもconsoleログのみ）。
   if (reason === "価格変動") {
     gasPost("recheckPrice", { asin: card.asin, model: card.model }).catch(err => {
       console.error("価格再調査キューの登録に失敗:", err);
@@ -1010,9 +1099,9 @@ function renderArchive(items) {
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
       </div>
       <div class="archive-actions">
-        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
-        <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">モノトレ</a>
-        <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}" target="_blank" rel="noopener">Keepa</a>
+        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}">メルカリで見る</a>
+        <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}">モノトレ</a>
+        <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>
         ${item.judgment === "購入済み"
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
@@ -1038,7 +1127,7 @@ function renderRejected(items) {
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ 却下理由：${escapeHtml(item.reason)}${item.is_auto ? "（自動）" : ""}</p>
       </div>
       <div class="archive-actions">
-        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}" target="_blank" rel="noopener">メルカリで見る</a>
+        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}">メルカリで見る</a>
         <button data-action="restore">やっぱり仕入れ対象</button>
         ${item.is_auto ? `<button data-action="confirm" data-reason="${escapeAttr(item.reason)}">却下のままでOK</button>` : ""}
       </div>
@@ -1067,6 +1156,66 @@ function renderGoalProgress(monthly) {
   const remainText = remain > 0 ? `（残り¥${remain.toLocaleString()}）` : "（達成！🎉）";
   els.goalProgressText.textContent =
     `¥${profit.toLocaleString()} / ¥${MONTHLY_PROFIT_GOAL.toLocaleString()}（${pct.toFixed(1)}%）${remainText}`;
+}
+
+// 2026-09-27追加：「今月の仕入れ候補」グラフ。今月の目標バー（購入済み＝確定分の見込実利益）
+// の下に、仕入れ対象＋購入済みを合わせた「仕入れ候補」の見込実利益を積み上げ棒で描き、
+// そのうち確定（購入済み）がどれだけ含まれるかを色分けで見せる。
+// 棒の長さの基準は max(月間目標, 候補合計)。候補が目標を超えた場合は目標位置に縦線を出す。
+// 色だけに頼らないよう、凡例に金額・件数・割合を必ず併記する。
+function renderCandidateGraph(monthlyAll, monthlyPurchased) {
+  const key = currentMonthKey();
+  const all  = monthlyAll.find(a => a.key === key)       || { count: 0, profit: 0 };
+  const conf = monthlyPurchased.find(a => a.key === key) || { count: 0, profit: 0 };
+
+  const barEl    = document.getElementById("cand-bar");
+  const legendEl = document.getElementById("cand-legend");
+  const textEl   = document.getElementById("cand-text");
+  const markEl   = document.getElementById("cand-goal-mark");
+
+  if (all.count === 0) {
+    barEl.innerHTML = "";
+    markEl.classList.add("hidden");
+    markEl.parentElement.classList.remove("has-goal-mark");
+    legendEl.innerHTML = "";
+    textEl.textContent = "今月の仕入れ候補はまだありません。";
+    return;
+  }
+
+  const confProfit   = Math.max(0, conf.profit);
+  const totalProfit  = Math.max(confProfit, all.profit);
+  const unconfProfit = totalProfit - confProfit;
+  const unconfCount  = Math.max(0, all.count - conf.count);
+  const scale = Math.max(MONTHLY_PROFIT_GOAL, totalProfit);
+  const w = v => (v / scale * 100).toFixed(2);
+  const yen = v => `¥${Math.round(v).toLocaleString()}`;
+  const ratio = totalProfit > 0 ? confProfit / totalProfit * 100 : 0;
+
+  const seg = (cls, value, title) => value > 0
+    ? `<div class="status-stack-seg ${cls}" style="width:${w(value)}%; min-width:3px" title="${escapeAttr(title)}"></div>`
+    : "";
+  barEl.innerHTML =
+    seg("seg-cand-confirmed",   confProfit,   `確定（購入済み）${yen(confProfit)}・${conf.count}件`) +
+    seg("seg-cand-unconfirmed", unconfProfit, `未確定（仕入れ対象）${yen(unconfProfit)}・${unconfCount}件`);
+
+  // 候補が目標を超えたときだけ、目標の位置に縦線＋直接ラベルを出す（超えていなければ
+  // 棒の右端＝目標なので不要）。ラベル分の余白は.has-goal-markで確保する。
+  const showMark = scale > MONTHLY_PROFIT_GOAL;
+  markEl.classList.toggle("hidden", !showMark);
+  markEl.parentElement.classList.toggle("has-goal-mark", showMark);
+  if (showMark) {
+    markEl.style.left = `${(MONTHLY_PROFIT_GOAL / scale * 100).toFixed(2)}%`;
+    markEl.title = `今月の目標 ${yen(MONTHLY_PROFIT_GOAL)}`;
+    markEl.querySelector(".cand-goal-label").textContent = `目標${MONTHLY_PROFIT_GOAL / 10000}万`;
+  }
+
+  // 定義（確定＝購入済み／未確定＝仕入れ対象のまま）は見出しに書き、凡例は短くして1行に収める
+  legendEl.innerHTML = `
+    <span><span class="swatch" style="background:#0ca30c"></span>確定 ${yen(confProfit)}（${conf.count}件）</span>
+    <span><span class="swatch" style="background:#2f6fdb"></span>未確定 ${yen(unconfProfit)}（${unconfCount}件）</span>
+  `;
+  textEl.textContent =
+    `候補合計 ${yen(totalProfit)}（${all.count}件）・確定率 ${ratio.toFixed(1)}%`;
 }
 
 function aggregateBy(items, keyFn) {
@@ -1130,6 +1279,7 @@ function renderStats(items) {
     els.statsEmpty.textContent = "購入済みの商品はまだありません。";
     els.statsEmpty.style.display = "block";
     renderGoalProgress([]);
+    renderCandidateGraph([], []);
     return;
   }
   els.statsEmpty.style.display = "none";
@@ -1137,7 +1287,9 @@ function renderStats(items) {
   const monthly = aggregateBy(items, date => date.slice(0, 7));
   const daily = aggregateBy(items, date => date.slice(0, 10));
   const purchasedOnly = items.filter(item => item.judgment === "購入済み");
-  renderGoalProgress(aggregateBy(purchasedOnly, date => date.slice(0, 7)));
+  const purchasedMonthly = aggregateBy(purchasedOnly, date => date.slice(0, 7));
+  renderGoalProgress(purchasedMonthly);
+  renderCandidateGraph(monthly, purchasedMonthly);
 
   els.statsMonthlyList.innerHTML = monthly.map(agg =>
     renderStatRow(agg, agg.key.replace("-", "年") + "月")
@@ -1282,6 +1434,29 @@ function formatYen(v) {
   return Number.isFinite(n) && v !== "" ? `¥${n.toLocaleString()}` : "−";
 }
 
+// 2026-09-25追加：「pmaxの4割引き」を仕入れ目標値として表示し、現在のメルカリ価格との
+// 差分を価格交渉の目安として見せる（ユーザーの実績平均が4割引き付近だったため、その
+// 水準を基準値に採用。固定値なので今後変えたくなったらNEGOTIATION_DISCOUNT_RATIOを
+// 調整するだけでよい）。
+const NEGOTIATION_DISCOUNT_RATIO = 0.6; // pmax×0.6 = 4割引き
+
+function negotiationTarget(pmax) {
+  const n = Number(pmax);
+  return Number.isFinite(n) ? Math.floor(n * NEGOTIATION_DISCOUNT_RATIO) : null;
+}
+
+function formatNegotiation(mercariPrice, pmax) {
+  const target = negotiationTarget(pmax);
+  const price  = Number(mercariPrice);
+  if (target === null || !Number.isFinite(price)) {
+    return `<span class="nego-val">−</span>`;
+  }
+  const diff = price - target;
+  return diff > 0
+    ? `<span class="nego-val nego-needed">¥${diff.toLocaleString()} 値下げ希望</span>`
+    : `<span class="nego-val nego-ok">達成済み</span>`;
+}
+
 function formatPercent(v) {
   const n = Number(v);
   return Number.isFinite(n) && v !== "" ? `${n}%` : "−";
@@ -1292,6 +1467,14 @@ function formatRank(v) {
   return Number.isFinite(n) && v !== "" && v !== null ? `${n.toLocaleString()}位` : "−";
 }
 
+// card.dateは"yyyy-MM-dd HH:mm"形式（Code.gs側で'Asia/Tokyo'指定でフォーマット済み）。
+// RTタブは検知から即座に判定するため、何時何分にヒットしたかが判断材料になる。
+function formatHitTime(dateStr) {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/);
+  if (!m) return dateStr || "−";
+  return `${parseInt(m[2], 10)}/${parseInt(m[3], 10)} ${m[4]}`;
+}
+
 // ---------- ログ ----------
 
 async function loadLog() {
@@ -1299,13 +1482,12 @@ async function loadLog() {
   const autoList = document.getElementById("auto-log-list");
   rtBody.innerHTML   = '<tr><td colspan="5" class="log-loading">読み込み中…</td></tr>';
   autoList.innerHTML = '<li class="log-loading">読み込み中…</li>';
+  loadStatusReport();
   try {
-    const [rtRes, autoRes] = await Promise.all([
-      fetch(gasUrl("realtimeLog")),
-      fetch(gasUrl("researchTiming")),
+    const [rtData, autoData] = await Promise.all([
+      gasFetch("realtimeLog"),
+      gasFetch("researchTiming"),
     ]);
-    const rtData   = await rtRes.json();
-    const autoData = await autoRes.json();
     renderRealtimeLog(rtData.rows   || []);
     renderAutoLog(autoData.rows || []);
   } catch (e) {
@@ -1313,6 +1495,187 @@ async function loadLog() {
     autoList.innerHTML = '<li class="log-loading">読み込みに失敗しました。</li>';
   }
 }
+
+// ---------- ステータス（2026-09-20新設） ----------
+// 集計自体はasin-tools/status_report.pyが定期実行してシートに書き出す。
+// ここではそのシートを読んで表示するだけ（重い集計はGAS/フロント側でやらない）。
+
+async function loadStatusReport() {
+  const updatedEl = document.getElementById("status-updated");
+  const summaryEl = document.getElementById("status-summary");
+  updatedEl.textContent = "";
+  summaryEl.innerHTML = '<p class="log-loading">読み込み中…</p>';
+  try {
+    const data = await gasFetch("status");
+    renderStatusReport(data);
+  } catch (e) {
+    summaryEl.innerHTML = '<p class="log-loading">読み込みに失敗しました。</p>';
+  }
+}
+
+function renderStatusReport(data) {
+  const updatedEl = document.getElementById("status-updated");
+  const summaryEl = document.getElementById("status-summary");
+  const toggleBtn = document.getElementById("status-source-toggle");
+  const sourceWrap = document.getElementById("status-source-wrap");
+  const sourceBody = document.getElementById("status-source-body");
+
+  if (!data || !data.summary) {
+    summaryEl.innerHTML = '<p class="log-loading">まだ集計データがありません（status_report.pyの実行待ち）。</p>';
+    toggleBtn.classList.add("hidden");
+    return;
+  }
+
+  updatedEl.textContent = data.updated ? `更新：${data.updated}` : "";
+
+  const s = data.summary;
+  const n = v => Number(v || 0).toLocaleString();
+  const pct = (part, total) => total > 0 ? Math.round((part / total) * 100) : 0;
+
+  // 型番リスト・プレミアム候補は「全体のうちどれだけ済んでいるか」なので、
+  // 既存の月間目標と同じ「メーター」表現（track+fill）で進捗として見せる。
+  // 新型番待ち・Keepa待ちは「まだ何も進んでいない残数」なので単純な数値タイルにする。
+  const listPct    = pct(s.listValid, s.listTotal);
+  const premiumPct = pct(s.premiumRegistered, s.premiumTotal);
+
+  summaryEl.innerHTML = `
+    <div class="status-meter">
+      <div class="status-meter-label"><span>型番リスト（有効な件数の割合）</span><span>${n(s.listValid)} / ${n(s.listTotal)}（${listPct}%）</span></div>
+      <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${listPct}%"></div></div>
+    </div>
+    <div class="status-meter">
+      <div class="status-meter-label"><span>プレミアム候補（Keepa登録済みの割合）</span><span>${n(s.premiumRegistered)} / ${n(s.premiumTotal)}（${premiumPct}%）</span></div>
+      <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${premiumPct}%"></div></div>
+    </div>
+    <div class="status-grid">
+      <div class="status-card">
+        <h3>新型番（コレクト経由・価格調査待ち）</h3>
+        <p><strong>${n(s.candCollectPending)}</strong> 件</p>
+      </div>
+      <div class="status-card">
+        <h3>新型番（リサーチ経由・価格調査待ち）</h3>
+        <p><strong>${n(s.candResearchPending)}</strong> 件</p>
+      </div>
+      <div class="status-card">
+        <h3>Keepa登録待ち</h3>
+        <p><strong>${n(s.keepaQueuePending)}</strong> 件</p>
+      </div>
+    </div>
+  `;
+
+  renderStatusBreakdown(data.breakdown);
+
+  const sources = data.sources || [];
+  if (!sources.length) {
+    toggleBtn.classList.add("hidden");
+    sourceWrap.classList.add("hidden");
+    return;
+  }
+  toggleBtn.classList.remove("hidden");
+
+  // 2026-09-20夜修正：単純なヒット数だけで並べると「収集量が多いだけ」の順位に
+  // なってしまうという指摘を受け、型番一致数に対するヒット率（%）で見せる
+  // ように変更（並び順自体はstatus_report.py側で一致数不足を除外済み・降順）。
+  const top = sources.slice(0, 10);
+  document.getElementById("status-source-chart").innerHTML = top.map(r => {
+    const rate = Number(r.hitRate) || 0;
+    const w = Math.min(100, Math.round(rate));
+    return `
+      <div class="status-bar-row">
+        <span class="status-bar-name">${escapeHtml(r.name)}</span>
+        <div class="status-bar-track">
+          <div class="status-bar-fill" style="width:${w}%"></div>
+        </div>
+        <span class="status-bar-value">${rate.toFixed(1)}%</span>
+      </div>
+    `;
+  }).join("");
+
+  sourceBody.innerHTML = sources.map(r => `
+    <tr>
+      <td>${escapeHtml(r.name)}</td>
+      <td>${escapeHtml(r.route)}</td>
+      <td>${n(r.items)}</td>
+      <td>${n(r.matched)}</td>
+      <td class="${Number(r.hits) > 0 ? 'rt-log-hit' : ''}">${n(r.hits)}</td>
+      <td class="${Number(r.newModels) > 0 ? 'rt-log-new' : ''}">${n(r.newModels)}</td>
+      <td>${Number(r.hitRate || 0).toFixed(1)}%</td>
+    </tr>
+  `).join("");
+}
+
+// 2026-09-20深夜追加：list.jsonの構成（有効/プレミアム/無効の積み上げ棒）、
+// 無効の理由、ランク分布を表示する。単一指標のカテゴリ別内訳なので、それぞれ
+// 単色の横棒（.status-bar-chart）で見せ、構成だけは部分と全体の関係なので
+// 積み上げ棒＋凡例にする。
+function renderStatusBreakdown(breakdown) {
+  const compWrap = document.getElementById("status-composition-wrap");
+  const invalidDetails = document.getElementById("status-invalid-details");
+  const rankDetails = document.getElementById("status-rank-details");
+  const n = v => Number(v || 0).toLocaleString();
+
+  if (!breakdown || !(breakdown.composition || []).length) {
+    compWrap.classList.add("hidden");
+    invalidDetails.classList.add("hidden");
+    rankDetails.classList.add("hidden");
+    return;
+  }
+
+  compWrap.classList.remove("hidden");
+  const comp = breakdown.composition;
+  const total = comp.reduce((sum, c) => sum + Number(c.count || 0), 0) || 1;
+  const segClass = { "有効(通常)": "seg-valid", "有効(プレミアム)": "seg-premium", "無効": "seg-invalid" };
+  document.getElementById("status-composition-bar").innerHTML = comp.map(c => {
+    const w = Math.round((Number(c.count) || 0) / total * 100);
+    return `<div class="status-stack-seg ${segClass[c.label] || ''}" style="width:${w}%"></div>`;
+  }).join("");
+  document.getElementById("status-composition-legend").innerHTML = comp.map(c => `
+    <span><span class="swatch" style="background:${
+      c.label === "有効(通常)" ? "#0ca30c" : c.label === "有効(プレミアム)" ? "var(--blue)" : "#c9ccd1"
+    }"></span>${escapeHtml(c.label)} ${n(c.count)}</span>
+  `).join("");
+
+  const renderMiniChart = (containerId, items) => {
+    const max = Math.max(1, ...items.map(r => Number(r.count) || 0));
+    // 2026-09-25追加：件数だけだと全体に対する割合が一目で分からないという指摘を受け、
+    // 内訳合計に対する%も併記する（ランク分布・無効理由の両方で共用のため両方に効く）。
+    const sum = items.reduce((s, r) => s + (Number(r.count) || 0), 0) || 1;
+    document.getElementById(containerId).innerHTML = items.map(r => {
+      const count = Number(r.count) || 0;
+      const w = Math.round(count / max * 100);
+      const pct = Math.round(count / sum * 100);
+      return `
+        <div class="status-bar-row">
+          <span class="status-bar-name">${escapeHtml(r.label)}</span>
+          <div class="status-bar-track"><div class="status-bar-fill" style="width:${w}%"></div></div>
+          <span class="status-bar-value">${n(r.count)}<span class="status-bar-pct">（${pct}%）</span></span>
+        </div>
+      `;
+    }).join("");
+  };
+
+  if ((breakdown.invalidReasons || []).length) {
+    invalidDetails.classList.remove("hidden");
+    renderMiniChart("status-invalid-chart", breakdown.invalidReasons);
+  } else {
+    invalidDetails.classList.add("hidden");
+  }
+
+  if ((breakdown.rankDistribution || []).length) {
+    rankDetails.classList.remove("hidden");
+    renderMiniChart("status-rank-chart", breakdown.rankDistribution);
+  } else {
+    rankDetails.classList.add("hidden");
+  }
+}
+
+document.getElementById("status-source-toggle").addEventListener("click", () => {
+  const wrap = document.getElementById("status-source-wrap");
+  const btn = document.getElementById("status-source-toggle");
+  const isHidden = wrap.classList.contains("hidden");
+  wrap.classList.toggle("hidden");
+  btn.textContent = isHidden ? "収集元別の実績を閉じる ▴" : "収集元別の実績を見る ▾";
+});
 
 function renderRealtimeLog(rows) {
   const tbody = document.getElementById("rt-log-body");
