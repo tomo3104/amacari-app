@@ -403,7 +403,7 @@ function buildCardEl(card) {
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
       <div class="card-links">
-        <a class="link-btn ${(card.mercari_url||'').includes('paypayfleamarket') ? 'link-paypay' : 'link-mercari'}" href="${escapeAttr(card.mercari_url)}">${(card.mercari_url||'').includes('paypayfleamarket') ? 'PPフリマ' : 'メルカリ'}</a>
+        <a class="link-btn ${marketplaceInfo(card.mercari_url).cls}" href="${escapeAttr(card.mercari_url)}">${marketplaceInfo(card.mercari_url).label}</a>
         <a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}">Amazon</a>
         <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}">モノトレ</a>
         <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}">Keepa</a>
@@ -1099,7 +1099,7 @@ function renderArchive(items) {
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
       </div>
       <div class="archive-actions">
-        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}">メルカリで見る</a>
+        <a class="${marketplaceInfo(item.mercari_url).cls}" href="${escapeAttr(item.mercari_url)}">${marketplaceInfo(item.mercari_url).label}で見る</a>
         <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}">モノトレ</a>
         <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>
         ${item.judgment === "購入済み"
@@ -1127,7 +1127,7 @@ function renderRejected(items) {
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ 却下理由：${escapeHtml(item.reason)}${item.is_auto ? "（自動）" : ""}</p>
       </div>
       <div class="archive-actions">
-        <a class="link-mercari" href="${escapeAttr(item.mercari_url)}">メルカリで見る</a>
+        <a class="${marketplaceInfo(item.mercari_url).cls}" href="${escapeAttr(item.mercari_url)}">${marketplaceInfo(item.mercari_url).label}で見る</a>
         <button data-action="restore">やっぱり仕入れ対象</button>
         ${item.is_auto ? `<button data-action="confirm" data-reason="${escapeAttr(item.reason)}">却下のままでOK</button>` : ""}
       </div>
@@ -1428,6 +1428,15 @@ function escapeHtml(s) {
 }
 
 function escapeAttr(s) { return escapeHtml(s); }
+
+// 2026-10-24追加：出品元URL(mercari_url)からマーケットプレイス名を判定する
+// （フリマウォッチ/ラクマ追加時にリンクボタンが常に「メルカリ」固定表示だった抜けを修正）
+function marketplaceInfo(url) {
+  const u = url || "";
+  if (u.includes("paypayfleamarket")) return { cls: "link-paypay", label: "PPフリマ" };
+  if (u.includes("fril.jp"))          return { cls: "link-rakuma", label: "ラクマ" };
+  return { cls: "link-mercari", label: "メルカリ" };
+}
 
 function formatYen(v) {
   const n = Number(v);
