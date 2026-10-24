@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -28,6 +28,11 @@
     // 戻したくなったらfalseにすれば従来通り全メーカーを対象にする。
     const REQUIRE_BRAND_ID = true;
     const EXCLUDE_KW = ['開封済み', '破れ', 'ダメージ', '傷あり', '汚れあり', '水没', 'ジャンク'];
+    // 2026-10-24追加：巡回規模を94→127社に拡大した直後、ユーザーがPayPayフリマを
+    // 手動精査しようとしたらアクセス遮断（一時的・時間経過で解除）に遭遇した。
+    // ページ間/メーカー間の間隔が今の規模には短すぎた可能性が高いため広げる。
+    const PAGE_SLEEP_MS = 800;   // 旧300ms
+    const MFR_SLEEP_MS  = 1500;  // 旧500ms
 
     // ===== UI =====
     const container = document.createElement('div');
@@ -139,7 +144,7 @@
             const returned = data.totalResultsReturned || pageItems.length;
             offset += returned;
             if (offset >= totalAvailable || returned === 0) break;
-            await sleep(300);
+            await sleep(PAGE_SLEEP_MS);
         }
         return allItems;
     }
@@ -296,7 +301,7 @@
                 totalHits     += hits;
                 totalNewCands += newCands;
                 postTiming({ type: 'mfr', name: mfr.name, group: mfr.group, route: 'PPリサーチ', elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched, hits, new_cands: newCands });
-                await sleep(500);
+                await sleep(MFR_SLEEP_MS);
             } catch(e) {
                 errors++;
                 updateStatus(`[${i+1}/${filtered.length}] ${mfr.name} エラー(${errors}): ${e.message}`);
@@ -349,7 +354,7 @@
                 totalHits     += hits;
                 totalNewCands += newCands;
                 await postTiming({ type: 'mfr', name: cat.name, group: 'CATEGORY', route: 'PPカテゴリ', elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched, hits, new_cands: newCands });
-                await sleep(500);
+                await sleep(MFR_SLEEP_MS);
             } catch(e) {
                 errors++;
                 updateStatus(`[カテゴリ${i+1}/${categories.length}] ${cat.name} エラー(${errors}): ${e.message}`);
