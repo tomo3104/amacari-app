@@ -86,4 +86,25 @@
         `;
         document.body.appendChild(badge);
     });
+
+    // 2026-10-24追加：category選択UIがAPI通信ではなく静的データ/DOM直接操作で
+    // 埋まっている可能性があったため、select[name="category"]のoption増加を直接監視する。
+    function dumpSelectIfPopulated(select) {
+        const key = 'dom:' + (select.name || select.id || 'category_select');
+        if (select.options.length <= 1) return; // 「すべて」のみなら未入力
+        if (captured.has(key) && captured.get(key).length === select.options.length) return;
+        const options = Array.from(select.options).map(o => ({ value: o.value, text: o.textContent.trim() }));
+        captured.set(key, options);
+        updateBadge();
+        send();
+        console.log('[カテゴリSELECT捕捉]', key, options);
+    }
+
+    const observer = new MutationObserver(() => {
+        document.querySelectorAll('select[name="category"], select[name*="categor" i]').forEach(dumpSelectIfPopulated);
+    });
+    window.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, { childList: true, subtree: true });
+        document.querySelectorAll('select[name="category"], select[name*="categor" i]').forEach(dumpSelectIfPopulated);
+    });
 })();
