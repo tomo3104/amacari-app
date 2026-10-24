@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.2
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応）
+// @version      2.3
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -13,8 +13,13 @@
 (function () {
     'use strict';
 
-    const SERVER_URL = 'http://localhost:8766/check-mercari';
-    const MFR_URL    = 'http://localhost:8766/get-manufacturers';
+    const SERVER_URL   = 'http://localhost:8766/check-mercari';
+    const MFR_URL      = 'http://localhost:8766/get-manufacturers';
+    // 2026-10-24追加：カテゴリ巡回の対象はmanufacturersシート（enabled列をメルカリの
+    // 自動クロールと共有）には混ぜず、完全に別ファイル・別エンドポイントで管理する。
+    // 混ぜると「ALL」グループ実行時にメルカリ側がPayPayフリマのURLを開きに行ってしまい、
+    // 毎晩の自動化を壊すリスクがあったため（ユーザー指摘で発覚）。
+    const CATEGORY_URL = 'http://localhost:8766/get-paypay-categories';
     const MAX_PAGE   = 20; // 最大20ページ = 2000件/メーカー
     // 2026-09-27追加：ブランドID(yahoo_brand_id)未設定のメーカーはPayPayの実行対象から外す。
     // ID指定が無いとメーカー名のキーワード検索になり、同名の別業種の商品が混ざる。
@@ -49,8 +54,18 @@
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3); display:none;
     `;
+    // 2026-10-24追加：カテゴリ巡回ボタン（ブランドIDが無い新規メーカー発掘用。
+    // manufacturersシートとは独立したpaypay_category_targets.jsonを巡回する）。
+    const catBtn = document.createElement('button');
+    catBtn.textContent = 'PPフリマ カテゴリ巡回';
+    catBtn.style.cssText = `
+        padding:12px 22px; background:#6A1B9A; color:#fff;
+        border:none; border-radius:6px; font-size:14px;
+        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    `;
     container.appendChild(statusEl);
     container.appendChild(batchBtn);
+    container.appendChild(catBtn);
     container.appendChild(stopBtn);
     document.body.appendChild(container);
 
@@ -59,6 +74,7 @@
     function updateStatus(msg) { statusEl.style.display = 'block'; statusEl.textContent = msg; }
     function setRunningUI(on) {
         batchBtn.style.display = on ? 'none'  : 'block';
+        catBtn.style.display   = on ? 'none'  : 'block';
         stopBtn.style.display  = on ? 'block' : 'none';
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -69,7 +85,7 @@
     // メルカリの約3倍だった精度問題への対策）。無ければ従来のキーワード検索にフォールバック。
     // sort=openTime&order=desc（新着順）も追加：指定無しだと新着優先にならず、
     // 取得件数の上限内で古い出品ばかり拾ってしまうことが実測で判明したため。
-    async function fetchPayPayItems(mfrName, priceMin, priceMax, yahooBrandId) {
+    async function fetchPayPayItems(mfrName, priceMin, priceMax, yahooBrandId, genreCategoryId) {
         const allItems = {};
         let offset = 0;
         let totalAvailable = null;
@@ -83,7 +99,13 @@
                 sort:     'openTime',
                 order:    'desc',
             });
-            if (yahooBrandId) {
+            // 2026-10-24追加：カテゴリ巡回用。genreCategoryIdが指定された時はそちらを
+            // 優先する（ブランドID・キーワード検索と排他）。実データで動作確認済み
+            // （/api/v1/search?genreCategoryIds={id}で存在しないIDは0件・実在IDは
+            // そのジャンルの商品のみ返ることを確認済み）。
+            if (genreCategoryId) {
+                params.append('genreCategoryIds', genreCategoryId);
+            } else if (yahooBrandId) {
                 params.append('brandIds', yahooBrandId);
             } else {
                 params.append('query', mfrName);
@@ -295,6 +317,59 @@
         updateStatus(`完了 ${filtered.length}件巡回 / 累計${totalCollected}件 / ヒット${totalHits}件`);
     }
 
+    // ===== カテゴリ巡回本体（2026-10-24追加・ブランドIDの無い新規メーカー発掘用）=====
+    // runBatchFetchとほぼ同じ構造だが、対象がmanufacturersシートではなく
+    // paypay_category_targets.json（別ファイル）で、genreCategoryId指定で検索する点が違う。
+    async function runCategoryBatchFetch(categories) {
+        if (categories.length === 0) { updateStatus('カテゴリ対象なし'); return; }
+        running = true;
+        setRunningUI(true);
+        let errors = 0;
+        let totalCollected = 0, totalMatched = 0, totalHits = 0, totalNewCands = 0;
+        const groupLabel = 'PP-CATEGORY';
+        const batchStart = Date.now();
+        await postTiming({ type: 'start', group: groupLabel, total: categories.length });
+
+        for (let i = 0; i < categories.length; i++) {
+            if (!running) break;
+            const cat = categories[i];
+            updateStatus(`[カテゴリ${i+1}/${categories.length}] ${cat.name} fetch中...`);
+            const mfrStart = Date.now();
+            try {
+                const fetched = await fetchPayPayItems(cat.name, 1000, 20000, null, cat.id);
+                errors = 0;
+                const itemList = Object.values(fetched);
+                totalCollected += itemList.length;
+                updateStatus(`[カテゴリ${i+1}/${categories.length}] ${cat.name} ${itemList.length}件 → 照合中`);
+                const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: cat.name }));
+                const matched = result.n_model_match || 0;
+                const hits    = (result.matches || []).length;
+                const newCands = result.new_candidates_count || 0;
+                totalMatched  += matched;
+                totalHits     += hits;
+                totalNewCands += newCands;
+                await postTiming({ type: 'mfr', name: cat.name, group: 'CATEGORY', route: 'PPカテゴリ', elapsed_ms: Date.now() - mfrStart, item_count: itemList.length, matched, hits, new_cands: newCands });
+                await sleep(500);
+            } catch(e) {
+                errors++;
+                updateStatus(`[カテゴリ${i+1}/${categories.length}] ${cat.name} エラー(${errors}): ${e.message}`);
+                if (errors >= 3) {
+                    updateStatus(`エラー連続3回 → 停止: ${e.message}`);
+                    running = false;
+                    setRunningUI(false);
+                    await postTiming({ type: 'end', group: groupLabel, total: categories.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
+                    return;
+                }
+                await sleep(2000);
+            }
+        }
+
+        running = false;
+        setRunningUI(false);
+        await postTiming({ type: 'end', group: groupLabel, total: categories.length, elapsed_ms: Date.now() - batchStart, collected: totalCollected, matched: totalMatched, hits: totalHits, new_candidates: totalNewCands });
+        updateStatus(`カテゴリ巡回完了 ${categories.length}件 / 累計${totalCollected}件 / ヒット${totalHits}件`);
+    }
+
     // ===== グループ選択ダイアログ =====
     function showGroupPicker(mfrs) {
         const groups = [...new Set(mfrs.map(m => m.group).filter(g => g))].sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }));
@@ -397,6 +472,21 @@
 
     // ===== ボタン処理 =====
     batchBtn.onclick = () => fetchEligibleMfrs(showGroupPicker);
+    catBtn.onclick = () => {
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: CATEGORY_URL,
+            onload: res => {
+                try {
+                    const data = JSON.parse(res.responseText);
+                    runCategoryBatchFetch(data.categories || []);
+                } catch(e) {
+                    updateStatus('カテゴリ一覧取得失敗: ' + e);
+                }
+            },
+            onerror: () => updateStatus('サーバー未起動 (localhost:8766)'),
+        });
+    };
 
     // ===== 自動起動（2026-09-30追加）=====
     // メルカリ側（mercari_asin_checker.user.js）が?auto_research=経由で起動された時、
