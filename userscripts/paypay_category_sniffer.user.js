@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPayフリマ カテゴリAPI捕捉
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  PayPayフリマの検索ページはカテゴリ一覧が生HTMLに出てこず、読み込み後にJSが内部APIを叩いて取得する構造だったため（2026-10-24調査で確認）、fetch/XHRを横取りしてURLまたは本文に「categor」を含む通信を捕捉し、localhost:8766へ送信してファイルに保存する。
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @run-at       document-start
