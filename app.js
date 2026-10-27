@@ -89,6 +89,12 @@ const state = {
   rtLastRejected: null,
   rtSkipStack: [],
   rtTotalCount: 0,
+
+  // 中古本タブ用（2026-10-27追加）
+  bookCards: [],
+  bookLastRejected: null,
+  bookSkipStack: [],
+  bookTotalCount: 0,
 };
 
 const els = {
@@ -124,6 +130,11 @@ const els = {
   rtEmpty: document.getElementById("rt-empty-message"),
   rtProgressLabel: document.getElementById("rt-progress-label"),
   rtUndoBtn: document.getElementById("rt-undo-btn"),
+  bookView: document.getElementById("book-view"),
+  bookStack: document.getElementById("book-card-stack"),
+  bookEmpty: document.getElementById("book-empty-message"),
+  bookProgressLabel: document.getElementById("book-progress-label"),
+  bookUndoBtn: document.getElementById("book-undo-btn"),
   asinFixModal: document.getElementById("asin-fix-modal"),
   asinFixOld: document.getElementById("asin-fix-old"),
   asinFixNew: document.getElementById("asin-fix-new"),
@@ -306,6 +317,92 @@ function renderRtStack() {
     if (depthFromTop === 0) attachSwipe(el, card, "rt");
     els.rtStack.appendChild(el);
   });
+}
+
+async function loadBookCards() {
+  els.bookEmpty.textContent = "読み込み中…";
+  els.bookEmpty.style.display = "block";
+  try {
+    const data = await gasFetch("bookCards");
+    state.bookCards = data.cards || [];
+    state.bookSkipStack = [];
+    state.bookTotalCount = state.bookCards.length;
+    renderBookStack();
+  } catch (e) {
+    els.bookEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+function renderBookStack() {
+  els.bookStack.querySelectorAll(".card").forEach(c => c.remove());
+  const done = Math.max(state.bookTotalCount - state.bookCards.length, 0);
+  els.bookProgressLabel.textContent = `${done} / ${state.bookTotalCount}`;
+  if (state.bookCards.length === 0) {
+    els.bookEmpty.textContent = "判定待ちの商品はありません。";
+    els.bookEmpty.style.display = "block";
+    return;
+  }
+  els.bookEmpty.style.display = "none";
+  const visible = state.bookCards.slice(0, 3).reverse();
+  visible.forEach((card, i) => {
+    const el = buildBookCardEl(card);
+    const depthFromTop = visible.length - 1 - i;
+    el.style.zIndex = String(100 - depthFromTop);
+    el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
+    if (depthFromTop === 0) attachSwipe(el, card, "book");
+    els.bookStack.appendChild(el);
+  });
+}
+
+// ---------- 中古本タブ：カードのレンダリング ----------
+
+function buildBookCardEl(card) {
+  const el = document.createElement("div");
+  el.className = "card";
+
+  el.innerHTML = `
+    <div class="swipe-flag flag-like">仕入れ対象</div>
+    <div class="swipe-flag flag-nope">却下</div>
+    <div class="swipe-flag flag-skip">あとで</div>
+    <div class="swipe-flag flag-back">戻る</div>
+    <div class="card-thumb"></div>
+    <div class="card-body">
+      ${formatPastJudgment(card)}
+      <p class="card-name">${escapeHtml(card.name)}</p>
+      <p class="card-sub">
+        ISBN：${escapeHtml(card.isbn)}<button class="copy-btn" data-copy="${escapeAttr(card.isbn)}" aria-label="ISBNをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        ／ 一致度：${escapeHtml(card.title_score)}
+        ／ 検知：${escapeHtml(formatHitTime(card.date))}
+      </p>
+      <p class="card-sub">マッチ：${escapeHtml(card.matched_title)}</p>
+      <div class="card-highlight">
+        <div class="highlight-box highlight-margin">
+          <span class="label">売却頻度</span>
+          <span class="value">${escapeHtml(card.sold_tier || "-")}</span>
+        </div>
+        <div class="highlight-box highlight-roi">
+          <span class="label">リスク</span>
+          <span class="value">${escapeHtml(card.risk_tier || "-")}</span>
+        </div>
+      </div>
+      <div class="card-grid">
+        <div><span>Amazon価格(${escapeHtml(card.price_confidence)})</span>${formatYen(card.amazon_price)}</div>
+        <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
+        <div><span>推定利益</span>${formatYen(card.estimated_profit)}</div>
+        <div><span>仕入上限(pmax)</span>${formatYen(card.pmax)}</div>
+        <div><span>埋もれ最悪値→利益</span>${formatYen(card.worst_case_price)} → ${formatYen(card.worst_case_profit)}</div>
+        <div><span>新品可能価格→利益</span>${formatYen(card.upside_price)} → ${formatYen(card.upside_profit)}</div>
+      </div>
+      <div class="card-links">
+        <a class="link-btn ${marketplaceInfo(card.url).cls}" href="${escapeAttr(card.url)}">${marketplaceInfo(card.url).label}</a>
+        ${card.asin ? `<a class="link-btn link-amazon" href="https://www.amazon.co.jp/dp/${encodeURIComponent(card.asin)}">Amazon</a>
+        <a class="link-btn link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(card.asin)}">モノトレ</a>
+        <a class="link-btn link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(card.asin)}">Keepa</a>
+        <button class="link-btn link-check-restriction no-swipe" data-asin="${escapeAttr(card.asin)}">出品制限確認</button>` : ""}
+      </div>
+    </div>
+  `;
+  return el;
 }
 
 // ---------- カードのレンダリング ----------
@@ -598,7 +695,7 @@ function legacyCopy(text) {
   return ok;
 }
 
-els.stack.addEventListener("click", async e => {
+async function handleCopyClick(e) {
   const btn = e.target.closest(".copy-btn");
   if (!btn) return;
   e.stopPropagation();
@@ -624,7 +721,14 @@ els.stack.addEventListener("click", async e => {
   } else {
     alert("コピーに失敗しました。");
   }
-});
+}
+
+els.stack.addEventListener("click", handleCopyClick);
+// 2026-10-27追加：中古本タブのISBNコピー用。desc/rtタブにも同じcopy-btnが元々あったが
+// リスナーがels.stackにしか付いておらず動いていなかった既存バグも合わせて修正。
+els.descStack.addEventListener("click", handleCopyClick);
+els.rtStack.addEventListener("click", handleCopyClick);
+els.bookStack.addEventListener("click", handleCopyClick);
 
 // ---------- スワイプ操作 ----------
 
@@ -685,10 +789,10 @@ function attachSwipe(el, card, source) {
     } else if (absY > absX && absY > threshold) {
       const dir = dy < 0 ? "up" : "down";
       if (dir === "down") {
-        const skipKey = source === "furima" ? "furimaSkipStack" : source === "desc" ? "descSkipStack" : source === "rt" ? "rtSkipStack" : "skipStack";
+        const skipKey = source === "furima" ? "furimaSkipStack" : source === "desc" ? "descSkipStack" : source === "rt" ? "rtSkipStack" : source === "book" ? "bookSkipStack" : "skipStack";
         if (state[skipKey].length === 0) {
           // 後回しスタックが空 → キューの末尾カードを先頭に循環
-          const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : "cards";
+          const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : source === "book" ? "bookCards" : "cards";
           if (state[cardsKey].length <= 1) {
             // カードが1枚以下 → バウンスだけ
             el.style.transform = "";
@@ -724,6 +828,7 @@ function finishSwipe(el, card, direction, source) {
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
   const isRt     = source === "rt";
+  const isBook   = source === "book";
   const flyX = direction === "right" ? window.innerWidth : -window.innerWidth;
   el.style.transform = `translateX(${flyX}px)`;
   el.style.opacity = "0";
@@ -736,6 +841,8 @@ function finishSwipe(el, card, direction, source) {
       state.descCards = state.descCards.filter(c => c.row !== card.row);
     } else if (isRt) {
       state.rtCards = state.rtCards.filter(c => c.row !== card.row);
+    } else if (isBook) {
+      state.bookCards = state.bookCards.filter(c => c.row !== card.row);
     } else {
       state.cards = state.cards.filter(c => c.row !== card.row);
     }
@@ -747,6 +854,7 @@ function finishSwipe(el, card, direction, source) {
     if (isFurima) renderFurimaStack();
     else if (isDesc) renderDescStack();
     else if (isRt) renderRtStack();
+    else if (isBook) renderBookStack();
     else renderStack();
   }, 220);
 }
@@ -758,14 +866,15 @@ function finishVerticalSwipe(el, card, direction, source) {
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
   const isRt     = source === "rt";
+  const isBook   = source === "book";
   const flyY = (direction === "up" || direction === "down-loop") ? -window.innerHeight : window.innerHeight;
   el.style.transform = `translateY(${flyY}px)`;
   el.style.opacity = "0";
 
   setTimeout(() => {
     el.remove();
-    const cardsKey = isFurima ? "furimaCards" : isDesc ? "descCards" : isRt ? "rtCards" : "cards";
-    const skipKey  = isFurima ? "furimaSkipStack" : isDesc ? "descSkipStack" : isRt ? "rtSkipStack" : "skipStack";
+    const cardsKey = isFurima ? "furimaCards" : isDesc ? "descCards" : isRt ? "rtCards" : isBook ? "bookCards" : "cards";
+    const skipKey  = isFurima ? "furimaSkipStack" : isDesc ? "descSkipStack" : isRt ? "rtSkipStack" : isBook ? "bookSkipStack" : "skipStack";
     if (direction === "up") {
       state[cardsKey] = state[cardsKey].filter(c => c.row !== card.row);
       state[cardsKey].push(card);
@@ -784,6 +893,7 @@ function finishVerticalSwipe(el, card, direction, source) {
     if (isFurima) renderFurimaStack();
     else if (isDesc) renderDescStack();
     else if (isRt) renderRtStack();
+    else if (isBook) renderBookStack();
     else renderStack();
   }, 220);
 }
@@ -820,6 +930,7 @@ els.stack.addEventListener("click", handleCheckRestrictionClick);
 els.rtStack.addEventListener("click", handleCheckRestrictionClick);
 els.descStack.addEventListener("click", handleCheckRestrictionClick);
 els.furimaStack.addEventListener("click", handleCheckRestrictionClick);
+els.bookStack.addEventListener("click", handleCheckRestrictionClick);
 
 // ---------- 型番通報 ----------
 // 2026-09-14追加：精査中に「この型番はおかしい」と気づいても、後でまとめて
@@ -923,7 +1034,8 @@ async function judge(card, judgment, reason, source) {
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
   const isRt     = source === "rt";
-  const action = isFurima ? "furimaJudge" : isDesc ? "descJudge" : "judge";
+  const isBook   = source === "book";
+  const action = isFurima ? "furimaJudge" : isDesc ? "descJudge" : isBook ? "bookJudge" : "judge";
   try {
     await gasPost(action, { row: card.row, judgment, reason });
     if (judgment === "却下") {
@@ -936,6 +1048,9 @@ async function judge(card, judgment, reason, source) {
       } else if (isRt) {
         state.rtLastRejected = card;
         els.rtUndoBtn.disabled = false;
+      } else if (isBook) {
+        state.bookLastRejected = card;
+        els.bookUndoBtn.disabled = false;
       } else {
         state.lastRejected = card;
         els.undoBtn.disabled = false;
@@ -951,10 +1066,11 @@ async function undoLastReject(source) {
   const isFurima = source === "furima";
   const isDesc   = source === "desc";
   const isRt     = source === "rt";
-  const card   = isFurima ? state.furimaLastRejected : isDesc ? state.descLastRejected : isRt ? state.rtLastRejected : state.lastRejected;
+  const isBook   = source === "book";
+  const card   = isFurima ? state.furimaLastRejected : isDesc ? state.descLastRejected : isRt ? state.rtLastRejected : isBook ? state.bookLastRejected : state.lastRejected;
   if (!card) return;
-  const btn    = isFurima ? els.furimaUndoBtn : isDesc ? els.descUndoBtn : isRt ? els.rtUndoBtn : els.undoBtn;
-  const action = isFurima ? "furimaUndo" : isDesc ? "descUndo" : "undo";
+  const btn    = isFurima ? els.furimaUndoBtn : isDesc ? els.descUndoBtn : isRt ? els.rtUndoBtn : isBook ? els.bookUndoBtn : els.undoBtn;
+  const action = isFurima ? "furimaUndo" : isDesc ? "descUndo" : isBook ? "bookUndo" : "undo";
   btn.disabled = true;
   try {
     await gasPost(action, { row: card.row });
@@ -970,6 +1086,10 @@ async function undoLastReject(source) {
       state.rtLastRejected = null;
       state.rtCards.unshift(card);
       renderRtStack();
+    } else if (isBook) {
+      state.bookLastRejected = null;
+      state.bookCards.unshift(card);
+      renderBookStack();
     } else {
       state.lastRejected = null;
       state.cards.unshift(card);
@@ -1074,11 +1194,12 @@ document.getElementById("purchase-cancel-btn").addEventListener("click", () => {
   closePurchaseModal();
   if (!card) return;
   // 判定せずカードを山の先頭に戻す
-  const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : "cards";
+  const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : source === "book" ? "bookCards" : "cards";
   state[cardsKey].unshift(card);
   if (source === "furima") renderFurimaStack();
   else if (source === "desc") renderDescStack();
   else if (source === "rt") renderRtStack();
+  else if (source === "book") renderBookStack();
   else renderStack();
 });
 
@@ -1385,6 +1506,7 @@ const VIEWS = {
   rt:      { el: els.rtView,      load: loadRtCards },
   desc:    { el: els.descView,    load: loadDescCards },
   furima:  { el: els.furimaView,  load: loadFurimaCards },
+  book:    { el: els.bookView,    load: loadBookCards },
   log:     { el: document.getElementById("log-view"), load: loadLog },
 };
 
@@ -1409,6 +1531,7 @@ els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
 els.furimaUndoBtn.addEventListener("click", () => undoLastReject("furima"));
 els.descUndoBtn.addEventListener("click", () => undoLastReject("desc"));
 els.rtUndoBtn.addEventListener("click", () => undoLastReject("rt"));
+els.bookUndoBtn.addEventListener("click", () => undoLastReject("book"));
 
 document.getElementById("reason-cancel-btn").addEventListener("click", () => {
   const src = state.pendingRejectSource;
@@ -1416,6 +1539,7 @@ document.getElementById("reason-cancel-btn").addEventListener("click", () => {
   if (src === "furima") renderFurimaStack();
   else if (src === "desc") renderDescStack();
   else if (src === "rt") renderRtStack();
+  else if (src === "book") renderBookStack();
   else renderStack();
 });
 

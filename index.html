@@ -22,6 +22,7 @@
     <button class="tab" data-view="rt">RT</button>
     <button class="tab" data-view="desc">MR</button>
     <button class="tab" data-view="furima">FR</button>
+    <button class="tab" data-view="book">本</button>
     <button class="tab" data-view="archive">仕入候補</button>
     <button class="tab" data-view="log">ログ</button>
   </nav>
@@ -71,6 +72,17 @@
     <p class="empty-message" id="furima-empty-message">読み込み中…</p>
   </div>
 
+  <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
+</main>
+
+<main id="book-view" class="view hidden">
+  <div class="toolbar">
+    <span id="book-progress-label" class="progress-label">0 / 0</span>
+    <button id="book-undo-btn" class="ghost-btn" disabled>↺ ひとつ戻す</button>
+  </div>
+  <div id="book-card-stack" class="card-stack">
+    <p class="empty-message" id="book-empty-message">読み込み中…</p>
+  </div>
   <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
 </main>
 
