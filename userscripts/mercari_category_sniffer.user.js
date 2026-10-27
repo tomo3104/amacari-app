@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ カテゴリAPI捕捉
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  本カテゴリのサブカテゴリ一覧調査用（中古本せどり企画・2026-10-27）。fetch/XHRを横取りしてURLまたは本文に「categor」を含む通信を捕捉し、localhost:8766へ送信してファイルに保存する。メルカリはReact Server Componentsでページ本体に埋め込まれている可能性もあるため、埋め込みscriptタグも合わせてスキャンする。
 // @match        https://jp.mercari.com/*
 // @run-at       document-start
@@ -26,25 +26,38 @@
             url: SERVER_URL,
             headers: { 'Content-Type': 'application/json' },
             data: JSON.stringify({
-                captures: Array.from(captured.entries()).map(([key, body]) => ({ key, body })),
+                captures: Array.from(captured.entries()).map(([dedupKey, entry]) => ({ key: entry.url, body: entry.body })),
             }),
             onerror: () => {},
             ontimeout: () => {},
         });
     }
 
+    // 2026-10-27修正：facets:suggestは常に同じURL（クエリ文字列なし）で呼ばれるため、
+    // URLだけをキーにした重複チェックだと「本・雑誌・漫画を開いた時の一覧」の後に来る
+    // 「雑誌の子カテゴリ一覧」等、内容が違う2回目以降のレスポンスが誤って無視されていた。
+    // レスポンス本文のハッシュも含めてキーにし、内容が違えば別物として捕捉する。
+    function simpleHash(str) {
+        let h = 0;
+        for (let i = 0; i < str.length; i++) {
+            h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+        }
+        return h;
+    }
+
     function handle(key, text) {
         if (!text || text.length > 3_000_000) return;
         const lower = text.slice(0, 8000).toLowerCase();
         if (!key.toLowerCase().includes('categor') && !lower.includes('categor')) return;
-        if (captured.has(key)) return;
+        const dedupKey = `${key}#${simpleHash(text)}`;
+        if (captured.has(dedupKey)) return;
         let body;
         try {
             body = JSON.parse(text);
         } catch (e) {
             return;
         }
-        captured.set(key, body);
+        captured.set(dedupKey, { url: key, body });
         updateBadge();
         send();
         console.log('[カテゴリ捕捉]', key, body);
@@ -91,7 +104,7 @@
             } catch (e) {
                 body = { raw_snippet: text.slice(0, 50000) };
             }
-            captured.set(key, body);
+            captured.set(key, { url: key, body });
             updateBadge();
             send();
             console.log('[埋め込みscript捕捉]', key);

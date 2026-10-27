@@ -706,14 +706,21 @@
         const makersTotal = crawlerState.makers.length;
 
         // 中止ボタン
+        // 2026-10-27修正：このボタンはCRAWLER_KEY（localStorage・オリジン全体で共有）が
+        // 立っている間、メルカリの別タブを新しく開いた時にもそこに表示される。別の作業で
+        // 新タブを開いた際に「見慣れない中止ボタンがある」と誤って押してしまい、他のタブで
+        // 実行中だったクローラー本体を意図せず停止させてしまった事故が起きたため、
+        // ①ボタンに進捗（現在何社目か）を表示して一目で分かるようにし、②押した時に
+        // 「他のタブで動いてる分も止まる」ことを明示した確認を挟むようにした。
         const abortBtn = document.createElement('button');
-        abortBtn.textContent = 'クローラー中止';
+        abortBtn.textContent = `発掘クローラー中止（${makerIdx + 1}/${makersTotal}社目・他タブの分も止まります）`;
         abortBtn.style.cssText = `
             padding:9px 16px; background:#B71C1C; color:#fff;
             border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
             box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         abortBtn.onclick = () => {
+            if (!confirm(`発掘クローラーを中止しますか？\n（${maker.name} ${makerIdx + 1}/${makersTotal}社目・他のタブで実行中でもそちらも停止します）`)) return;
             localStorage.removeItem(CRAWLER_KEY);
             localStorage.removeItem(QUEUE_KEY);
             abortBtn.remove();
