@@ -112,7 +112,11 @@
                         if (await waitForTemplate(20000)) continue;
                     }
                     updateStatus(`p${page + 1}でエラー: ${e.message} → このカテゴリは打ち切り`);
-                    return Object.values(allItems);
+                    // 2026-10-27追加：ここで打ち切った場合は「このカテゴリの全件」ではなく
+                    // 途中までの不完全な結果なので、complete:falseを返す。サーバー側が
+                    // これをそのカテゴリの全件と誤認して、まだ売ってる後半ページの商品を
+                    // 「今回出てこなかった＝消えた」と判断し間違って削除する事故を防ぐため。
+                    return { items: Object.values(allItems), complete: false };
                 }
             }
             if (!data) break;
@@ -137,16 +141,16 @@
             pageToken = nextToken;
             await sleep(300);
         }
-        return Object.values(allItems);
+        return { items: Object.values(allItems), complete: true };
     }
 
-    function sendToServer(items) {
+    function sendToServer(items, categoryId, complete) {
         return new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: SERVER_URL,
                 headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ items }),
+                data: JSON.stringify({ items, categoryId: String(categoryId), complete }),
                 timeout: 30000,
                 onload: res => resolve(res.responseText),
                 onerror: () => resolve(null),
@@ -174,9 +178,9 @@
             const cat = categories[i];
             updateStatus(`[${i + 1}/${categories.length}] ${cat.name} 収集中...`);
             try {
-                const items = await fetchAllItemsForCategory(cat.category_id);
-                updateStatus(`[${i + 1}/${categories.length}] ${cat.name}: ${items.length}件 → 送信中...`);
-                const res = await sendToServer(items);
+                const { items, complete } = await fetchAllItemsForCategory(cat.category_id);
+                updateStatus(`[${i + 1}/${categories.length}] ${cat.name}: ${items.length}件${complete ? '' : '(不完全)'} → 送信中...`);
+                const res = await sendToServer(items, cat.category_id, complete);
                 totalSent += items.length;
                 updateStatus(`[${i + 1}/${categories.length}] ${cat.name}: 完了(${res || '送信失敗'})`);
             } catch (e) {
