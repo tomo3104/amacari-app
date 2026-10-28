@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      2.99
-// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）・広告ドメイン遮断・画像読み込み遮断・3並列化はいずれも実測で効果なしと確認（残る4秒台はメルカリ自身のNext.jsアプリの起動コストそのもので、何を遮断しても削れないと判明）・商品ごとにiframeを作り直すのをやめ、起動済みのiframeをwindow.next.router.push()で軽量遷移させる方式に変更、2件目以降は起動コストを払わずに済むため実測4.4秒→1.4〜2.3秒に短縮（起動済みiframeが壊れていた場合は自動でフル再起動にフォールバック）
+// @version      3.00
+// @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（2026-10-28：QUEUE_KEY/CRAWLER_KEYはlocalStorageで全タブ共有されるため、クローラー実行中にメルカリのページを何気なく新規タブで開くだけでそのタブも動き出し、複数タブが同じキューを同時に進めようとする事故が起きていた（ユーザー報告）。sessionStorage(タブごとに独立)にTAB_IDを持たせ、状態にownerTabIdを記録して一致するタブだけが実際に処理を行うよう修正。既存状態にownerTabIdが無い場合は最初に見たタブが引き継ぐ（進行中のクローラーを中断させないため）・同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）・広告ドメイン遮断・画像読み込み遮断・3並列化はいずれも実測で効果なしと確認（残る4秒台はメルカリ自身のNext.jsアプリの起動コストそのもので、何を遮断しても削れないと判明）・商品ごとにiframeを作り直すのをやめ、起動済みのiframeをwindow.next.router.push()で軽量遷移させる方式に変更、2件目以降は起動コストを払わずに済むため実測4.4秒→1.4〜2.3秒に短縮（起動済みiframeが壊れていた場合は自動でフル再起動にフォールバック）
 // @match        https://jp.mercari.com/*
 // @noframes
 // @grant        GM_xmlhttpRequest
@@ -34,6 +34,33 @@
     function resetResultCount() { localStorage.setItem(RESULT_COUNT_KEY, '0'); }
     const PROCESSED_KEY     = 'desc_model_processed'; // 処理済み商品IDの蓄積（重複読み込み防止）
     const CRAWLER_KEY         = 'desc_crawler_state';   // 発掘クローラーの進行状態
+
+    // 2026-10-28追加：タブ所有権ロック。QUEUE_KEY/CRAWLER_KEYはlocalStorageで全タブ共有
+    // されるため、クローラー実行中にメルカリのページを何気なく新しいタブで開くだけで、
+    // そのタブも「自分がクローラーだ」と誤認して動き出してしまい、複数タブが同時に同じ
+    // キューを進めようとする事故が起きていた（ユーザー報告）。sessionStorageはタブごとに
+    // 独立し、かつ同じタブ内でのwindow.location.href移動では保持されるため、「このタブが
+    // 開始した」という識別にちょうど使える。CRAWLER_KEY/QUEUE_KEYの状態にownerTabIdを
+    // 持たせ、一致するタブだけが実際の巡回処理を行う。既存の状態にownerTabIdが無い場合
+    // （この修正を配信した時点で既に実行中だったクローラー等）は、最初にチェックした
+    // タブがそのまま所有権を引き継ぐ（巡回を中断させないためのフォールバック）。
+    const TAB_ID = (() => {
+        const K = 'desc_finder_tab_id';
+        let id = sessionStorage.getItem(K);
+        if (!id) {
+            id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+            sessionStorage.setItem(K, id);
+        }
+        return id;
+    })();
+    function claimOrCheckOwner(stateObj, storageKey) {
+        if (!stateObj.ownerTabId) {
+            stateObj.ownerTabId = TAB_ID;
+            localStorage.setItem(storageKey, JSON.stringify(stateObj));
+            return true;
+        }
+        return stateObj.ownerTabId === TAB_ID;
+    }
     const DESC_HEARTBEAT      = 'desc_finder_hb';        // ウォッチドッグ用ハートビート
     const DESC_WD_TIMEOUT     = 300000;                  // ウォッチドッグ5分（フリーズ検知→自動リロード）
     const MAX_PAGES_CRAWLER   = 10;                      // クローラーモードの1メーカーあたり最大ページ数（2回目以降の巡回用）
@@ -410,7 +437,7 @@
         if (_qStr) {
             try {
                 const _q = JSON.parse(_qStr);
-                if (_q.running && _q.items && _q.pendingIdx != null) {
+                if (_q.running && _q.items && _q.pendingIdx != null && claimOrCheckOwner(_q, QUEUE_KEY)) {
                     const skipTo = _q.pendingIdx + 1;
                     if (skipTo < _q.items.length) {
                         _q.pendingIdx = skipTo;
@@ -436,7 +463,7 @@
         if (_crawlerStr) {
             try {
                 const _cs = JSON.parse(_crawlerStr);
-                if (_cs.running) {
+                if (_cs.running && claimOrCheckOwner(_cs, CRAWLER_KEY)) {
                     runCrawlerSearchMode(_cs);
                     return;
                 }
@@ -457,6 +484,7 @@
         let queue;
         try { queue = JSON.parse(queueStr); } catch(e) { return; }
         if (!queue.running) return;
+        if (!claimOrCheckOwner(queue, QUEUE_KEY)) return; // 別タブが所有するキュー→このタブは何もしない
 
         const items = queue.items;
         const idx   = items.findIndex(i => i.id === currentId);
@@ -674,6 +702,7 @@
                     group:      group,
                     running:    true,
                     startedAt:  Date.now(),
+                    ownerTabId: TAB_ID,
                 };
                 localStorage.setItem(CRAWLER_KEY, JSON.stringify(crawlerState));
                 localStorage.setItem(RESULT_KEY, JSON.stringify([]));
@@ -706,21 +735,14 @@
         const makersTotal = crawlerState.makers.length;
 
         // 中止ボタン
-        // 2026-10-27修正：このボタンはCRAWLER_KEY（localStorage・オリジン全体で共有）が
-        // 立っている間、メルカリの別タブを新しく開いた時にもそこに表示される。別の作業で
-        // 新タブを開いた際に「見慣れない中止ボタンがある」と誤って押してしまい、他のタブで
-        // 実行中だったクローラー本体を意図せず停止させてしまった事故が起きたため、
-        // ①ボタンに進捗（現在何社目か）を表示して一目で分かるようにし、②押した時に
-        // 「他のタブで動いてる分も止まる」ことを明示した確認を挟むようにした。
         const abortBtn = document.createElement('button');
-        abortBtn.textContent = `発掘クローラー中止（${makerIdx + 1}/${makersTotal}社目・他タブの分も止まります）`;
+        abortBtn.textContent = 'クローラー中止';
         abortBtn.style.cssText = `
             padding:9px 16px; background:#B71C1C; color:#fff;
             border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
             box-shadow:0 2px 6px rgba(0,0,0,0.3); order:20;
         `;
         abortBtn.onclick = () => {
-            if (!confirm(`発掘クローラーを中止しますか？\n（${maker.name} ${makerIdx + 1}/${makersTotal}社目・他のタブで実行中でもそちらも停止します）`)) return;
             localStorage.removeItem(CRAWLER_KEY);
             localStorage.removeItem(QUEUE_KEY);
             abortBtn.remove();
@@ -955,6 +977,7 @@
                     `;
                     resumeBtn.onclick = () => {
                         existingQueue.pendingIdx = resumeIdx;
+                        existingQueue.ownerTabId = TAB_ID; // このタブが再開操作をしたので所有権を取る
                         localStorage.setItem(QUEUE_KEY, JSON.stringify(existingQueue));
                         showStatus(`再開: ${resumeIdx + 1}件目から...`);
                         window.location.replace(existingQueue.items[resumeIdx].url);
@@ -1006,6 +1029,8 @@
                         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
                     `;
                     resumeCrawlerBtn.onclick = () => {
+                        ec.ownerTabId = TAB_ID; // このタブが再開操作をしたので所有権を取る
+                        localStorage.setItem(CRAWLER_KEY, JSON.stringify(ec));
                         localStorage.removeItem(_SHARED_TPL_KEY);
                         window.location.href = ec.makers[ec.currentIdx].url;
                     };
