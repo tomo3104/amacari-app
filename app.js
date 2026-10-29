@@ -360,12 +360,16 @@ function buildBookCardEl(card) {
   const el = document.createElement("div");
   el.className = "card";
 
+  const thumb = card.image_url
+    ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
+    : `<div class="card-thumb"></div>`;
+
   el.innerHTML = `
     <div class="swipe-flag flag-like">仕入れ対象</div>
     <div class="swipe-flag flag-nope">却下</div>
     <div class="swipe-flag flag-skip">あとで</div>
     <div class="swipe-flag flag-back">戻る</div>
-    <div class="card-thumb"></div>
+    ${thumb}
     <div class="card-body">
       ${formatPastJudgment(card)}
       <p class="card-name">${escapeHtml(card.name)}</p>
