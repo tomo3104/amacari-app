@@ -184,6 +184,22 @@ body {
   margin: 0 0 10px;
 }
 
+.other-listings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 0 10px;
+}
+
+.other-listing-item {
+  font-size: 11px;
+  color: #555;
+  background: #f1f1f1;
+  border-radius: 10px;
+  padding: 3px 9px;
+  text-decoration: none;
+}
+
 .copy-btn {
   display: inline-flex;
   align-items: center;

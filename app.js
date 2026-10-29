@@ -356,6 +356,28 @@ function renderBookStack() {
 
 // ---------- 中古本タブ：カードのレンダリング ----------
 
+const BOOK_CONDITION_LABEL = {
+  1: "新品、未使用", 2: "未使用に近い", 3: "目立った傷や汚れなし",
+  4: "やや傷や汚れあり", 5: "傷や汚れあり", 6: "全体的に状態が悪い",
+};
+
+function buildOtherListingsHtml(otherListings) {
+  const list = Array.isArray(otherListings) ? otherListings : [];
+  if (!list.length) return "";
+  const items = list
+    .slice()
+    .sort((a, b) => (Number(a.price) || 0) - (Number(b.price) || 0))
+    .map(o => {
+      const label = BOOK_CONDITION_LABEL[o.cond] || "";
+      return `<a class="other-listing-item" href="${escapeAttr(o.url)}">${formatYen(o.price)}${label ? `（${escapeHtml(label)}）` : ""}</a>`;
+    })
+    .join("");
+  return `
+    <p class="card-sub">現在出品中・他${list.length}件：</p>
+    <div class="other-listings">${items}</div>
+  `;
+}
+
 function buildBookCardEl(card) {
   const el = document.createElement("div");
   el.className = "card";
@@ -379,6 +401,7 @@ function buildBookCardEl(card) {
         ／ 検知：${escapeHtml(formatHitTime(card.date))}
       </p>
       <p class="card-sub">マッチ：${escapeHtml(card.matched_title)}</p>
+      ${buildOtherListingsHtml(card.other_listings)}
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">売却頻度</span>
