@@ -2,7 +2,7 @@
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
 // @version      3.80
-// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（2026-10-28：未使用のコジマShopsボタン(コジマ/DBG)が中古本企画の左上ボタン群と座標が被って埋もれていたため非表示化（ロジックは保持）・クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
+// @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
@@ -625,19 +625,19 @@
     const batchBtn = document.createElement('button');
     batchBtn.textContent = 'クローラーリサーチ';
     batchBtn.style.cssText = _amacariBtnBase + 'background:#9C27B0;';
+    const deepScanBtn = document.createElement('button');
+    deepScanBtn.textContent = '深堀り分析（売り切れ）';
+    deepScanBtn.style.cssText = 'padding:8px 14px; background:#555; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
     container.appendChild(statusEl);
     container.appendChild(startBtn);
     container.appendChild(batchBtn);
+    container.appendChild(deepScanBtn);
     container.appendChild(stopBtn);
 
     const kojimaWrap = document.createElement('div');
-    // 2026-10-28：現在未使用（サーバーログ上も一度も発火していない機能）。
-    // 中古本企画の左上ボタン群(usedbook-fixed-stack-tl、同じtop:20px;left:20px)と
-    // 丸かぶりして見えなくなっていたため非表示化。ロジックは残したまま表示だけ消す
-    // （display:noneを外せば元に戻る）。
     kojimaWrap.style.cssText = `
         position:fixed; top:20px; left:20px; z-index:99999;
-        display:none; flex-direction:column; align-items:flex-start; gap:6px;
+        display:flex; flex-direction:column; align-items:flex-start; gap:6px;
     `;
     const kojimaBtn = document.createElement('button');
     kojimaBtn.textContent = 'コジマ';
@@ -829,6 +829,179 @@
             await sleep(300);
         }
         return allItems;
+    }
+
+    // 2026-11-03追加：売り切れページを上限なし（に近い）で深堀りし、①list.json基準での
+    // 仕入れ対象率②同一型番のリピート出現③新型番候補、を調べる一回限りの分析ツール。
+    // 通常のリサーチ（仕入れ候補を実際に買う）とは目的が違うので、hitsシートには保存しない
+    // （dry_run=trueでサーバーに照合だけさせる。server.py側の対応はコメント参照）。
+    // 「無制限」は安全上あり得ないため、十分大きい値を保険の上限として置く
+    // （ここに達したら「本当に上限無しで深掘りできた」という情報自体が成果になる）。
+    const DEEP_SCAN_MAX_PAGES   = 500;   // 500p×120件 = 最大60,000件
+    const DEEP_SCAN_BATCH_PAGES = 10;    // 10pごと(最大1,200件)にサーバーへdry_run照合し、溜め込みすぎない
+
+    async function runDeepScan(mfrUrl, makerName) {
+        const tpl = _getSharedTpl();
+        if (!tpl) { updateStatus('[深堀り分析] テンプレート未取得。Mercariの検索ページを開いた状態で再試行してください。'); return; }
+
+        const sp = new URLSearchParams(new URL(mfrUrl).search);
+        const keyword        = sp.get('keyword') || '';
+        const excludeKeyword = sp.get('exclude_keyword') || '';
+        const brandId        = sp.get('brand_id');
+        const statusMap = { sold_out: 'STATUS_SOLD_OUT', on_sale: 'STATUS_ON_SALE' };
+        const apiStatus = statusMap[sp.get('status') || 'sold_out'] || 'STATUS_SOLD_OUT';
+
+        let pageToken     = '';
+        const seenIds     = new Set();
+        let pending        = [];   // まだサーバー照合していない分
+        let totalItems     = 0;
+        let totalMatches   = 0;
+        let totalNewCands  = 0;
+        const modelCount   = new Map(); // 型番 → 仕入れ対象としてのヒット回数
+        let pagesFetched    = 0;
+        let stoppedByError  = '';
+
+        async function flushBatch() {
+            if (pending.length === 0) return;
+            const itemList = pending;
+            pending = [];
+            const result = await new Promise(resolve => {
+                GM_xmlhttpRequest({
+                    method: 'POST', url: SERVER_URL,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ items: itemList, maker: makerName, dry_run: true }),
+                    timeout: 120000,
+                    onload:  res => { try { resolve(JSON.parse(res.responseText)); } catch(e) { resolve({}); } },
+                    ontimeout: () => resolve({}),
+                    onerror:   () => resolve({ _serverDown: true }),
+                });
+            });
+            if (result._serverDown) throw new Error('サーバー未起動');
+            totalMatches  += (result.matches || []).length;
+            totalNewCands += result.new_candidates_count || 0;
+            (result.matches || []).forEach(m => {
+                modelCount.set(m.model, (modelCount.get(m.model) || 0) + 1);
+            });
+        }
+
+        updateStatus(`[深堀り分析] ${makerName} 売り切れページを読み込み中...`);
+
+        for (let page = 0; page < DEEP_SCAN_MAX_PAGES; page++) {
+            if (!running) break;
+            const bodyObj = JSON.parse(tpl.body);
+            const sc = bodyObj.searchCondition = bodyObj.searchCondition || {};
+            sc.keyword = keyword;
+            sc.excludeKeyword = excludeKeyword;
+            sc.status = [apiStatus];
+            const priceMin = sp.get('price_min') ? Number(sp.get('price_min')) : null;
+            const priceMax = sp.get('price_max') ? Number(sp.get('price_max')) : null;
+            if (priceMin != null) sc.priceMin = priceMin; else delete sc.priceMin;
+            if (priceMax != null) sc.priceMax = priceMax; else delete sc.priceMax;
+            if (brandId) { sc.brandId = [parseInt(brandId)]; } else { delete sc.brandId; }
+            if (sp.get('item_condition_id')) sc.itemConditionId = sp.get('item_condition_id').split(',').map(Number);
+            if (sp.get('shipping_payer_id')) sc.shippingPayerId = sp.get('shipping_payer_id').split(',').map(Number);
+            bodyObj.pageToken = pageToken;
+            bodyObj.pageSize  = 120;
+
+            const ctrl  = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 15000);
+            let data;
+            try {
+                const res = await fetch(tpl.url, {
+                    method: tpl.method, headers: tpl.headers, credentials: 'include',
+                    body: JSON.stringify(bodyObj), signal: ctrl.signal,
+                });
+                clearTimeout(timer);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                data = await res.json();
+            } catch(e) {
+                clearTimeout(timer);
+                stoppedByError = e.message;
+                break;
+            }
+            pagesFetched = page + 1;
+
+            const pageItems = (data.items || []).filter(item => {
+                const id = item.id || item.itemId;
+                return id && item.name && item.price != null && !(item.auction && item.auction.bidDeadline);
+            });
+            pageItems.forEach(item => {
+                const id = item.id || item.itemId;
+                if (seenIds.has(id)) return;
+                seenIds.add(id);
+                totalItems++;
+                pending.push({
+                    name: item.name, price: String(item.price),
+                    url: `https://jp.mercari.com/item/${id}`,
+                    image: (item.thumbnails && item.thumbnails[0]) || '',
+                    created: item.created || null,
+                });
+            });
+
+            updateStatus(`[深堀り分析] ${makerName} p${pagesFetched} 収集${totalItems}件 仕入対象${totalMatches}件（照合中…）`);
+
+            if (page % DEEP_SCAN_BATCH_PAGES === DEEP_SCAN_BATCH_PAGES - 1) {
+                try { await flushBatch(); } catch(e) { stoppedByError = e.message; break; }
+                updateStatus(`[深堀り分析] ${makerName} p${pagesFetched} 収集${totalItems}件 仕入対象${totalMatches}件`);
+            }
+
+            const nextToken = (data.meta && data.meta.nextPageToken) || data.nextPageToken || '';
+            if (!nextToken || pageItems.length === 0) break;
+            pageToken = nextToken;
+            await sleep(300);
+        }
+
+        try { await flushBatch(); } catch(e) { if (!stoppedByError) stoppedByError = e.message; }
+
+        const repeatModels = [...modelCount.entries()]
+            .filter(([, n]) => n >= 2)
+            .sort((a, b) => b[1] - a[1]);
+
+        const endReason = stoppedByError ? `エラーで中断: ${stoppedByError}`
+            : !running ? '中止ボタンで中断'
+            : pagesFetched >= DEEP_SCAN_MAX_PAGES ? `上限${DEEP_SCAN_MAX_PAGES}ページに到達（本当に打ち止めか未確認）`
+            : '新着/重複切れで自然終了（これ以上は無い）';
+
+        const summaryLines = [
+            `=== 深堀り分析: ${makerName}（売り切れ） ===`,
+            `終了理由: ${endReason}`,
+            `到達ページ数: ${pagesFetched}（最大${pagesFetched * 120}件相当）`,
+            `収集件数: ${totalItems}件`,
+            `list.json基準で仕入れ対象: ${totalMatches}件`,
+            `うち同一型番が2回以上出現（リピート型番）: ${repeatModels.length}種類`,
+            ...repeatModels.slice(0, 20).map(([m, n]) => `  ${m}: ${n}回`),
+            `新規型番候補（list.json未収録・収集済み）: ${totalNewCands}件`,
+        ];
+        const summary = summaryLines.join('\n');
+        console.log(summary);
+        updateStatus(summary);
+        alert(summary);
+    }
+
+    function startDeepScan() {
+        const makerName = prompt('深堀り分析するメーカー名を入力（manufacturersシートの表記と一致させる）', 'エレコム');
+        if (!makerName) return;
+        running = true;
+        setRunningUI(true);
+        updateStatus(`[深堀り分析] ${makerName} のURLを検索中...`);
+        getManufacturersDynamic().then(({ mfrs }) => {
+            const mfr = mfrs.find(m => m.name === makerName.trim());
+            if (!mfr) {
+                alert(`manufacturersシートに「${makerName}」が見つかりません`);
+                running = false; setRunningUI(false);
+                return;
+            }
+            if (!mfr.crawl_url) {
+                alert(`「${makerName}」は売り切れ用URL（F列）が未設定です`);
+                running = false; setRunningUI(false);
+                return;
+            }
+            return runDeepScan(mfr.crawl_url, makerName.trim());
+        }).catch(e => {
+            alert(`メーカーリスト取得失敗: ${e.message}`);
+        }).finally(() => {
+            running = false; setRunningUI(false);
+        });
     }
 
     // 自動起動（?auto_research=）経由だった場合、クローラーリサーチがどのルート（正常完了・
@@ -1653,6 +1826,7 @@
 
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
     batchBtn.addEventListener('click', startBatch);
+    deepScanBtn.addEventListener('click', startDeepScan);
     kojimaBtn.addEventListener('click', () => {
         GM_openInTab(KOJIMA_SHOPS_SEARCH, { active: true });
         kojimaUpdateStatus('新タブで家電検索を開いています...\n自動スキャンが開始されます');
