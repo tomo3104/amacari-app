@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -345,8 +345,14 @@
         setRunningUI(true);
         updateStatus('[深堀り分析（複数）] メーカーリストを取得中...');
         fetchEligibleMfrs(async mfrs => {
+            // 2026-11-03追加：「カテゴリ」とだけ入力すれば名前付きカテゴリグループ全部に
+            // まとめてマッチするようにする（mercari_asin_checker.user.jsと同じ仕様）。
+            const groupMatches = (groupValue) => {
+                const g = (groupValue || '').toUpperCase();
+                return groups.some(s => s === 'カテゴリ' ? g.indexOf('カテゴリ') === 0 : s === g);
+            };
             const targets = mfrs.filter(m =>
-                (isAll || groups.includes((m.group || '').toUpperCase())) &&
+                (isAll || groupMatches(m.group)) &&
                 !excludeNames.includes(m.name),
             );
             if (targets.length === 0) {
