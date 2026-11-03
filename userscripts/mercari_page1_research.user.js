@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.28
+// @version      3.29
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離・2026-10-20：buildBodyFromUrl()がbrandId/categoryIdしか巡回先URLから反映しておらず、item_condition_id（新品指定）・status・価格帯・keyword等は最初にテンプレートを取得した時の値のまま全メーカー・全カテゴリで使われ続けていたバグを修正（実機で設定上のコンディションが新品以外の商品が多数ヒットに含まれる実害を確認）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -482,30 +482,7 @@
 
     // ── アイテム処理・サーバー送信 ────────────────────────────────────────────
 
-    // オークション観測用（本番マッチングとは別枠。件数・価格帯・bidDeadline形式の把握が目的の一時ログ）
-    async function reportAuctionItems(items) {
-        const payload = items.map(item => ({
-            name:         item.name || '',
-            price:        parseInt(item.price, 10) || 0,
-            url:          `https://jp.mercari.com/item/${item.id}`,
-            bid_deadline: item.auction && item.auction.bidDeadline,
-        }));
-        try {
-            await fetch('http://localhost:8766/auction-log', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ items: payload }),
-            });
-        } catch (e) {}
-    }
-
     async function processItems(items, makerName) {
-        const auctionItems = items.filter(item => item.auction && item.auction.bidDeadline);
-        if (auctionItems.length > 0) {
-            p1Log(`  ●オークション検知 ${auctionItems.length}件`);
-            reportAuctionItems(auctionItems);
-        }
-
         const formatted = items
             .map(item => ({
                 name:  '[R] ' + (item.name || ''),
