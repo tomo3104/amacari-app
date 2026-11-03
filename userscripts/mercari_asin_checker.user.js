@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.81
+// @version      3.82
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -628,10 +628,14 @@
     const deepScanBtn = document.createElement('button');
     deepScanBtn.textContent = '深堀り分析（売り切れ）';
     deepScanBtn.style.cssText = 'padding:8px 14px; background:#555; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+    const deepScanMultiBtn = document.createElement('button');
+    deepScanMultiBtn.textContent = '深堀り分析（複数メーカー）';
+    deepScanMultiBtn.style.cssText = 'padding:8px 14px; background:#333; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
     container.appendChild(statusEl);
     container.appendChild(startBtn);
     container.appendChild(batchBtn);
     container.appendChild(deepScanBtn);
+    container.appendChild(deepScanMultiBtn);
     container.appendChild(stopBtn);
 
     const kojimaWrap = document.createElement('div');
@@ -993,7 +997,10 @@
         const summary = summaryLines.join('\n');
         console.log(summary);
         updateStatus(summary);
-        alert(summary);
+        return {
+            makerName, endReason, pagesFetched, totalItems, totalMatches, totalNewCands,
+            repeatModels, summary,
+        };
     }
 
     function startDeepScan() {
@@ -1015,11 +1022,84 @@
                 return;
             }
             return runDeepScan(mfr.crawl_url, makerName.trim());
+        }).then(result => {
+            if (result) alert(result.summary);
         }).catch(e => {
             alert(`メーカーリスト取得失敗: ${e.message}`);
         }).finally(() => {
             running = false; setRunningUI(false);
         });
+    }
+
+    // 2026-11-03追加：1社ずつ手動で名前を入れ直すのが手間なため、グループ指定で
+    // 複数メーカーを自動で順番に（1社完了→次の社、を繰り返す）深堀り分析する。
+    // runDeepScan自体は並列化しない（Mercari API・サーバー側の照合に同時負荷を
+    // かけないため、既存のクローラーリサーチ等と同じ「順次処理」方針を踏襲）。
+    async function startDeepScanMulti() {
+        const groupInput = prompt(
+            '深堀り分析する対象グループを入力（例: A / A,B / ALL=F列URL設定済み全社）\n' +
+            '1社ずつ自動で順番に実行します（並列ではありません）。',
+            'ALL',
+        );
+        if (!groupInput) return;
+        const isAll = groupInput.trim().toUpperCase() === 'ALL';
+        const groups = isAll ? null : groupInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+
+        running = true;
+        setRunningUI(true);
+        updateStatus('[深堀り分析（複数）] メーカーリストを取得中...');
+        let mfrs;
+        try {
+            ({ mfrs } = await getManufacturersDynamic());
+        } catch (e) {
+            alert(`メーカーリスト取得失敗: ${e.message}`);
+            running = false; setRunningUI(false);
+            return;
+        }
+        const targets = mfrs.filter(m => m.crawl_url && (isAll || groups.includes((m.group || '').toUpperCase())));
+        if (targets.length === 0) {
+            alert('対象メーカーが見つかりません（F列に売り切れ用URLが設定されているメーカーのみ対象です）');
+            running = false; setRunningUI(false);
+            return;
+        }
+        const ok = confirm(
+            `${targets.length}社を1社ずつ順番に深堀り分析します。\n` +
+            `1社あたり数分〜十数分かかるため、全体では長時間（${targets.length}社×数分〜）になります。\n` +
+            `続行しますか？（「中止」ボタンでいつでも中断できます）`,
+        );
+        if (!ok) { running = false; setRunningUI(false); return; }
+
+        const results = [];
+        for (let i = 0; i < targets.length; i++) {
+            if (!running) break;
+            const mfr = targets[i];
+            updateStatus(`[深堀り分析（複数） ${i + 1}/${targets.length}] ${mfr.name} 実行中...`);
+            try {
+                const result = await runDeepScan(mfr.crawl_url, mfr.name);
+                results.push(result);
+            } catch (e) {
+                results.push({ makerName: mfr.name, endReason: `エラー: ${e.message}`, totalItems: 0, totalMatches: 0, totalNewCands: 0 });
+            }
+        }
+
+        const grandTotal = results.reduce((acc, r) => ({
+            items: acc.items + (r.totalItems || 0),
+            matches: acc.matches + (r.totalMatches || 0),
+            newCands: acc.newCands + (r.totalNewCands || 0),
+        }), { items: 0, matches: 0, newCands: 0 });
+
+        const summaryLines = [
+            `=== 深堀り分析（複数メーカー） 完了 ===`,
+            `対象: ${results.length}/${targets.length}社（${running ? '全て完了' : '中止ボタンで中断'}）`,
+            `合計収集: ${grandTotal.items}件 / 仕入れ対象: ${grandTotal.matches}件 / 新規型番候補: ${grandTotal.newCands}件`,
+            '',
+            ...results.map(r => `${r.makerName}: 収集${r.totalItems}件 仕入対象${r.totalMatches}件 新規${r.totalNewCands}件（${r.endReason}）`),
+        ];
+        const summary = summaryLines.join('\n');
+        console.log(summary);
+        alert(summary);
+
+        running = false; setRunningUI(false);
     }
 
     // 自動起動（?auto_research=）経由だった場合、クローラーリサーチがどのルート（正常完了・
@@ -1845,6 +1925,7 @@
     startBtn.addEventListener('click', () => { running = true; items = {}; setRunningUI(true); run(); });
     batchBtn.addEventListener('click', startBatch);
     deepScanBtn.addEventListener('click', startDeepScan);
+    deepScanMultiBtn.addEventListener('click', startDeepScanMulti);
     kojimaBtn.addEventListener('click', () => {
         GM_openInTab(KOJIMA_SHOPS_SEARCH, { active: true });
         kojimaUpdateStatus('新タブで家電検索を開いています...\n自動スキャンが開始されます');
