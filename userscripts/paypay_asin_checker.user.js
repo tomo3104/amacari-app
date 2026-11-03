@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.8
+// @version      2.9
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -563,7 +563,11 @@
         const filtered = (targets.includes('ALL')
             ? mfrs
             : mfrs.filter(m => targets.includes((m.group || '').toUpperCase()))
-        ).filter(m => !(m.url || '').includes('category_id')); // カテゴリ検索行はPPフリマ非対応のためスキップ
+        // 2026-11-03修正：category_idの有無で判定していたが、山善・カシオ・シャープ・エプソン・
+        // キヤノン・ティファール等、ブランド名の曖昧さ対策でURLにcategory_idも併用している
+        // 正規メーカーまで誤って除外してしまっていた（実機確認で発覚）。純粋なカテゴリ行は
+        // brand_idを持たないため、brand_idの有無で判定するよう修正。
+        ).filter(m => (m.url || '').includes('brand_id=')); // カテゴリ検索行(brand_id無し)はPPフリマ非対応のためスキップ
         if (filtered.length === 0) { updateStatus('対象なし'); return; }
 
         running = true;
@@ -762,7 +766,12 @@
                     if (allMfrs.length === 0) { updateStatus('メーカーリストが空です'); return; }
                     // カテゴリ検索行はPPフリマ非対応で元々対象外（runBatchFetch側でも除外している）。
                     // 選択画面に「実行しても0件になるグループ」が出ないよう、ここで一覧からも外す。
-                    const isCat = m => (m.url || '').includes('category_id');
+                    // 2026-11-03修正：「category_idを含む」で判定していたが、山善・カシオ・シャープ・
+                    // エプソン・キヤノン・ティファール等、ブランド名の曖昧さ対策でURLにcategory_idも
+                    // 併用している正規メーカーまで誤って「カテゴリ行」と判定し除外してしまっていた
+                    // （実機確認で発覚）。純粋なカテゴリ行はbrand_idを持たない一方、正規メーカー行は
+                    // 必ずbrand_id=を含むため、brand_idの有無で判定するよう修正。
+                    const isCat = m => !(m.url || '').includes('brand_id=');
                     const mfrs = REQUIRE_BRAND_ID ? allMfrs.filter(m => !isCat(m) && m.yahoo_brand_id) : allMfrs;
                     const skipped = allMfrs.filter(m => !isCat(m) && !m.yahoo_brand_id).length;
                     if (REQUIRE_BRAND_ID && skipped > 0) {
