@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.5
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)）
+// @version      2.6
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -68,9 +68,19 @@
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
     `;
+    // 2026-11-03追加：メルカリ側の「深堀り分析」と同じ目的（売り切れ全件読み・
+    // 仕入れ対象率とリピート型番の調査）をPPフリマでも行うためのボタン。
+    const deepScanBtn = document.createElement('button');
+    deepScanBtn.textContent = '深堀り分析（売り切れ）';
+    deepScanBtn.style.cssText = 'padding:8px 14px; background:#555; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+    const deepScanMultiBtn = document.createElement('button');
+    deepScanMultiBtn.textContent = '深堀り分析（複数メーカー）';
+    deepScanMultiBtn.style.cssText = 'padding:8px 14px; background:#333; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
     container.appendChild(statusEl);
     container.appendChild(batchBtn);
     container.appendChild(catBtn);
+    container.appendChild(deepScanBtn);
+    container.appendChild(deepScanMultiBtn);
     container.appendChild(stopBtn);
     document.body.appendChild(container);
 
@@ -80,6 +90,8 @@
     function setRunningUI(on) {
         batchBtn.style.display = on ? 'none'  : 'block';
         catBtn.style.display   = on ? 'none'  : 'block';
+        deepScanBtn.style.display = on ? 'none' : 'block';
+        deepScanMultiBtn.style.display = on ? 'none' : 'block';
         stopBtn.style.display  = on ? 'block' : 'none';
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -147,6 +159,238 @@
             await sleep(PAGE_SLEEP_MS);
         }
         return allItems;
+    }
+
+    // ===== 深堀り分析（売り切れ・サルベージリサーチ）=====
+    // 2026-11-03追加：mercari_asin_checker.user.jsの深堀り分析と同じ目的。
+    // PPフリマAPIは「statuses=OPEN」を指定しても実際には売り切れ商品も返ってくる
+    // （fetchPayPayItems内のコメント参照：APIフィルタが非機能のためクライアント側で
+    // item.itemStatus!=='OPEN'を弾いている）。つまりAPI自体は既に売り切れ商品を
+    // 返してきているので、その除外条件を反転するだけで売り切れ全件スキャンが作れる。
+    // hitsシートには保存しない（dry_run=trueでサーバーに照合だけさせる）。
+    const DEEP_SCAN_PP_MAX_PAGE    = 500;  // 500p×100件 = 最大50,000件
+    const DEEP_SCAN_PP_BATCH_PAGES = 10;
+
+    async function runDeepScanPayPay(mfr, makerNameRaw) {
+        const makerName = `${makerNameRaw} [Yahoo]`; // メルカリ側の深堀りログと混同しないよう明示タグ
+        let priceMin = 1000, priceMax = 20000;
+        try {
+            if (mfr.url) {
+                const sp = new URLSearchParams(new URL(mfr.url).search);
+                if (sp.get('price_min')) priceMin = Number(sp.get('price_min'));
+                if (sp.get('price_max')) priceMax = Number(sp.get('price_max'));
+            }
+        } catch (_) {}
+        const yahooBrandId = mfr.yahoo_brand_id;
+
+        const sessionId  = new Date().toISOString().replace(/[:.]/g, '-');
+        let offset        = 0;
+        let totalAvailable = null;
+        let pending        = [];
+        let totalItems     = 0;
+        let totalMatches   = 0;
+        let totalNewCands  = 0;
+        const modelCount   = new Map();
+        let pagesFetched    = 0;
+        let stoppedByError  = '';
+
+        async function flushBatch() {
+            if (pending.length === 0) return;
+            const itemList = pending;
+            pending = [];
+            const result = await new Promise(resolve => {
+                GM_xmlhttpRequest({
+                    method: 'POST', url: SERVER_URL,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({ items: itemList, maker: makerName, dry_run: true, deep_scan_session: sessionId }),
+                    timeout: 120000,
+                    onload:  res => { try { resolve(JSON.parse(res.responseText)); } catch(e) { resolve({}); } },
+                    ontimeout: () => resolve({}),
+                    onerror:   () => resolve({ _serverDown: true }),
+                });
+            });
+            if (result._serverDown) throw new Error('サーバー未起動');
+            totalMatches  += (result.matches || []).length;
+            totalNewCands += result.new_candidates_count || 0;
+            (result.matches || []).forEach(m => {
+                modelCount.set(m.model, (modelCount.get(m.model) || 0) + 1);
+            });
+        }
+
+        updateStatus(`[深堀り分析] ${makerName} 売り切れページを読み込み中...`);
+
+        for (let page = 0; page < DEEP_SCAN_PP_MAX_PAGE; page++) {
+            if (!running) break;
+            const params = new URLSearchParams({
+                minPrice: String(priceMin), maxPrice: String(priceMax),
+                results: '100', offset: String(offset), sort: 'openTime', order: 'desc',
+            });
+            if (yahooBrandId) params.append('brandIds', yahooBrandId);
+            else params.append('query', makerNameRaw);
+            params.append('itemStatuses', 'NEW');
+            const url = `https://paypayfleamarket.yahoo.co.jp/api/v1/search?${params}`;
+
+            let data;
+            try {
+                const res = await fetch(url, { credentials: 'include' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                data = await res.json();
+            } catch (e) {
+                stoppedByError = e.message;
+                break;
+            }
+            pagesFetched = page + 1;
+            if (totalAvailable === null) totalAvailable = data.totalResultsAvailable || 0;
+
+            const pageItems = (data.items || []).filter(item => {
+                if (!item.id || !item.title || item.price == null) return false;
+                if (!item.itemStatus || item.itemStatus === 'OPEN') return false; // 出品中は対象外、売り切れのみ採用
+                if (item.condition !== 'new') return false;
+                if (item.isBulkPurchaseItem) return false;
+                if (EXCLUDE_KW.some(kw => item.title.includes(kw))) return false;
+                return true;
+            });
+            pageItems.forEach(item => {
+                totalItems++;
+                pending.push({
+                    name: item.title, price: String(item.price),
+                    url: `https://paypayfleamarket.yahoo.co.jp/item/${item.id}`,
+                    image: item.thumbnailImageUrl || item.imageUrl || '',
+                    created: item.openTime || null,
+                });
+            });
+
+            updateStatus(`[深堀り分析] ${makerName} p${pagesFetched} 収集${totalItems}件 仕入対象${totalMatches}件（照合中…）`);
+
+            if (page % DEEP_SCAN_PP_BATCH_PAGES === DEEP_SCAN_PP_BATCH_PAGES - 1) {
+                try { await flushBatch(); } catch (e) { stoppedByError = e.message; break; }
+                updateStatus(`[深堀り分析] ${makerName} p${pagesFetched} 収集${totalItems}件 仕入対象${totalMatches}件`);
+            }
+
+            const returned = data.totalResultsReturned || (data.items || []).length;
+            offset += returned;
+            if (offset >= totalAvailable || returned === 0) break;
+            await sleep(PAGE_SLEEP_MS);
+        }
+
+        try { await flushBatch(); } catch (e) { if (!stoppedByError) stoppedByError = e.message; }
+
+        const repeatModels = [...modelCount.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]);
+        const endReason = stoppedByError ? `エラーで中断: ${stoppedByError}`
+            : !running ? '中止ボタンで中断'
+            : pagesFetched >= DEEP_SCAN_PP_MAX_PAGE ? `上限${DEEP_SCAN_PP_MAX_PAGE}ページに到達（本当に打ち止めか未確認）`
+            : '新着/重複切れで自然終了（これ以上は無い）';
+
+        await new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'POST', url: SERVER_URL,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({
+                    items: [], maker: makerName, dry_run: true, deep_scan_session: sessionId,
+                    meta: { maker: makerName, mfrUrl: mfr.url, endReason, pagesFetched, totalItems, totalMatches, totalNewCands, repeatModels },
+                }),
+                timeout: 30000,
+                onload: () => resolve(), ontimeout: () => resolve(), onerror: () => resolve(),
+            });
+        });
+
+        const summaryLines = [
+            `=== 深堀り分析: ${makerName}（売り切れ） ===`,
+            `終了理由: ${endReason}`,
+            `到達ページ数: ${pagesFetched}（最大${pagesFetched * 100}件相当）`,
+            `収集件数: ${totalItems}件`,
+            `list.json基準で仕入れ対象: ${totalMatches}件`,
+            `うち同一型番が2回以上出現（リピート型番）: ${repeatModels.length}種類`,
+            ...repeatModels.slice(0, 20).map(([m, n]) => `  ${m}: ${n}回`),
+            `新規型番候補（list.json未収録・収集済み）: ${totalNewCands}件`,
+        ];
+        const summary = summaryLines.join('\n');
+        console.log(summary);
+        updateStatus(summary);
+        return { makerName, endReason, pagesFetched, totalItems, totalMatches, totalNewCands, repeatModels, summary };
+    }
+
+    function startDeepScanPayPay() {
+        const makerName = prompt('深堀り分析するメーカー名を入力（manufacturersシートの表記と一致させる）', 'エレコム');
+        if (!makerName) return;
+        running = true;
+        setRunningUI(true);
+        updateStatus(`[深堀り分析] ${makerName} の情報を検索中...`);
+        fetchEligibleMfrs(mfrs => {
+            const mfr = mfrs.find(m => m.name === makerName.trim());
+            if (!mfr) {
+                alert(`manufacturersシートに「${makerName}」が見つかりません（ブランドID未設定の場合も対象外です）`);
+                running = false; setRunningUI(false);
+                return;
+            }
+            runDeepScanPayPay(mfr, makerName.trim()).then(result => {
+                if (result) alert(result.summary);
+            }).finally(() => { running = false; setRunningUI(false); });
+        });
+    }
+
+    async function startDeepScanPayPayMulti() {
+        const groupInput = prompt(
+            '深堀り分析する対象グループを入力（例: A / A,B / ALL=ブランドID設定済み全社）\n' +
+            '1社ずつ自動で順番に実行します（並列ではありません）。',
+            'ALL',
+        );
+        if (!groupInput) return;
+        const isAll = groupInput.trim().toUpperCase() === 'ALL';
+        const groups = isAll ? null : groupInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+        const excludeInput = prompt('除外するメーカー名があればカンマ区切りで入力（既に個別実行済み等・空欄でなし）', '');
+        const excludeNames = (excludeInput || '').split(',').map(s => s.trim()).filter(Boolean);
+
+        running = true;
+        setRunningUI(true);
+        updateStatus('[深堀り分析（複数）] メーカーリストを取得中...');
+        fetchEligibleMfrs(async mfrs => {
+            const targets = mfrs.filter(m =>
+                (isAll || groups.includes((m.group || '').toUpperCase())) &&
+                !excludeNames.includes(m.name),
+            );
+            if (targets.length === 0) {
+                alert('対象メーカーが見つかりません（ブランドID設定済みのメーカーのみ対象です）');
+                running = false; setRunningUI(false);
+                return;
+            }
+            const ok = confirm(
+                `${targets.length}社を1社ずつ順番に深堀り分析します。\n` +
+                `1社あたり数分〜十数分かかるため、全体では長時間になります。\n` +
+                `続行しますか？（「中止」ボタンでいつでも中断できます）`,
+            );
+            if (!ok) { running = false; setRunningUI(false); return; }
+
+            const results = [];
+            for (let i = 0; i < targets.length; i++) {
+                if (!running) break;
+                const mfr = targets[i];
+                updateStatus(`[深堀り分析（複数） ${i + 1}/${targets.length}] ${mfr.name} 実行中...`);
+                try {
+                    results.push(await runDeepScanPayPay(mfr, mfr.name));
+                } catch (e) {
+                    results.push({ makerName: `${mfr.name} [Yahoo]`, endReason: `エラー: ${e.message}`, totalItems: 0, totalMatches: 0, totalNewCands: 0 });
+                }
+            }
+
+            const grandTotal = results.reduce((acc, r) => ({
+                items: acc.items + (r.totalItems || 0),
+                matches: acc.matches + (r.totalMatches || 0),
+                newCands: acc.newCands + (r.totalNewCands || 0),
+            }), { items: 0, matches: 0, newCands: 0 });
+
+            const summaryLines = [
+                `=== 深堀り分析（複数メーカー・PPフリマ） 完了 ===`,
+                `対象: ${results.length}/${targets.length}社（${running ? '全て完了' : '中止ボタンで中断'}）`,
+                `合計収集: ${grandTotal.items}件 / 仕入れ対象: ${grandTotal.matches}件 / 新規型番候補: ${grandTotal.newCands}件`,
+                '',
+                ...results.map(r => `${r.makerName}: 収集${r.totalItems}件 仕入対象${r.totalMatches}件 新規${r.totalNewCands}件（${r.endReason}）`),
+            ];
+            const summary = summaryLines.join('\n');
+            console.log(summary);
+            alert(summary);
+            running = false; setRunningUI(false);
+        });
     }
 
     // ===== サーバー送信（照合） =====
@@ -477,6 +721,8 @@
 
     // ===== ボタン処理 =====
     batchBtn.onclick = () => fetchEligibleMfrs(showGroupPicker);
+    deepScanBtn.onclick = startDeepScanPayPay;
+    deepScanMultiBtn.onclick = startDeepScanPayPayMulti;
     catBtn.onclick = () => {
         GM_xmlhttpRequest({
             method: 'GET',
