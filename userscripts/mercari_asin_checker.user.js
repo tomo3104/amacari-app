@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.82
+// @version      3.83
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -845,7 +845,7 @@
     const DEEP_SCAN_BATCH_PAGES = 10;    // 10pごと(最大1,200件)にサーバーへdry_run照合し、溜め込みすぎない
 
     async function runDeepScan(mfrUrl, makerName) {
-        const tpl = _getSharedTpl();
+        let tpl = _getSharedTpl();
         if (!tpl) { updateStatus('[深堀り分析] テンプレート未取得。Mercariの検索ページを開いた状態で再試行してください。'); return; }
 
         const sp = new URLSearchParams(new URL(mfrUrl).search);
@@ -891,6 +891,12 @@
 
         updateStatus(`[深堀り分析] ${makerName} 売り切れページを読み込み中...`);
 
+        // 2026-11-03追加：他の巡回系（クローラーリサーチ等）と同じ「テンプレート失効
+        // 検知→削除→再取得→同じページをリトライ」の回復ロジック。これが無いと、
+        // 長時間動くこの深堀り分析は一度テンプレートが古くなっただけで即座に
+        // HTTP 401で全滅する（実機で発生・エレコムの後にアイ・オー・データで発覚）。
+        let tplRetryCount = 0;
+
         for (let page = 0; page < DEEP_SCAN_MAX_PAGES; page++) {
             if (!running) break;
             const bodyObj = JSON.parse(tpl.body);
@@ -921,9 +927,26 @@
                 data = await res.json();
             } catch(e) {
                 clearTimeout(timer);
+                if (/HTTP 4/.test(e.message) || e.message === 'NO_TEMPLATE') {
+                    updateStatus(`[深堀り分析] ${makerName} p${page + 1} テンプレート失効 → 再取得中...`);
+                    _uw.localStorage.removeItem(_SHARED_TPL_KEY);
+                    GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+                    await waitForTemplate(20000);
+                    const freshTpl = _getSharedTpl();
+                    if (freshTpl && tplRetryCount < 3) {
+                        tpl = freshTpl;
+                        tplRetryCount++;
+                        page--;
+                        await sleep(1000);
+                        continue;
+                    }
+                    stoppedByError = freshTpl ? `同じページでテンプレート再取得後も${tplRetryCount}回連続失敗` : 'テンプレート再取得失敗';
+                    break;
+                }
                 stoppedByError = e.message;
                 break;
             }
+            tplRetryCount = 0;
             pagesFetched = page + 1;
 
             const pageItems = (data.items || []).filter(item => {
