@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      2.8
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -171,18 +171,11 @@
     const DEEP_SCAN_PP_MAX_PAGE    = 500;  // 500p×100件 = 最大50,000件
     const DEEP_SCAN_PP_BATCH_PAGES = 10;
 
-    async function runDeepScanPayPay(mfr, makerNameRaw) {
+    // 2026-11-03修正：メーカー(ブランドID)版とカテゴリ版で丸ごと重複実装しないよう、
+    // 検索条件を明示的なオプションに切り出した。genreCategoryIdがあればカテゴリ巡回
+    // (runCategoryBatchFetchと同じ優先順位：genreCategoryId > yahooBrandId > キーワード)。
+    async function runDeepScanPayPay({ makerNameRaw, priceMin = 1000, priceMax = 20000, yahooBrandId, genreCategoryId }) {
         const makerName = `${makerNameRaw} [Yahoo]`; // メルカリ側の深堀りログと混同しないよう明示タグ
-        let priceMin = 1000, priceMax = 20000;
-        try {
-            if (mfr.url) {
-                const sp = new URLSearchParams(new URL(mfr.url).search);
-                if (sp.get('price_min')) priceMin = Number(sp.get('price_min'));
-                if (sp.get('price_max')) priceMax = Number(sp.get('price_max'));
-            }
-        } catch (_) {}
-        const yahooBrandId = mfr.yahoo_brand_id;
-
         const sessionId  = new Date().toISOString().replace(/[:.]/g, '-');
         let offset        = 0;
         let totalAvailable = null;
@@ -225,7 +218,8 @@
                 minPrice: String(priceMin), maxPrice: String(priceMax),
                 results: '100', offset: String(offset), sort: 'openTime', order: 'desc',
             });
-            if (yahooBrandId) params.append('brandIds', yahooBrandId);
+            if (genreCategoryId) params.append('genreCategoryIds', genreCategoryId);
+            else if (yahooBrandId) params.append('brandIds', yahooBrandId);
             else params.append('query', makerNameRaw);
             params.append('itemStatuses', 'NEW');
             const url = `https://paypayfleamarket.yahoo.co.jp/api/v1/search?${params}`;
@@ -287,7 +281,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify({
                     items: [], maker: makerName, dry_run: true, deep_scan_session: sessionId,
-                    meta: { maker: makerName, mfrUrl: mfr.url, endReason, pagesFetched, totalItems, totalMatches, totalNewCands, repeatModels },
+                    meta: { maker: makerName, yahooBrandId, genreCategoryId, endReason, pagesFetched, totalItems, totalMatches, totalNewCands, repeatModels },
                 }),
                 timeout: 30000,
                 onload: () => resolve(), ontimeout: () => resolve(), onerror: () => resolve(),
@@ -323,80 +317,138 @@
                 running = false; setRunningUI(false);
                 return;
             }
-            runDeepScanPayPay(mfr, makerName.trim()).then(result => {
+            let priceMin = 1000, priceMax = 20000;
+            try {
+                if (mfr.url) {
+                    const sp = new URLSearchParams(new URL(mfr.url).search);
+                    if (sp.get('price_min')) priceMin = Number(sp.get('price_min'));
+                    if (sp.get('price_max')) priceMax = Number(sp.get('price_max'));
+                }
+            } catch (_) {}
+            runDeepScanPayPay({ makerNameRaw: makerName.trim(), priceMin, priceMax, yahooBrandId: mfr.yahoo_brand_id }).then(result => {
                 if (result) alert(result.summary);
             }).finally(() => { running = false; setRunningUI(false); });
         });
     }
 
+    function fetchPpCategories() {
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'GET', url: CATEGORY_URL,
+                onload: res => { try { resolve(JSON.parse(res.responseText).categories || []); } catch (e) { resolve([]); } },
+                onerror: () => resolve([]),
+            });
+        });
+    }
+
+    // 2026-11-03追加：ちまちま1グループずつ指定するのが手間なため、
+    // ALL（メーカー+カテゴリ全部）／メーカーのみ（全グループのメーカー）／
+    // カテゴリのみ（PPフリマ独自のカテゴリ巡回対象全部）の3種類をまとめて選べるようにした。
+    // 数字グループのカンマ区切り指定（メーカーのみに適用）も従来通り使える。
     async function startDeepScanPayPayMulti() {
-        const groupInput = prompt(
-            '深堀り分析する対象グループを入力（例: A / A,B / ALL=ブランドID設定済み全社）\n' +
+        const modeInput = prompt(
+            '深堀り分析する対象を入力:\n' +
+            '  ALL = メーカー(ブランドID設定済み)+カテゴリ全部\n' +
+            '  メーカーのみ = メーカー全部\n' +
+            '  カテゴリのみ = PPフリマカテゴリ巡回対象全部\n' +
+            '  または数字グループをカンマ区切り(メーカーのみに適用。例: 1 / 1,2)\n' +
             '1社ずつ自動で順番に実行します（並列ではありません）。',
             'ALL',
         );
-        if (!groupInput) return;
-        const isAll = groupInput.trim().toUpperCase() === 'ALL';
-        const groups = isAll ? null : groupInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-        const excludeInput = prompt('除外するメーカー名があればカンマ区切りで入力（既に個別実行済み等・空欄でなし）', '');
+        if (!modeInput) return;
+        const mode = modeInput.trim();
+        const modeUpper = mode.toUpperCase();
+        const wantAllMfr = modeUpper === 'ALL' || mode === 'メーカーのみ';
+        const wantAllCat = modeUpper === 'ALL' || mode === 'カテゴリのみ';
+        const isGroupMode = !wantAllMfr && !wantAllCat;
+        const groups = isGroupMode ? mode.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : null;
+
+        const excludeInput = prompt('除外するメーカー/カテゴリ名があればカンマ区切りで入力（既に個別実行済み等・空欄でなし）', '');
         const excludeNames = (excludeInput || '').split(',').map(s => s.trim()).filter(Boolean);
 
         running = true;
         setRunningUI(true);
-        updateStatus('[深堀り分析（複数）] メーカーリストを取得中...');
-        fetchEligibleMfrs(async mfrs => {
-            // 2026-11-03追加：「カテゴリ」とだけ入力すれば名前付きカテゴリグループ全部に
-            // まとめてマッチするようにする（mercari_asin_checker.user.jsと同じ仕様）。
-            const groupMatches = (groupValue) => {
-                const g = (groupValue || '').toUpperCase();
-                return groups.some(s => s === 'カテゴリ' ? g.indexOf('カテゴリ') === 0 : s === g);
-            };
-            const targets = mfrs.filter(m =>
-                (isAll || groupMatches(m.group)) &&
-                !excludeNames.includes(m.name),
-            );
-            if (targets.length === 0) {
-                alert('対象メーカーが見つかりません（ブランドID設定済みのメーカーのみ対象です）');
-                running = false; setRunningUI(false);
-                return;
-            }
-            const ok = confirm(
-                `${targets.length}社を1社ずつ順番に深堀り分析します。\n` +
-                `1社あたり数分〜十数分かかるため、全体では長時間になります。\n` +
-                `続行しますか？（「中止」ボタンでいつでも中断できます）`,
-            );
-            if (!ok) { running = false; setRunningUI(false); return; }
+        updateStatus('[深堀り分析（複数）] 対象リストを取得中...');
 
-            const results = [];
-            for (let i = 0; i < targets.length; i++) {
-                if (!running) break;
-                const mfr = targets[i];
-                updateStatus(`[深堀り分析（複数） ${i + 1}/${targets.length}] ${mfr.name} 実行中...`);
-                try {
-                    results.push(await runDeepScanPayPay(mfr, mfr.name));
-                } catch (e) {
-                    results.push({ makerName: `${mfr.name} [Yahoo]`, endReason: `エラー: ${e.message}`, totalItems: 0, totalMatches: 0, totalNewCands: 0 });
-                }
-            }
+        let mfrs = [];
+        if (wantAllMfr || isGroupMode) {
+            try {
+                mfrs = await new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('タイムアウト')), 15000);
+                    fetchEligibleMfrs(result => { clearTimeout(timer); resolve(result); });
+                });
+            } catch (_) {}
+        }
+        const categories = (wantAllCat) ? await fetchPpCategories() : [];
 
-            const grandTotal = results.reduce((acc, r) => ({
-                items: acc.items + (r.totalItems || 0),
-                matches: acc.matches + (r.totalMatches || 0),
-                newCands: acc.newCands + (r.totalNewCands || 0),
-            }), { items: 0, matches: 0, newCands: 0 });
+        const groupMatches = (groupValue) => {
+            const g = (groupValue || '').toUpperCase();
+            return (groups || []).some(s => s === 'カテゴリ' ? g.indexOf('カテゴリ') === 0 : s === g);
+        };
+        const mfrTargets = (wantAllMfr || isGroupMode)
+            ? mfrs.filter(m => (wantAllMfr || groupMatches(m.group)) && !excludeNames.includes(m.name))
+            : [];
+        const catTargets = wantAllCat
+            ? categories.filter(c => !excludeNames.includes(c.name))
+            : [];
 
-            const summaryLines = [
-                `=== 深堀り分析（複数メーカー・PPフリマ） 完了 ===`,
-                `対象: ${results.length}/${targets.length}社（${running ? '全て完了' : '中止ボタンで中断'}）`,
-                `合計収集: ${grandTotal.items}件 / 仕入れ対象: ${grandTotal.matches}件 / 新規型番候補: ${grandTotal.newCands}件`,
-                '',
-                ...results.map(r => `${r.makerName}: 収集${r.totalItems}件 仕入対象${r.totalMatches}件 新規${r.totalNewCands}件（${r.endReason}）`),
-            ];
-            const summary = summaryLines.join('\n');
-            console.log(summary);
-            alert(summary);
+        const targets = [
+            ...mfrTargets.map(m => ({ kind: 'mfr', name: m.name, mfr: m })),
+            ...catTargets.map(c => ({ kind: 'cat', name: c.name, cat: c })),
+        ];
+        if (targets.length === 0) {
+            alert('対象が見つかりません（メーカーはブランドID設定済みのもののみ対象です）');
             running = false; setRunningUI(false);
-        });
+            return;
+        }
+        const ok = confirm(
+            `${targets.length}件（メーカー${mfrTargets.length}・カテゴリ${catTargets.length}）を1件ずつ順番に深堀り分析します。\n` +
+            `1件あたり数分〜十数分かかるため、全体では長時間になります。\n` +
+            `続行しますか？（「中止」ボタンでいつでも中断できます）`,
+        );
+        if (!ok) { running = false; setRunningUI(false); return; }
+
+        const results = [];
+        for (let i = 0; i < targets.length; i++) {
+            if (!running) break;
+            const t = targets[i];
+            updateStatus(`[深堀り分析（複数） ${i + 1}/${targets.length}] ${t.name} 実行中...`);
+            try {
+                if (t.kind === 'mfr') {
+                    let priceMin = 1000, priceMax = 20000;
+                    try {
+                        if (t.mfr.url) {
+                            const sp = new URLSearchParams(new URL(t.mfr.url).search);
+                            if (sp.get('price_min')) priceMin = Number(sp.get('price_min'));
+                            if (sp.get('price_max')) priceMax = Number(sp.get('price_max'));
+                        }
+                    } catch (_) {}
+                    results.push(await runDeepScanPayPay({ makerNameRaw: t.name, priceMin, priceMax, yahooBrandId: t.mfr.yahoo_brand_id }));
+                } else {
+                    results.push(await runDeepScanPayPay({ makerNameRaw: t.name, priceMin: 1000, priceMax: 20000, genreCategoryId: t.cat.id }));
+                }
+            } catch (e) {
+                results.push({ makerName: `${t.name} [Yahoo]`, endReason: `エラー: ${e.message}`, totalItems: 0, totalMatches: 0, totalNewCands: 0 });
+            }
+        }
+
+        const grandTotal = results.reduce((acc, r) => ({
+            items: acc.items + (r.totalItems || 0),
+            matches: acc.matches + (r.totalMatches || 0),
+            newCands: acc.newCands + (r.totalNewCands || 0),
+        }), { items: 0, matches: 0, newCands: 0 });
+
+        const summaryLines = [
+            `=== 深堀り分析（複数・PPフリマ） 完了 ===`,
+            `対象: ${results.length}/${targets.length}件（${running ? '全て完了' : '中止ボタンで中断'}）`,
+            `合計収集: ${grandTotal.items}件 / 仕入れ対象: ${grandTotal.matches}件 / 新規型番候補: ${grandTotal.newCands}件`,
+            '',
+            ...results.map(r => `${r.makerName}: 収集${r.totalItems}件 仕入対象${r.totalMatches}件 新規${r.totalNewCands}件（${r.endReason}）`),
+        ];
+        const summary = summaryLines.join('\n');
+        console.log(summary);
+        alert(summary);
+        running = false; setRunningUI(false);
     }
 
     // ===== サーバー送信（照合） =====
