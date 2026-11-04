@@ -1,22 +1,27 @@
 // ==UserScript==
-// @name         フリマウォッチ タイムライン 利益率ハイライター
+// @name         フリマウォッチ タイムライン 検知ロガー
 // @namespace    http://tampermonkey.net/
-// @version      2.7
-// @description  実利益率（Amazon価格基準）に応じて行を色分けハイライト＆商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆実利益率15%以上かつ差益500円以上をASIN・型番付きでローカルサーバーに通知＆1時間ごとに自動リロード
+// @version      3.0
+// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
 // ==/UserScript==
 
+// 2026-11-04：v2.7まではここで実利益率を再計算し15%以上・差益500円以上だけを
+// ログ・ハイライトする「追加フィルター」として動いていた。その前提は「登録pmaxが
+// 純粋な損益分岐点で、利益率はこのスクリプト側だけでチェックする」ことだった。
+// 今はフリマウォッチへの登録pmax自体にランク帯別必要利益率を先引きしてある
+// （export_frima.py・サルベージ登録CSV共通）ため、フリマウォッチ本体のpmin〜pmax
+// マッチに引っかかった時点で既に必要利益率はクリア済みになっている。この状態で
+// 旧式のまま「limitPrice(=登録pmax)との差額」で利益率を再計算すると、先引き済みの
+// 分だけ実際より低く出てしまい、本来ログすべき行が漏れる（二重要求になる）。
+// そのため実利益率の計算・フィルター自体を廃止し、マッチした行を無条件でログする
+// 「ロガー」専用に簡略化した。
 (function () {
     'use strict';
 
-    const MIN_PROFIT_RATE = 0.15;
-    // 2026-09-16追加：利益率だけだと「利益率は高いが絶対額はごくわずか」な商品
-    // （例：500円の商品で利益率15%＝利益75円）まで通知されてしまうため、AR/RT側の
-    // MIN_DIFF（server.py）と同じ考え方で最低利益額の下限も追加した。
-    const MIN_DIFF = 500;
     const SERVER_URL = 'http://localhost:8768/furima-hit';
     const LS_KEY = 'furimaNotifiedCache';
     const LS_ACCOUNT_KEY = 'frimaAccount';
@@ -45,31 +50,6 @@
         document.body.appendChild(btn);
     }
 
-    // 登録時のmemo（例："Amazon:10000円 ランク:12345 FBA:2000円 pmax:6500円"）からAmazon価格を取得
-    function getAmazonPriceFromRow(row) {
-        try {
-            const scope = angular.element(row).scope();
-            const tr = scope && scope.timelineRow;
-            const source = (tr && tr.query && (tr.query.memo || tr.query.name)) || '';
-            const m = source.match(/Amazon:(\d+)円/);
-            return m ? parseInt(m[1], 10) : null;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    // 2026-09-11：pmax = Amazon価格 - FBA手数料（純粋な損益分岐点）に変更したため、
-    // 差額（diff）がそのまま実利益額になり、以前の「+Amazon価格×0.15」の補正は
-    // 不要になった。memoからAmazon価格が取れない場合（登録形式が古い等）は
-    // 旧式（差額÷上限価格）にフォールバック（この場合のみ旧pmaxの埋め込み利益が
-    // 残ったままの近似値になる）。
-    function calcRealMargin(diff, limitPrice, amazonPrice) {
-        if (amazonPrice) {
-            return diff / amazonPrice;
-        }
-        return diff / limitPrice;
-    }
-
     function getNotifiedCache() {
         try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; }
     }
@@ -77,8 +57,8 @@
         try { localStorage.setItem(LS_KEY, JSON.stringify(cache)); } catch (e) { /* noop */ }
     }
 
-    // ========== 利益率15%以上をローカルサーバーへ通知 ==========
-    function sendHit(row, profitRate, frimPrice, limitPrice) {
+    // ========== マッチした行を無条件でローカルサーバーへログ記録 ==========
+    function sendHit(row, frimPrice, limitPrice) {
         try {
             const scope = angular.element(row).scope();
             const tr = scope && scope.timelineRow;
@@ -101,7 +81,10 @@
                 name:       tr.item.name,
                 price:      frimPrice,
                 limitPrice: limitPrice,
-                profitRate: Math.round(profitRate * 1000) / 10,
+                // 2026-11-04：利益率の再計算自体を廃止した（登録pmaxに必要利益率が
+                // 先引きされているため、このスクリプト側で算出する数字は参考にならない）。
+                // furima_hitsシートのスキーマ互換のため0を送るだけにする。
+                profitRate: 0,
                 itemUrl:    tr.item.itemUrl,
                 imageUrl:   (tr.item.imageUrls && tr.item.imageUrls[0]) || '',
                 service:    tr.item.service || '',
@@ -123,15 +106,8 @@
         }
     }
 
-    function getProfitStyle(rate) {
-        if (rate >= 0.51) return { bg: 'linear-gradient(90deg, #e3f2fd, #bbdefb)', border: '#1565c0', badge: '#1565c0' }; // 青：51%以上
-        if (rate >= 0.21) return { bg: 'linear-gradient(90deg, #e8f5e9, #c8e6c9)', border: '#2e7d32', badge: '#2e7d32' }; // 緑：21〜50%
-        if (rate >= 0.06) return { bg: 'linear-gradient(90deg, #fffde7, #fff9c4)', border: '#f9a825', badge: '#f9a825' }; // 黄：6〜20%
-        return { bg: 'linear-gradient(90deg, #ffebee, #ffcdd2)', border: '#c62828', badge: '#c62828' };                   // 赤：0〜5%
-    }
-
-    // ========== 利益率ハイライト ==========
-    function highlight() {
+    // ========== タイムラインのマッチ行を走査してログ送信 ==========
+    function scanAndLog() {
         const rows = document.querySelectorAll('table tr');
 
         rows.forEach(row => {
@@ -155,38 +131,7 @@
 
             if (limitPrice <= 0) return;
 
-            const diff = limitPrice - frimPrice;
-            const amazonPrice = getAmazonPriceFromRow(row);
-            const profitRate = calcRealMargin(diff, limitPrice, amazonPrice);
-
-            if (profitRate >= MIN_PROFIT_RATE && diff >= MIN_DIFF) {
-                sendHit(row, profitRate, frimPrice, limitPrice);
-            }
-
-            const existingBadge = row.querySelector('.profit-badge');
-            if (existingBadge) existingBadge.remove();
-            row.style.background = '';
-            row.style.borderLeft = '';
-
-            const s = getProfitStyle(profitRate);
-            row.style.background = s.bg;
-            row.style.borderLeft = '4px solid ' + s.border;
-
-            const badge = document.createElement('span');
-            badge.className = 'profit-badge';
-            badge.textContent = `▲ ${(profitRate * 100).toFixed(1)}% お得`;
-            badge.style.cssText = [
-                'display: inline-block',
-                'margin-left: 8px',
-                'padding: 2px 8px',
-                'background: ' + s.badge,
-                'color: white',
-                'border-radius: 12px',
-                'font-size: 12px',
-                'font-weight: bold',
-                'vertical-align: middle'
-            ].join(';');
-            alertCell.appendChild(badge);
+            sendHit(row, frimPrice, limitPrice);
         });
     }
 
@@ -255,7 +200,7 @@
     }
 
     function run() {
-        highlight();
+        scanAndLog();
         fixButtons();
         addMonoTracerButtons();
     }

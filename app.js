@@ -77,6 +77,7 @@ const state = {
   furimaLastRejected: null,
   furimaSkipStack: [],
   furimaTotalCount: 0,
+  furimaAccount: "",
 
   // 発掘（説明文リサーチ）タブ用
   descCards: [],
@@ -114,6 +115,7 @@ const els = {
   furimaEmpty: document.getElementById("furima-empty-message"),
   furimaProgressLabel: document.getElementById("furima-progress-label"),
   furimaUndoBtn: document.getElementById("furima-undo-btn"),
+  furimaAccountSelect: document.getElementById("furima-account-select"),
   descView: document.getElementById("desc-view"),
   descStack: document.getElementById("desc-card-stack"),
   descEmpty: document.getElementById("desc-empty-message"),
@@ -224,12 +226,33 @@ async function loadStats() {
   }
 }
 
+// 2026-11-04追加：furima_hitsに複数アカウント（プレミアム用・サルベージリピート用等）が
+// 混在するようになったため、「アカウント」列でFRタブを絞り込めるようにする。
+// シートに実在するアカウント値はgasFetchの都度サーバーから返してもらい、
+// プルダウンに動的に反映する（A/B/C等、どの値を使うかはTampermonkey側の運用次第のため）。
+function renderFurimaAccountOptions(accounts) {
+  const sel = els.furimaAccountSelect;
+  const current = sel.value;
+  const existing = new Set(Array.from(sel.options).map(o => o.value));
+  accounts.forEach(a => {
+    if (existing.has(a)) return;
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = a;
+    sel.appendChild(opt);
+  });
+  if (Array.from(sel.options).some(o => o.value === current)) {
+    sel.value = current;
+  }
+}
+
 async function loadFurimaCards() {
   els.furimaEmpty.textContent = "読み込み中…";
   els.furimaEmpty.style.display = "block";
   try {
-    const data = await gasFetch("furimaCards");
+    const data = await gasFetch("furimaCards", { account: state.furimaAccount || "" });
     state.furimaCards = data.cards || [];
+    renderFurimaAccountOptions(data.accounts || []);
     state.furimaSkipStack = [];
     state.furimaTotalCount = state.furimaCards.length;
     renderFurimaStack();
@@ -1409,6 +1432,11 @@ els.tabs.forEach(tab => {
 els.sortSelect.addEventListener("change", () => {
   state.sort = els.sortSelect.value;
   loadCards();
+});
+
+els.furimaAccountSelect.addEventListener("change", () => {
+  state.furimaAccount = els.furimaAccountSelect.value;
+  loadFurimaCards();
 });
 
 els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
