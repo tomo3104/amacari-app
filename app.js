@@ -528,8 +528,13 @@ function buildFurimaCardEl(card) {
           <span class="label">実利益率</span>
           <span class="value">${formatPercent(card.margin)}</span>
         </div>
+        <div class="highlight-box highlight-roi">
+          <span class="label">ROI</span>
+          <span class="value">${formatPercent(card.roi)}</span>
+        </div>
       </div>
       <div class="card-grid">
+        <div><span>Amazon価格</span>${formatYen(card.amazon_price)}</div>
         <div><span>価格</span>${formatYen(card.price)}</div>
         <div><span>上限価格</span>${formatYen(card.limit_price)}</div>
         <div><span>差額</span>${formatYen(card.diff)}</div>

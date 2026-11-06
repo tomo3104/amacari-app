@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 検知ロガー
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード
+// @version      3.1
+// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -17,8 +17,13 @@
 // マッチに引っかかった時点で既に必要利益率はクリア済みになっている。この状態で
 // 旧式のまま「limitPrice(=登録pmax)との差額」で利益率を再計算すると、先引き済みの
 // 分だけ実際より低く出てしまい、本来ログすべき行が漏れる（二重要求になる）。
-// そのため実利益率の計算・フィルター自体を廃止し、マッチした行を無条件でログする
-// 「ロガー」専用に簡略化した。
+// そのため「マッチするか」のフィルターとしては使わず無条件でログするよう変更した。
+//
+// 2026-11-07追加：ただし表示用の実利益率自体は出せる。登録CSVのmemo欄
+// （export_frima.py/サルベージCSV共通）には「Amazon:○○円」と、利益率を引く前の
+// 純粋な損益分岐点「損益分岐点:○○円」が両方埋め込まれているため、
+// tr.query.memoから読み取って (損益分岐点-フリマ価格)÷Amazon価格×100 で
+// 正しく（二重引きにならずに）実利益率を再計算し、profitRateとして送る。
 (function () {
     'use strict';
 
@@ -76,21 +81,34 @@
             // （export_frima.pyのmake_premium_row参照）のため、先頭トークンが型番になる。
             const model = (querySource.trim().split(/\s+/)[0]) || '';
 
+            // 2026-11-07追加：登録CSVのmemo欄（export_frima.py/サルベージCSV共通）には
+            // 「Amazon:○○円」と、必要利益率を引く前の純粋な損益分岐点「損益分岐点:○○円」が
+            // 両方埋め込まれている。name優先のquerySourceとは別にmemoそのものを読み、
+            // (損益分岐点-フリマ価格)÷Amazon価格×100で実利益率を再計算する
+            // （limitPrice=登録pmaxは利益率が先引き済みのため、これを損益分岐点として使うと
+            // 二重引きになる・2026-11-04にそれが原因でフィルター自体を廃止した経緯がある）。
+            const memoText = (tr.query && tr.query.memo) || '';
+            const amazonMatch = memoText.match(/Amazon:([\d,]+)円/);
+            const breakevenMatch = memoText.match(/損益分岐点:([\d,]+)円/);
+            const amazonPrice = amazonMatch ? parseInt(amazonMatch[1].replace(/,/g, ''), 10) : null;
+            const breakeven = breakevenMatch ? parseInt(breakevenMatch[1].replace(/,/g, ''), 10) : null;
+            const profitRate = (amazonPrice && breakeven != null)
+                ? Math.round(((breakeven - frimPrice) / amazonPrice * 100) * 10) / 10
+                : 0; // memoが読めない古い登録分等は0（フィルターには使わないので実害なし）
+
             const payload = {
-                itemid:     itemid,
-                name:       tr.item.name,
-                price:      frimPrice,
-                limitPrice: limitPrice,
-                // 2026-11-04：利益率の再計算自体を廃止した（登録pmaxに必要利益率が
-                // 先引きされているため、このスクリプト側で算出する数字は参考にならない）。
-                // furima_hitsシートのスキーマ互換のため0を送るだけにする。
-                profitRate: 0,
-                itemUrl:    tr.item.itemUrl,
-                imageUrl:   (tr.item.imageUrls && tr.item.imageUrls[0]) || '',
-                service:    tr.item.service || '',
-                asin:       asinMatch ? asinMatch[0] : '',
-                account:    getAccount() || 'unknown',
-                model:      model,
+                itemid:      itemid,
+                name:        tr.item.name,
+                price:       frimPrice,
+                limitPrice:  limitPrice,
+                profitRate:  profitRate,
+                amazonPrice: amazonPrice,
+                itemUrl:     tr.item.itemUrl,
+                imageUrl:    (tr.item.imageUrls && tr.item.imageUrls[0]) || '',
+                service:     tr.item.service || '',
+                asin:        asinMatch ? asinMatch[0] : '',
+                account:     getAccount() || 'unknown',
+                model:       model,
             };
 
             fetch(SERVER_URL, {
