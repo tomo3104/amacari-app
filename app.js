@@ -390,6 +390,23 @@ function buildCardEl(card) {
     ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
     : `<div class="card-thumb"></div>`;
 
+  // 2026-11-07追加：実利益率・ROIは現在のメルカリ価格基準の値。これとは別に、
+  // 「仕入れ目標(3割引)」まで値切れた場合の利益率・ROIを括弧内に併記する
+  // （例：15.8%（20.2%））。実利益率・実利益額はメルカリ価格に対して線形
+  // （傾き-1/Amazon価格・-1）なので、価格差分(mercari_price - 目標価格)を
+  // 既存の値に加算するだけで、FBA手数料等をJS側で再計算せずに求められる。
+  const targetPrice   = negotiationTarget(card.pmax);
+  const priceShift    = Number(card.mercari_price) - Number(targetPrice);
+  const amazonPriceNum = Number(card.amazon_price);
+  const marginAtTarget = (Number.isFinite(targetPrice) && Number.isFinite(priceShift) && amazonPriceNum)
+    ? Math.round((Number(card.real_margin) + priceShift / amazonPriceNum * 100) * 10) / 10
+    : null;
+  const roiAtTarget = (Number.isFinite(targetPrice) && Number.isFinite(priceShift) && targetPrice > 0)
+    ? Math.round(((Number(card.real_profit) + priceShift) / targetPrice * 100) * 10) / 10
+    : null;
+  const marginTargetText = marginAtTarget === null ? "" : `<span class="value-target">（${formatPercent(marginAtTarget)}）</span>`;
+  const roiTargetText    = roiAtTarget === null ? "" : `<span class="value-target">（${formatPercent(roiAtTarget)}）</span>`;
+
   el.innerHTML = `
     ${isTreasure ? '<div class="treasure-badge">💎 お宝</div>' : ''}
     ${isHot ? '<div class="hot-badge">🔥 激熱</div>' : ''}
@@ -409,11 +426,11 @@ function buildCardEl(card) {
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
-          <span class="value">${formatPercent(card.real_margin)}</span>
+          <span class="value">${formatPercent(card.real_margin)}${marginTargetText}</span>
         </div>
         <div class="highlight-box highlight-roi">
           <span class="label">ROI</span>
-          <span class="value">${formatPercent(card.roi)}</span>
+          <span class="value">${formatPercent(card.roi)}${roiTargetText}</span>
         </div>
       </div>
       <div class="card-grid">

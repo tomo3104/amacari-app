@@ -224,6 +224,7 @@ body {
 
 .highlight-box .label { display: block; font-size: 10px; font-weight: 500; opacity: 0.8; }
 .highlight-box .value { display: block; font-size: 15px; }
+.highlight-box .value-target { font-size: 12px; font-weight: 500; opacity: 0.75; }
 
 .highlight-margin { background: #fde9e8; color: var(--red); }
 .highlight-roi { background: #e6f6fd; color: #0277bd; }
