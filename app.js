@@ -421,7 +421,7 @@ function buildCardEl(card) {
         <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
         <div><span>実利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
-        <div><span>仕入れ目標(4割引)</span>${formatYen(negotiationTarget(card.pmax))}</div>
+        <div><span>仕入れ目標(3割引)</span>${formatYen(negotiationTarget(card.pmax))}</div>
         <div><span>交渉目安</span>${formatNegotiation(card.mercari_price, card.pmax)}</div>
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
@@ -516,7 +516,7 @@ function buildFurimaCardEl(card) {
         <div><span>価格</span>${formatYen(card.price)}</div>
         <div><span>上限価格</span>${formatYen(card.limit_price)}</div>
         <div><span>差額</span>${formatYen(card.diff)}</div>
-        <div><span>仕入れ目標(4割引)</span>${formatYen(negotiationTarget(card.limit_price))}</div>
+        <div><span>仕入れ目標(3割引)</span>${formatYen(negotiationTarget(card.limit_price))}</div>
         <div><span>交渉目安</span>${formatNegotiation(card.price, card.limit_price)}</div>
       </div>
       <div class="card-links">
@@ -1477,11 +1477,10 @@ function formatYen(v) {
   return Number.isFinite(n) && v !== "" ? `¥${n.toLocaleString()}` : "−";
 }
 
-// 2026-09-25追加：「pmaxの4割引き」を仕入れ目標値として表示し、現在のメルカリ価格との
-// 差分を価格交渉の目安として見せる（ユーザーの実績平均が4割引き付近だったため、その
-// 水準を基準値に採用。固定値なので今後変えたくなったらNEGOTIATION_DISCOUNT_RATIOを
-// 調整するだけでよい）。
-const NEGOTIATION_DISCOUNT_RATIO = 0.6; // pmax×0.6 = 4割引き
+// 2026-09-25追加：「pmaxの3割引き」を仕入れ目標値として表示し、現在のメルカリ価格との
+// 差分を価格交渉の目安として見せる。固定値なので今後変えたくなったらNEGOTIATION_DISCOUNT_RATIOを
+// 調整するだけでよい（2026-11-07：4割引き→3割引きに変更）。
+const NEGOTIATION_DISCOUNT_RATIO = 0.7; // pmax×0.7 = 3割引き
 
 function negotiationTarget(pmax) {
   const n = Number(pmax);
