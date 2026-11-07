@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.86
+// @version      3.87
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -625,6 +625,11 @@
     const batchBtn = document.createElement('button');
     batchBtn.textContent = 'クローラーリサーチ';
     batchBtn.style.cssText = _amacariBtnBase + 'background:#9C27B0;';
+    // 2026-11-08追加：確定済み型番リスト（リピート型番＋過去仕入れ実績）を
+    // 能動的にメルカリ検索する「リピート検索」。待機期間の穴埋め用。
+    const repeatSearchBtn = document.createElement('button');
+    repeatSearchBtn.textContent = 'リピート検索';
+    repeatSearchBtn.style.cssText = _amacariBtnBase + 'background:#00796B;';
     const deepScanBtn = document.createElement('button');
     deepScanBtn.textContent = '深堀り分析（売り切れ）';
     deepScanBtn.style.cssText = 'padding:8px 14px; background:#555; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
@@ -634,6 +639,7 @@
     container.appendChild(statusEl);
     container.appendChild(startBtn);
     container.appendChild(batchBtn);
+    container.appendChild(repeatSearchBtn);
     container.appendChild(deepScanBtn);
     container.appendChild(deepScanMultiBtn);
     container.appendChild(stopBtn);
@@ -1330,6 +1336,95 @@
         updateStatus(`クローラーリサーチ${stoppedByUser ? '中止' : '完了'} ${completed}/${filtered.length}件`);
         chainToPayPayIfAuto();
     }
+
+    // ========== リピート検索 ==========
+    // 2026-11-08新設：確定済み型番（リピートリスト＋過去仕入れ実績、または
+    // search_queueシートに貼った指定リスト）を1件ずつメルカリキーワード検索にかけ、
+    // ヒットがあればhitsシートに[リピート検索]タグ付きで記録する（Amacari側はRSタブ
+    // で拾う）。クローラーリサーチ(runBatchFetch)と同じfetchCheckerItems/テンプレート
+    // 方式をそのまま使い、止めるまで回り続ける（止めるボタンは共用のstopBtn）。
+    async function runRepeatSearch(modelList) {
+        running = true;
+        setRunningUI(true);
+
+        if (!_getSharedTpl()) {
+            updateStatus('テンプレート取得中... 最大20秒待機');
+            GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+            if (!(await waitForTemplate(20000))) {
+                updateStatus('テンプレート取得失敗 → 中断（リアルタイムリサーチを起動してから再試行）');
+                running = false; setRunningUI(false); return;
+            }
+        }
+
+        let errors = 0;
+        let completed = 0;
+        let totalHits = 0;
+        const batchStart = Date.now();
+
+        for (let i = 0; i < modelList.length; i++) {
+            if (!running) break;
+            const model = modelList[i];
+            const url = `https://jp.mercari.com/search?keyword=${encodeURIComponent(model)}&status=on_sale&item_condition_id=1&shipping_payer_id=2`;
+            updateStatus(`[リピート検索 ${i + 1}/${modelList.length}] ${model} fetch中...`);
+            try {
+                const fetched = await fetchCheckerItems(url, { name: model, idx: i + 1, total: modelList.length });
+                errors = 0;
+                // [リピート検索]タグを付けて送る（Amacari側のRSタブはこのタグで判別・
+                // ARタブはこのタグを明示的に除外するようCode.gs側で対応済み）。
+                const itemList = Object.values(fetched).map(it => Object.assign({}, it, {
+                    name: '[リピート検索] ' + it.name,
+                }));
+                if (itemList.length > 0) {
+                    const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: 'リピート検索:' + model }));
+                    if (result._serverDown) throw new Error('サーバー未起動');
+                    totalHits += (result.matches || []).length;
+                }
+                completed++;
+                await sleep(500);
+            } catch (e) {
+                errors++;
+                updateStatus(`[リピート検索 ${i + 1}/${modelList.length}] ${model} エラー(${errors}): ${e.message}`);
+                if (errors >= 5) {
+                    updateStatus(`エラー連続${errors}回 → 中断（${completed}/${modelList.length}件で終了・ヒット${totalHits}件）`);
+                    running = false; setRunningUI(false); return;
+                }
+                await sleep(2000);
+            }
+        }
+
+        const stoppedByUser = !running;
+        running = false;
+        setRunningUI(false);
+        const elapsedMin = Math.round((Date.now() - batchStart) / 60000);
+        updateStatus(`リピート検索${stoppedByUser ? '中止' : '完了'} ${completed}/${modelList.length}件・ヒット${totalHits}件・${elapsedMin}分`);
+    }
+
+    repeatSearchBtn.addEventListener('click', () => {
+        const mode = prompt('リピート検索\n1 = 全件（リピートリスト＋過去仕入れ実績）\n2 = 指定（search_queueシートに貼ったリストのみ）', '1');
+        if (mode === null) return;
+        const endpoint = mode.trim() === '2' ? '/get-search-queue' : '/get-repeat-search-list';
+        updateStatus('型番リスト取得中...');
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'http://localhost:8766' + endpoint,
+            timeout: 30000,
+            onload: res => {
+                try {
+                    const data = JSON.parse(res.responseText);
+                    const models = data.models || [];
+                    if (models.length === 0) {
+                        updateStatus(mode.trim() === '2' ? 'search_queueシートが空です' : 'リストが空です');
+                        return;
+                    }
+                    runRepeatSearch(models);
+                } catch (e) {
+                    updateStatus('型番リストの取得に失敗しました');
+                }
+            },
+            ontimeout: () => { updateStatus('型番リスト取得タイムアウト'); },
+            onerror:   () => { updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）'); },
+        });
+    });
 
     // ========== 収集 ==========
     function collectItems() {
