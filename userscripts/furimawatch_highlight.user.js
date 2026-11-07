@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 検知ロガー
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード
 // @match        https://www.furimawatch.net/*
 // @grant        none
@@ -24,12 +24,19 @@
 // 純粋な損益分岐点「損益分岐点:○○円」が両方埋め込まれているため、
 // tr.query.memoから読み取って (損益分岐点-フリマ価格)÷Amazon価格×100 で
 // 正しく（二重引きにならずに）実利益率を再計算し、profitRateとして送る。
+//
+// 2026-11-08追加：furimaNotifiedCache（itemid→価格のlocalStorageキャッシュ、送信済み
+// 判定用）に有効期限・削除の仕組みが無く、無人運用で1日200件超検知するこの環境では
+// 無期限に肥大化し続けていた。ミニノート側でChromeのストレージ容量不足（Tampermonkey
+// の拡張機能ストレージ警告）が発生したため、各エントリに記録時刻を持たせ、
+// 読み込み時に7日以上前のエントリを間引くよう変更した（値の形式が数値→{p,t}に変更）。
 (function () {
     'use strict';
 
     const SERVER_URL = 'http://localhost:8768/furima-hit';
     const LS_KEY = 'furimaNotifiedCache';
     const LS_ACCOUNT_KEY = 'frimaAccount';
+    const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7日
 
     function getAccount() {
         return localStorage.getItem(LS_ACCOUNT_KEY) || null;
@@ -56,7 +63,20 @@
     }
 
     function getNotifiedCache() {
-        try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; }
+        let cache;
+        try { cache = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; }
+        const now = Date.now();
+        let pruned = false;
+        for (const itemid in cache) {
+            const entry = cache[itemid];
+            // 旧形式（値が数値=価格そのまま）は記録時刻が無いため、一律で期限切れ扱いにして間引く
+            if (typeof entry !== 'object' || !entry.t || now - entry.t > CACHE_TTL_MS) {
+                delete cache[itemid];
+                pruned = true;
+            }
+        }
+        if (pruned) setNotifiedCache(cache);
+        return cache;
     }
     function setNotifiedCache(cache) {
         try { localStorage.setItem(LS_KEY, JSON.stringify(cache)); } catch (e) { /* noop */ }
@@ -73,7 +93,7 @@
             if (!itemid) return;
 
             const cache = getNotifiedCache();
-            if (cache[itemid] === frimPrice) return; // このブラウザでは価格変化なし→送信スキップ（サーバー側でも最終判定する）
+            if (cache[itemid] && cache[itemid].p === frimPrice) return; // このブラウザでは価格変化なし→送信スキップ（サーバー側でも最終判定する）
 
             const querySource = (tr.query && (tr.query.name || tr.query.memo)) || '';
             const asinMatch = querySource.match(/\bB0[A-Z0-9]{8}\b/) || querySource.match(/\b[A-Z0-9]{10}\b/);
@@ -116,7 +136,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             }).then(() => {
-                cache[itemid] = frimPrice;
+                cache[itemid] = { p: frimPrice, t: Date.now() };
                 setNotifiedCache(cache);
             }).catch(() => { /* ローカルサーバー未起動時は無視 */ });
         } catch (err) {
