@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -911,6 +911,37 @@
             ` ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
         );
     }
+
+    // ===== リピート検索の自動起動（2026-11-08追加）=====
+    // ?auto_repeat_search=ALL をつけてこのURLを開くと、ボタン操作・prompt()なしで
+    // 全件モードのリピート検索が自動開始する（夜間にメルカリ・ヤフー・ラクマの
+    // リピート検索を同時に仕掛けて放置する運用のため）。
+    (function () {
+        const autoFlag = new URLSearchParams(location.search).get('auto_repeat_search');
+        if (!autoFlag) return;
+        const start = () => {
+            setTimeout(() => {
+                updateStatus('自動起動: リピート検索リスト取得中...');
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: 'http://localhost:8766/get-repeat-search-list',
+                    onload: res => {
+                        try {
+                            const models = JSON.parse(res.responseText).models || [];
+                            if (models.length === 0) { updateStatus('リピート検索リストが空です'); return; }
+                            runRepeatSearchPP(models);
+                        } catch (e) {
+                            updateStatus('型番リストの取得に失敗しました');
+                        }
+                    },
+                    ontimeout: () => { updateStatus('型番リスト取得タイムアウト'); },
+                    onerror:   () => { updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）'); },
+                });
+            }, 3000);
+        };
+        if (document.readyState === 'complete') start();
+        else window.addEventListener('load', start);
+    })();
 
     repeatSearchBtn.onclick = () => {
         const mode = prompt(

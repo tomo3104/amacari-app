@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.92
+// @version      3.94
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -472,7 +472,7 @@
         toggleBtn.textContent = '🛠';
         toggleBtn.title = 'Amacariツール';
         toggleBtn.style.cssText = `
-            position:fixed; bottom:20px; right:20px; z-index:100000;
+            position:fixed; bottom:20px; left:20px; z-index:100000;
             width:48px; height:48px; border-radius:50%; border:none;
             background:#263238; color:#fff; font-size:20px; cursor:pointer;
             box-shadow:0 2px 8px rgba(0,0,0,0.4);
@@ -480,7 +480,7 @@
         panel = document.createElement('div');
         panel.id = 'amacari-tools-panel';
         panel.style.cssText = `
-            position:fixed; bottom:76px; right:20px; z-index:99999;
+            position:fixed; bottom:76px; left:20px; z-index:99999;
             display:none; flex-direction:column; gap:10px;
             background:rgba(18,18,18,0.94); padding:14px; border-radius:12px;
             max-height:78vh; overflow-y:auto; min-width:230px;
@@ -1877,6 +1877,38 @@
                         resumeFrom = retryState.resumeFrom;
                     }
                     runBatchFetch([...mfrs, ...categories], groups, false, resumeFrom);
+                }, 3000);
+            });
+        }
+    }
+
+    // ========== リピート検索の自動起動（2026-11-08追加） ==========
+    // ?auto_repeat_search=ALL をつけてこのURLを開くと、ボタン操作・prompt()なしで
+    // 全件モードのリピート検索が自動開始する（夜間にメルカリ・ヤフー・ラクマの
+    // リピート検索を同時に仕掛けて放置する運用のため）。速度未検証の高速版ではなく
+    // 安定版（runRepeatSearch）を使う。
+    if (localStorage.getItem('batchMode') !== 'true') {
+        const autoRepeatFlag = new URLSearchParams(location.search).get('auto_repeat_search');
+        if (autoRepeatFlag) {
+            window.addEventListener('load', () => {
+                setTimeout(() => {
+                    updateStatus('自動起動: リピート検索リスト取得中...');
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: 'http://localhost:8766/get-repeat-search-list',
+                        timeout: 30000,
+                        onload: res => {
+                            try {
+                                const models = JSON.parse(res.responseText).models || [];
+                                if (models.length === 0) { updateStatus('リピート検索リストが空です'); return; }
+                                runRepeatSearch(models);
+                            } catch (e) {
+                                updateStatus('型番リストの取得に失敗しました');
+                            }
+                        },
+                        ontimeout: () => { updateStatus('型番リスト取得タイムアウト'); },
+                        onerror:   () => { updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）'); },
+                    });
                 }, 3000);
             });
         }

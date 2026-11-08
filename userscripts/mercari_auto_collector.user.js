@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Auto Collector
 // @namespace    http://tampermonkey.net/
-// @version      6.30
+// @version      6.31
 // @description  メルカリ検索結果を全ページ自動収集（重複率が高いページが3ページ続いたら自動で打ち切る機能を追加(v6.24)・クローラーコレクトfetch対応・サーバーに進捗＆新規型番候補数を通知・ボタンの見た目を他スクリプトと統一・mountUI未定義バグ修正で自動起動不良を解消・_testFetchBrand調査用関数を追加・itemBrandを収集してサーバーに送信し新規メーカー自動発掘に対応・url/_pageを送信しクロール深度分析に対応・/collect-itemsにもurlを送信し同一出品の価格二重カウントを防止・カテゴリ検証グループをA/Bに分割し個別に新規型番件数を比較できるように変更・ページ深度20→60へ拡張（API側が20ページで頭打ちと判明・変更は無害なので維持）・大カテゴリ5つの直下子カテゴリ43件を「カテゴリ構造」グループとして追加し内部構造ごとの歩留まりを検証・60ページでも打ち切られた14カテゴリの孫カテゴリ166件を「カテゴリ構造2-1〜4」として追加しさらに深掘り・60ページでも頭打ちだった27カテゴリを「カテゴリ深度拡張」グループへ集約しページ深度を60→150へ再拡張・収集元(カテゴリ/メーカー名)を各アイテムに付与しmercariシートH列/analyzerシートP列に伝播、Amazon価格リサーチ後のカテゴリ別実績集計を可能に・クローラーコレクトが全メーカー完走後に1回だけ送信する作りで途中中断時に収集済み全データが消失する事故が発生したため、10メーカーごとに随時送信する方式に変更(v6.28)・送信済みアイテムも含め全件を実行中ずっとメモリ上に保持しておりタブがメモリ不足でChromeに強制再読み込みされる一因になっていたため、送信済み分は本体データを捨ててID集合のみ保持する方式に変更しメモリ使用量を削減(v6.29)・右下の自前ボタン列を他スクリプトと共通の折りたたみツールパネルへ統合しボタンの乱立を解消(v6.30)）
 // @match        https://jp.mercari.com/*
 // @grant        GM_setClipboard
@@ -38,7 +38,7 @@
         toggleBtn.textContent = '🛠';
         toggleBtn.title = 'Amacariツール';
         toggleBtn.style.cssText = `
-            position:fixed; bottom:20px; right:20px; z-index:100000;
+            position:fixed; bottom:20px; left:20px; z-index:100000;
             width:48px; height:48px; border-radius:50%; border:none;
             background:#263238; color:#fff; font-size:20px; cursor:pointer;
             box-shadow:0 2px 8px rgba(0,0,0,0.4);
@@ -46,7 +46,7 @@
         panel = document.createElement('div');
         panel.id = 'amacari-tools-panel';
         panel.style.cssText = `
-            position:fixed; bottom:76px; right:20px; z-index:99999;
+            position:fixed; bottom:76px; left:20px; z-index:99999;
             display:none; flex-direction:column; gap:10px;
             background:rgba(18,18,18,0.94); padding:14px; border-radius:12px;
             max-height:78vh; overflow-y:auto; min-width:230px;
