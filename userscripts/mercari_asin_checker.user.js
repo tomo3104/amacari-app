@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.87
+// @version      3.88
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @match        https://mercari-shops.com/*
@@ -1359,6 +1359,9 @@
         let errors = 0;
         let completed = 0;
         let totalHits = 0;
+        // 2026-11-08追加：テンプレート失効（HTTP 401等）時の自動再取得カウンタ。
+        // runBatchFetchと同じ仕組み（同一indexで3回連続失敗したら諦める）。
+        let tplRetryIndex = -1, tplRetryCount = 0;
         const batchStart = Date.now();
 
         for (let i = 0; i < modelList.length; i++) {
@@ -1382,6 +1385,27 @@
                 completed++;
                 await sleep(500);
             } catch (e) {
+                // 2026-11-08追加：共有テンプレートが失効している（HTTP 4xx・NO_TEMPLATE）場合は
+                // 単純なエラーカウントではなく、テンプレートを捨てて裏タブで再取得してから
+                // 同じ型番をリトライする（runBatchFetchと同じ復旧ロジック）。これが無いと、
+                // テンプレートが古いまま5回連続失敗して即中断していた（修正前の実害）。
+                if (/HTTP 4/.test(e.message) || e.message === 'NO_TEMPLATE') {
+                    updateStatus(`[リピート検索 ${i + 1}/${modelList.length}] ${model} テンプレート更新中...`);
+                    _uw.localStorage.removeItem(_SHARED_TPL_KEY);
+                    GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+                    await waitForTemplate(20000);
+                    if (_getSharedTpl()) {
+                        tplRetryCount = (i === tplRetryIndex) ? tplRetryCount + 1 : 1;
+                        tplRetryIndex = i;
+                        if (tplRetryCount < 3) {
+                            i--;
+                            await sleep(1000);
+                            continue;
+                        }
+                    }
+                    updateStatus(`${model}でテンプレート再取得後も失敗 → 中断（${completed}/${modelList.length}件で終了・ヒット${totalHits}件）`);
+                    running = false; setRunningUI(false); return;
+                }
                 errors++;
                 updateStatus(`[リピート検索 ${i + 1}/${modelList.length}] ${model} エラー(${errors}): ${e.message}`);
                 if (errors >= 5) {
