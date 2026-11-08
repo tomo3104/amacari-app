@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.91
+// @version      3.92
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -1357,7 +1357,8 @@
     const RS_FAST_CONCURRENCY = 5;
     const RS_FAST_BATCH_SLEEP_MS = 400;
 
-    async function runRepeatSearchFast(modelList) {
+    async function runRepeatSearchFast(modelList, concurrency) {
+        concurrency = concurrency || RS_FAST_CONCURRENCY;
         running = true;
         setRunningUI(true);
 
@@ -1375,10 +1376,10 @@
         let consecutiveBatchErrors = 0;
         const batchStart = Date.now();
 
-        for (let i = 0; i < modelList.length; i += RS_FAST_CONCURRENCY) {
+        for (let i = 0; i < modelList.length; i += concurrency) {
             if (!running) break;
-            const batch = modelList.slice(i, i + RS_FAST_CONCURRENCY);
-            updateStatus(`[高速リピート検索 ${i + 1}〜${Math.min(i + RS_FAST_CONCURRENCY, modelList.length)}/${modelList.length}] 並列fetch中...`);
+            const batch = modelList.slice(i, i + concurrency);
+            updateStatus(`[高速リピート検索 ${i + 1}〜${Math.min(i + concurrency, modelList.length)}/${modelList.length}] 並列fetch中(同時${concurrency}件)...`);
 
             const results = await Promise.allSettled(batch.map(model => {
                 const url = `https://jp.mercari.com/search?keyword=${encodeURIComponent(model)}&status=on_sale&item_condition_id=1&shipping_payer_id=2`;
@@ -1428,13 +1429,21 @@
         const elapsedMin = Math.round((Date.now() - batchStart) / 60000);
         updateStatus(
             (stoppedByUser ? '中止しました。' : '全件完了！') +
-            ` [高速版] ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
+            ` [高速版・同時${concurrency}件] ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
         );
     }
 
     repeatSearchFastBtn.addEventListener('click', () => {
         const mode = prompt('リピート検索(高速・実験)\n1 = 全件（リピートリスト＋過去仕入れ実績）\n2 = 指定（search_queueシートに貼ったリストのみ）', '1');
         if (mode === null) return;
+        const concInput = prompt(
+            'リピート検索(高速・実験)\n同時並列数を指定してください\n' +
+            '2 = 安全重視（通常比そこそこ速く、負荷は小さめ）\n' +
+            '5 = 速度重視（通常比最大5倍だが未検証・負荷大きめ）',
+            '2'
+        );
+        if (concInput === null) return;
+        const concurrency = Math.min(10, Math.max(1, parseInt(concInput.trim(), 10) || RS_FAST_CONCURRENCY));
         const endpoint = mode.trim() === '2' ? '/get-search-queue' : '/get-repeat-search-list';
         updateStatus('型番リスト取得中...');
         GM_xmlhttpRequest({
@@ -1449,7 +1458,7 @@
                         updateStatus(mode.trim() === '2' ? 'search_queueシートが空です' : 'リストが空です');
                         return;
                     }
-                    runRepeatSearchFast(models);
+                    runRepeatSearchFast(models, concurrency);
                 } catch (e) {
                     updateStatus('型番リストの取得に失敗しました');
                 }
