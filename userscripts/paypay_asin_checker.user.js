@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      3.0
 // @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
@@ -76,9 +76,22 @@
     const deepScanMultiBtn = document.createElement('button');
     deepScanMultiBtn.textContent = '深堀り分析（複数メーカー）';
     deepScanMultiBtn.style.cssText = 'padding:8px 14px; background:#333; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+    // 2026-11-08追加：メルカリ側と同じ「リピート検索」（確定済み型番リストを能動的に
+    // キーワード検索）。PPフリマのキーワード検索は曖昧なメーカー名だと別物混入率が
+    // メルカリの約3倍という実測結果があるが（上のbrandIds優先の理由を参照）、型番は
+    // メーカー名よりずっと固有性が高く、かつサーバー側のfind_matches()で型番の正確な
+    // 一致判定を別途行うため、ここでの多少のノイズが誤ヒットに直結するリスクは低いと判断。
+    const repeatSearchBtn = document.createElement('button');
+    repeatSearchBtn.textContent = 'リピート検索';
+    repeatSearchBtn.style.cssText = `
+        padding:12px 22px; background:#00796B; color:#fff;
+        border:none; border-radius:6px; font-size:14px;
+        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    `;
     container.appendChild(statusEl);
     container.appendChild(batchBtn);
     container.appendChild(catBtn);
+    container.appendChild(repeatSearchBtn);
     container.appendChild(deepScanBtn);
     container.appendChild(deepScanMultiBtn);
     container.appendChild(stopBtn);
@@ -90,6 +103,7 @@
     function setRunningUI(on) {
         batchBtn.style.display = on ? 'none'  : 'block';
         catBtn.style.display   = on ? 'none'  : 'block';
+        repeatSearchBtn.style.display = on ? 'none' : 'block';
         deepScanBtn.style.display = on ? 'none' : 'block';
         deepScanMultiBtn.style.display = on ? 'none' : 'block';
         stopBtn.style.display  = on ? 'block' : 'none';
@@ -849,6 +863,80 @@
         if (document.readyState === 'complete') start();
         else window.addEventListener('load', start);
     })();
+
+    // ===== リピート検索（2026-11-08追加）=====
+    async function runRepeatSearchPP(modelList) {
+        running = true;
+        setRunningUI(true);
+
+        let errors = 0;
+        let completed = 0;
+        let totalHits = 0;
+        const batchStart = Date.now();
+
+        for (let i = 0; i < modelList.length; i++) {
+            if (!running) break;
+            const model = modelList[i];
+            updateStatus(`[リピート検索 ${i + 1}/${modelList.length}] ${model} fetch中...`);
+            try {
+                const fetched = await fetchPayPayItems(model, 1000, 20000, null, null);
+                errors = 0;
+                const itemList = Object.values(fetched).map(it => Object.assign({}, it, {
+                    name: '[リピート検索] ' + it.name,
+                }));
+                if (itemList.length > 0) {
+                    const result = await new Promise(resolve => sendToServer(itemList, resolve, { maker: 'リピート検索:' + model }));
+                    if (result._serverDown) throw new Error('サーバー未起動');
+                    totalHits += (result.matches || []).length;
+                }
+                completed++;
+                await sleep(500);
+            } catch (e) {
+                errors++;
+                updateStatus(`[リピート検索 ${i + 1}/${modelList.length}] ${model} エラー(${errors}): ${e.message}`);
+                if (errors >= 5) {
+                    updateStatus(`エラー連続${errors}回 → 中断（${completed}/${modelList.length}件で終了・ヒット${totalHits}件）`);
+                    running = false; setRunningUI(false); return;
+                }
+                await sleep(2000);
+            }
+        }
+
+        const stoppedByUser = !running;
+        running = false;
+        setRunningUI(false);
+        const elapsedMin = Math.round((Date.now() - batchStart) / 60000);
+        updateStatus(
+            (stoppedByUser ? '中止しました。' : '全件完了！') +
+            ` ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
+        );
+    }
+
+    repeatSearchBtn.onclick = () => {
+        const mode = prompt(
+            'リピート検索\n' +
+            '1 = 全件（リピートリスト＋過去仕入れ実績）\n' +
+            '2 = 指定（search_queueシートに貼ったリストのみ）',
+            '1',
+        );
+        if (!mode) return;
+        const endpoint = mode.trim() === '2' ? '/get-search-queue' : '/get-repeat-search-list';
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: `http://localhost:8766${endpoint}`,
+            onload: res => {
+                try {
+                    const models = JSON.parse(res.responseText).models || [];
+                    if (models.length === 0) { updateStatus('型番リストが空です'); return; }
+                    runRepeatSearchPP(models);
+                } catch (e) {
+                    updateStatus('型番リストの取得に失敗しました');
+                }
+            },
+            ontimeout: () => { updateStatus('型番リスト取得タイムアウト'); },
+            onerror:   () => { updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）'); },
+        });
+    };
 
     stopBtn.onclick = () => { running = false; };
 
