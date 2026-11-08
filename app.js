@@ -1051,6 +1051,7 @@ async function judge(card, judgment, reason, source) {
         els.undoBtn.disabled = false;
       }
     }
+    if (judgment === "仕入れ対象") refreshPendingPurchaseBadge();
   } catch (e) {
     alert("判定の保存に失敗しました。通信状況を確認してください。");
   }
@@ -1430,6 +1431,7 @@ els.archiveList.addEventListener("click", async e => {
     } else if (action === "reject-archive") {
       await gasPost("judge", { row, judgment: "却下", reason: "キャンセル" });
     }
+    refreshPendingPurchaseBadge();
     // 2026-09-02修正：判定ごとに一覧全体をloadArchive()で読み直していたため、
     // 件数が増えるほど1件処理するたびに待たされていた。書き込みは既に成功しているので、
     // 該当行だけDOMから消せば十分（サーバーへの再問い合わせ・全件再描画は不要）。
@@ -1458,6 +1460,7 @@ els.autoRejectedList.addEventListener("click", async e => {
   try {
     if (action === "restore") {
       await gasPost("restoreRejected", { row });
+      refreshPendingPurchaseBadge();
     } else if (action === "confirm") {
       await gasPost("confirmAutoRejected", { row, reason });
     }
@@ -1851,6 +1854,24 @@ function renderAutoLog(rows) {
   `).join("");
 }
 
+// ---------- 仕入候補バッジ（未購入の「仕入れ対象」件数） ----------
+// 2026-11-08追加：実績タブを開かないと未購入のまま売れ残っている仕入れ対象に
+// 気づけなかった（30日表示カットオフと合わさって忘れ去られる懸念）。タブを開く前から
+// 件数が見えるようバッジ表示する。「購入済みにする」「結局買わなかった」等の明示的な
+// アクションでカウントが減るだけで、日数による自動消滅はしない。
+
+async function refreshPendingPurchaseBadge() {
+  try {
+    const data = await gasFetch("pendingPurchaseCount");
+    const count = data.count || 0;
+    const badge = document.getElementById("pending-purchase-badge");
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.classList.toggle("hidden", count === 0);
+  } catch (e) {
+    // バッジ更新失敗は致命的ではないので握りつぶす
+  }
+}
+
 // ---------- 起動 ----------
 
 if ("serviceWorker" in navigator) {
@@ -1858,3 +1879,4 @@ if ("serviceWorker" in navigator) {
 }
 
 loadCards();
+refreshPendingPurchaseBadge();
