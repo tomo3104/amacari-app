@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.90
+// @version      3.91
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
 // @grant        GM_xmlhttpRequest
@@ -536,6 +536,12 @@
     const repeatSearchBtn = document.createElement('button');
     repeatSearchBtn.textContent = 'リピート検索';
     repeatSearchBtn.style.cssText = _amacariBtnBase + 'background:#00796B;';
+    // 2026-11-08追加：リピート検索の速度改善実験用（並列フェッチ＋バッチ送信）。
+    // 安定版のrunRepeatSearch()は一切変更せず、別関数・別ボタンとして並存させる
+    // （実験がうまくいかなくても既存の動作にノーリスクで戻せるようにするため）。
+    const repeatSearchFastBtn = document.createElement('button');
+    repeatSearchFastBtn.textContent = 'リピート検索(高速・実験)';
+    repeatSearchFastBtn.style.cssText = 'padding:8px 14px; background:#004D40; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
 
     const deepScanBtn = document.createElement('button');
     deepScanBtn.textContent = '深堀り分析（売り切れ）';
@@ -562,6 +568,7 @@
             researchGroup.appendChild(startBtn);
             researchGroup.appendChild(batchBtn);
             researchGroup.appendChild(repeatSearchBtn);
+            researchGroup.appendChild(repeatSearchFastBtn);
             researchGroup.appendChild(stopBtn);
             const analysisGroup = _amacariGetGroup('分析（一回限り）', 40);
             analysisGroup.appendChild(deepScanBtn);
@@ -1329,6 +1336,120 @@
                         return;
                     }
                     runRepeatSearch(models);
+                } catch (e) {
+                    updateStatus('型番リストの取得に失敗しました');
+                }
+            },
+            ontimeout: () => { updateStatus('型番リスト取得タイムアウト'); },
+            onerror:   () => { updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）'); },
+        });
+    });
+
+    // ========== リピート検索（高速・実験版） ==========
+    // 2026-11-08追加：安定版runRepeatSearch()は1モデルずつ逐次フェッチ→逐次サーバー送信
+    // だったため（実測：3252件で約6.5時間・平均7.6秒/件）、複数モデルを並列フェッチし、
+    // まとめて1回のサーバー送信にすることで短縮できないか試す実験版。
+    // リスクとして、メルカリ側のテンプレート（認証情報）はタブ全体で1つを共有しているため、
+    // 同時に複数リクエストを投げても安定版と同じ仕組みがそのまま使える一方、並列数を
+    // 上げすぎるとメルカリ側のレート制限に引っかかる可能性がある（未検証のため小さい値から
+    // 試す）。失敗してもrunRepeatSearch()（安定版ボタン）は一切変更していないので、
+    // そちらに切り替えればいつでも元の動作に戻せる。
+    const RS_FAST_CONCURRENCY = 5;
+    const RS_FAST_BATCH_SLEEP_MS = 400;
+
+    async function runRepeatSearchFast(modelList) {
+        running = true;
+        setRunningUI(true);
+
+        if (!_getSharedTpl()) {
+            updateStatus('テンプレート取得中... 最大20秒待機');
+            GM_openInTab('https://jp.mercari.com/search?keyword=sony&status=on_sale', { active: false });
+            if (!(await waitForTemplate(20000))) {
+                updateStatus('テンプレート取得失敗 → 中断（リアルタイムリサーチを起動してから再試行）');
+                running = false; setRunningUI(false); return;
+            }
+        }
+
+        let completed = 0;
+        let totalHits = 0;
+        let consecutiveBatchErrors = 0;
+        const batchStart = Date.now();
+
+        for (let i = 0; i < modelList.length; i += RS_FAST_CONCURRENCY) {
+            if (!running) break;
+            const batch = modelList.slice(i, i + RS_FAST_CONCURRENCY);
+            updateStatus(`[高速リピート検索 ${i + 1}〜${Math.min(i + RS_FAST_CONCURRENCY, modelList.length)}/${modelList.length}] 並列fetch中...`);
+
+            const results = await Promise.allSettled(batch.map(model => {
+                const url = `https://jp.mercari.com/search?keyword=${encodeURIComponent(model)}&status=on_sale&item_condition_id=1&shipping_payer_id=2`;
+                return fetchCheckerItems(url, { name: model, idx: 0, total: 0, group: 'RS_FAST' });
+            }));
+
+            let combinedItems = [];
+            let batchErrors = 0;
+            results.forEach(r => {
+                if (r.status === 'fulfilled') {
+                    completed++;
+                    const itemList = Object.values(r.value).map(it => Object.assign({}, it, {
+                        name: '[リピート検索] ' + it.name,
+                    }));
+                    combinedItems = combinedItems.concat(itemList);
+                } else {
+                    batchErrors++;
+                }
+            });
+
+            if (combinedItems.length > 0) {
+                try {
+                    const result = await new Promise(resolve => sendToServer(combinedItems, resolve, { maker: 'リピート検索(高速):' + batch.join(',') }));
+                    if (result._serverDown) throw new Error('サーバー未起動');
+                    totalHits += (result.matches || []).length;
+                } catch (e) {
+                    updateStatus(`サーバー送信エラー: ${e.message}`);
+                }
+            }
+
+            if (batchErrors === batch.length) {
+                consecutiveBatchErrors++;
+                if (consecutiveBatchErrors >= 3) {
+                    updateStatus(`バッチ全滅が${consecutiveBatchErrors}回連続 → 中断（${completed}/${modelList.length}件で終了・ヒット${totalHits}件）`);
+                    running = false; setRunningUI(false); return;
+                }
+            } else {
+                consecutiveBatchErrors = 0;
+            }
+
+            await sleep(RS_FAST_BATCH_SLEEP_MS);
+        }
+
+        const stoppedByUser = !running;
+        running = false;
+        setRunningUI(false);
+        const elapsedMin = Math.round((Date.now() - batchStart) / 60000);
+        updateStatus(
+            (stoppedByUser ? '中止しました。' : '全件完了！') +
+            ` [高速版] ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
+        );
+    }
+
+    repeatSearchFastBtn.addEventListener('click', () => {
+        const mode = prompt('リピート検索(高速・実験)\n1 = 全件（リピートリスト＋過去仕入れ実績）\n2 = 指定（search_queueシートに貼ったリストのみ）', '1');
+        if (mode === null) return;
+        const endpoint = mode.trim() === '2' ? '/get-search-queue' : '/get-repeat-search-list';
+        updateStatus('型番リスト取得中...');
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'http://localhost:8766' + endpoint,
+            timeout: 30000,
+            onload: res => {
+                try {
+                    const data = JSON.parse(res.responseText);
+                    const models = data.models || [];
+                    if (models.length === 0) {
+                        updateStatus(mode.trim() === '2' ? 'search_queueシートが空です' : 'リストが空です');
+                        return;
+                    }
+                    runRepeatSearchFast(models);
                 } catch (e) {
                     updateStatus('型番リストの取得に失敗しました');
                 }
