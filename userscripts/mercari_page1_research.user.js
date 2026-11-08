@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.29
+// @version      3.30
 // @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離・2026-10-20：buildBodyFromUrl()がbrandId/categoryIdしか巡回先URLから反映しておらず、item_condition_id（新品指定）・status・価格帯・keyword等は最初にテンプレートを取得した時の値のまま全メーカー・全カテゴリで使われ続けていたバグを修正（実機で設定上のコンディションが新品以外の商品が多数ヒットに含まれる実害を確認）
 // @match        https://jp.mercari.com/*
 // @grant        none
@@ -750,23 +750,54 @@
 
     // ── UI ───────────────────────────────────────────────────────────────────
 
-    // 2026-08-30追加：mercari_asin_checker.user.js・mercari_desc_model_finder.user.js
-    // それぞれ個別にposition:fixedでボタンを置いていたため、左下に固定ピクセル位置の
-    // ボタンが積み重なり見た目が乱れていた。3スクリプト共通の入れ物（他スクリプトが
-    // 先に作っていればそれを再利用）に集約し、flexboxの自動積み上げに任せることで解消する。
-    function _amacariGetStack() {
-        let el = document.getElementById('amacari-fixed-stack-bl');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'amacari-fixed-stack-bl';
-            el.style.cssText = `
-                position:fixed; bottom:20px; left:20px; z-index:99999;
-                display:flex; flex-direction:column; align-items:flex-start; gap:8px;
-            `;
-            document.body.appendChild(el);
-        }
-        return el;
+    // 2026-11-08：他スクリプトと合わせて画面各所にボタンが乱立していたため、右下の
+    // 1つの丸いトグルボタンから開く共通パネルに統合する（他スクリプトが先に作っていれば
+    // それを再利用。関数の実体は各スクリプトに複製している）。
+    function _amacariGetPanel() {
+        let panel = document.getElementById('amacari-tools-panel');
+        if (panel) return panel;
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'amacari-tools-toggle';
+        toggleBtn.textContent = '🛠';
+        toggleBtn.title = 'Amacariツール';
+        toggleBtn.style.cssText = `
+            position:fixed; bottom:20px; right:20px; z-index:100000;
+            width:48px; height:48px; border-radius:50%; border:none;
+            background:#263238; color:#fff; font-size:20px; cursor:pointer;
+            box-shadow:0 2px 8px rgba(0,0,0,0.4);
+        `;
+        panel = document.createElement('div');
+        panel.id = 'amacari-tools-panel';
+        panel.style.cssText = `
+            position:fixed; bottom:76px; right:20px; z-index:99999;
+            display:none; flex-direction:column; gap:10px;
+            background:rgba(18,18,18,0.94); padding:14px; border-radius:12px;
+            max-height:78vh; overflow-y:auto; min-width:230px;
+            box-shadow:0 4px 18px rgba(0,0,0,0.5);
+        `;
+        toggleBtn.addEventListener('click', () => {
+            panel.style.display = (panel.style.display === 'flex') ? 'none' : 'flex';
+        });
+        document.body.appendChild(panel);
+        document.body.appendChild(toggleBtn);
+        return panel;
     }
+    function _amacariGetGroup(label, order) {
+        const panel = _amacariGetPanel();
+        const groupId = 'amacari-group-' + label;
+        let group = document.getElementById(groupId);
+        if (group) return group;
+        group = document.createElement('div');
+        group.id = groupId;
+        group.style.cssText = `order:${order}; display:flex; flex-direction:column; gap:6px;`;
+        const title = document.createElement('div');
+        title.textContent = label;
+        title.style.cssText = 'color:#9e9e9e; font-size:11px; font-weight:700; letter-spacing:0.04em; margin-top:2px;';
+        group.appendChild(title);
+        panel.appendChild(group);
+        return group;
+    }
+    function _amacariGetStack() { return _amacariGetGroup('RT', 15); }
 
     let $status = null;
 

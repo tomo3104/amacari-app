@@ -1,16 +1,14 @@
 ﻿// ==UserScript==
 // @name         Mercari ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.88
+// @version      3.89
 // @description  メルカリ検索結果をASINリストと照合して仕入れ候補を表示（クローラーリサーチのグループ選択をチェックボックスで複数選択可能に・自動起動(auto_research)完了後に発掘リサーチ(start_desc)へ自動チェーン追加・エラー終了ルートでもチェーンするよう修正・クロール深度分析用にmaker/_pageを送信するよう追加・STATIC_MANUFACTURERSに新規開拓9社を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・ページ深度ログ分析の結果クロール上限を20→8ページに削減・メルカリ/ヤフーフリマ分離後の再分析でメーカーとカテゴリ横断クロールの傾向差が判明したためグループ別にページ深度を分離(メーカー4ページ・カテゴリ20ページ)・2026-09-07：STATIC_MANUFACTURERS/STATIC_CATEGORIES(手動追記が必要なため実測でmanufacturersシート286件に対し144件まで乖離していたと判明)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の固定配列にフォールバック）、カテゴリ判定はシートのgroup表記に頼らずURL構造(category_idありbrand_id無し)で機械的に行うよう変更・2026-09-09：未開封フィルター使用時にhitsシートへ[未開封]タグを付与するよう追加（通常/未開封の実行結果を後から正確に区別するため）・2026-09-10：グループ「TEST」（ヒット条件実験用）はページ深度を8ページに設定・2026-10-11：ヒット数急増の原因（新着出品の多寡）を毎回自動追跡できるよう、商品データに出品日時(created)を追加してサーバーへ送信するよう変更・2026-10-15：318社中238社で早期終了していたのに気づけなかった件の対応として実処理件数/終了理由を完了報告に含めるよう修正、さらにテンプレート再取得ループの無限リトライ防止とサーバー停止時に無照合のまま「完了」扱いされてしまう不具合を修正・同日追加：早期終了の自動復旧手段が無く10/7・10/14で実際に欠損が発生したと判明したため、自動実行時のみ早期終了を検知して10秒後に続きから1回だけ自動リトライする仕組みを追加・同日さらに追加：テンプレート再取得が「10秒待って1回だけ確認」の固定待機だったため新タブの読み込みがわずかに遅れただけで失敗と誤判定されるケースがあったため、1秒おきに最大20秒までポーリングする方式に変更・2026-10-16：芋づる（Amazon Seller ASIN Scraper）がASINをlist.jsonに登録するだけで終わり「今メルカリに出ているか」が次のAR/RT巡回まで分からなかったため、?instant_check=1&keyword=型番で開かれた時に即座に1回だけチェックして結果を画面に表示する仕組みを追加・同日さらに追加：クリック不要の全自動化のため?instant_check_queue=型番1,型番2,...（カンマ区切り）にも対応し、1タブ内で順番に全部チェックできるようにした・同日さらに追加：実機で7件中7件が「HTTP 401」で失敗する事故を確認。runBatchFetch()にある「テンプレート失効検知→削除→再取得→リトライ」が即時チェックには無く、一度失効すると以降全件が失敗し続けていたため、同じ回復ロジックを追加・2026-10-18：/get-manufacturers取得失敗時に古いSTATIC_MANUFACTURERS/STATIC_CATEGORIES（手動更新前提の固定配列）へ黙ってフォールバックする仕様を廃止。10/18夜、PC放置後のコールドスタートでフォールバックが発動し、326社の現行リストでなく274社の古いリストで一晩分のARが気づかれず実行されていたと判明したため。取得失敗は一定時間リトライした上で、ダメなら古いデータは使わず明確に中断するよう変更
 // @match        https://jp.mercari.com/*
-// @match        https://mercari-shops.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @grant        unsafeWindow
 // @connect      localhost
 // @connect      jp.mercari.com
-// @connect      mercari-shops.com
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/mercari_asin_checker.user.js
@@ -18,130 +16,6 @@
 
 (function () {
     'use strict';
-
-    // ========== mercari-shops.com カテゴリ別スキャンモード ==========
-    if (location.hostname === 'mercari-shops.com') {
-        const KOJSHOPS_BASE = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&in_stock=true';
-        const KOJSHOPS_CATS = [
-            { id: 98,   name: 'テレビ・映像' },
-            { id: 99,   name: 'オーディオ' },
-            { id: 101,  name: '生活家電' },
-            { id: 840,  name: 'ノートPC' },
-            { id: 841,  name: 'PC周辺機器' },
-            { id: 1156, name: 'PCパーツ' },
-            { id: 1237, name: '美容家電' },
-            { id: 1243, name: '冷暖房・空調' },
-            { id: 1262, name: 'ディスプレイ' },
-            { id: 3710, name: 'キーボード' },
-            { id: 3716, name: 'マウス' },
-            { id: 3756, name: '外付けHDD' },
-            { id: 3770, name: 'ルーター・NW' },
-            { id: 3733, name: 'プリンター' },
-            { id: 1113, name: 'カーナビ' },
-            { id: 1114, name: 'カーオーディオ' },
-            { id: 65,   name: 'ライト・照明' },
-        ];
-        const params = new URLSearchParams(location.search);
-        if (location.pathname === '/search' &&
-            location.search.includes('WBGoQB8mMBB5VTEpM6PKZK') &&
-            params.get('autorun') === '1') {
-
-            const catIndex = parseInt(params.get('catindex') || '0', 10);
-            const cat = KOJSHOPS_CATS[catIndex];
-            const sleep2 = ms => new Promise(r => setTimeout(r, ms));
-            if (catIndex === 0) { localStorage.removeItem('kojimaSeenUrls'); localStorage.removeItem('kojimaTotalHits'); }
-
-            const wrap = document.createElement('div');
-            wrap.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;display:flex;flex-direction:column;gap:6px;align-items:flex-end;';
-            const sd = document.createElement('div');
-            sd.style.cssText = 'background:rgba(0,0,0,0.88);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:300px;white-space:pre-wrap;line-height:1.5;';
-            sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}`;
-            const stopBtn = document.createElement('button');
-            stopBtn.textContent = '中止';
-            stopBtn.style.cssText = 'padding:4px 14px;background:#c0392b;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;';
-            wrap.appendChild(sd);
-            wrap.appendChild(stopBtn);
-            document.body.appendChild(wrap);
-
-            let cancelled = false;
-            stopBtn.addEventListener('click', () => {
-                cancelled = true;
-                localStorage.removeItem('kojimaSeenUrls');
-                localStorage.removeItem('kojimaTotalHits');
-                sd.textContent = '中止しました';
-                stopBtn.remove();
-            });
-
-            (async () => {
-                let prev = -1;
-                while (!cancelled) {
-                    window.scrollTo(0, document.body.scrollHeight);
-                    await sleep2(2000);
-                    if (cancelled) return;
-                    const count = document.querySelectorAll('a[href*="/shops/product/"]').length;
-                    sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}\nスクロール中... ${count}件`;
-                    if (count === prev) break;
-                    prev = count;
-                }
-                if (cancelled) return;
-
-                // 重複排除しながら今カテゴリの新規アイテムを収集
-                const seenUrls = new Set(JSON.parse(localStorage.getItem('kojimaSeenUrls') || '[]'));
-                const items = [];
-                document.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
-                    const url = a.href.split('?')[0];
-                    if (seenUrls.has(url)) return;
-                    seenUrls.add(url);
-                    const text = a.innerText || '';
-                    const priceMatch = text.match(/[¥￥]\s*([\d,]+)/);
-                    const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
-                    const name = text.split('\n').map(l => l.trim()).filter(l => l && !/^[¥￥]/.test(l)).join(' ').trim();
-                    if (name) items.push({ name, price, url });
-                });
-                localStorage.setItem('kojimaSeenUrls', JSON.stringify([...seenUrls]));
-
-                const totalHits = parseInt(localStorage.getItem('kojimaTotalHits') || '0', 10);
-                const nextIndex = catIndex + 1;
-                const isLast = nextIndex >= KOJSHOPS_CATS.length;
-
-                const goNext = (hits) => {
-                    const newTotal = totalHits + hits;
-                    localStorage.setItem('kojimaTotalHits', String(newTotal));
-                    if (isLast) {
-                        localStorage.removeItem('kojimaSeenUrls');
-                        localStorage.removeItem('kojimaTotalHits');
-                        sd.textContent = `全${KOJSHOPS_CATS.length}カテゴリ完了\n累計ヒット: ${newTotal}件`;
-                        stopBtn.remove();
-                    } else {
-                        sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}: ヒット${hits}件\n累計${newTotal}件 → 次へ...`;
-                        setTimeout(() => {
-                            location.href = `${KOJSHOPS_BASE}&category_id=${KOJSHOPS_CATS[nextIndex].id}&autorun=1&catindex=${nextIndex}`;
-                        }, 1200);
-                    }
-                };
-
-                if (items.length === 0) { goNext(0); return; }
-
-                sd.textContent = `[${catIndex+1}/${KOJSHOPS_CATS.length}] ${cat.name}\n${items.length}件を送信中...`;
-                GM_xmlhttpRequest({
-                    method: 'POST', url: 'http://localhost:8766/check-mercari',
-                    headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ items, source: 'shops' }),
-                    timeout: 60000,
-                    onload: res => {
-                        try {
-                            const r = JSON.parse(res.responseText);
-                            goNext((r.matches || []).length);
-                        } catch(_) { goNext(0); }
-                    },
-                    onerror:   () => { sd.textContent = 'サーバー未起動'; stopBtn.remove(); },
-                    ontimeout: () => { goNext(0); },
-                });
-            })();
-        }
-        return;
-    }
-    // ========== ここから jp.mercari.com ==========
 
     const SERVER_URL   = 'http://localhost:8766/check-mercari';
 
@@ -583,33 +457,65 @@
     const MAX_SCROLL  = 90000;
 
     // ========== UI ==========
-    // 2026-08-30追加：mercari_page1_research.user.js・mercari_desc_model_finder.user.js
-    // それぞれが個別にposition:fixedでボタンを置いていたため、左下に固定ピクセル位置の
-    // ボタンが積み重なり見た目が乱れていた。3スクリプト共通の入れ物（他スクリプトが
-    // 先に作っていればそれを再利用）に集約し、flexboxの自動積み上げに任せることで解消する。
-    function _amacariGetStack() {
-        let el = document.getElementById('amacari-fixed-stack-bl');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'amacari-fixed-stack-bl';
-            el.style.cssText = `
-                position:fixed; bottom:20px; left:20px; z-index:99999;
-                display:flex; flex-direction:column; align-items:flex-start; gap:8px;
-            `;
-            document.body.appendChild(el);
-        }
-        return el;
+    // 2026-11-08：各スクリプトが個別にposition:fixedでボタンを置いていたため画面の
+    // 左右に大量のボタンが積み重なり、メルカリ自体の絞り込みフィルターにまで重なって
+    // 見た目が乱れていた（ユーザー指摘）。右下の1つの丸いトグルボタンを押した時だけ
+    // 展開するパネルに統合し、普段は画面を覆わないようにする。他スクリプト
+    // （mercari_auto_collector・mercari_desc_model_finder・mercari_page1_research）も
+    // 同じ関数を複製して同じパネル/グループへ追加する（他スクリプトが先に作っていれば
+    // それを再利用）。
+    function _amacariGetPanel() {
+        let panel = document.getElementById('amacari-tools-panel');
+        if (panel) return panel;
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'amacari-tools-toggle';
+        toggleBtn.textContent = '🛠';
+        toggleBtn.title = 'Amacariツール';
+        toggleBtn.style.cssText = `
+            position:fixed; bottom:20px; right:20px; z-index:100000;
+            width:48px; height:48px; border-radius:50%; border:none;
+            background:#263238; color:#fff; font-size:20px; cursor:pointer;
+            box-shadow:0 2px 8px rgba(0,0,0,0.4);
+        `;
+        panel = document.createElement('div');
+        panel.id = 'amacari-tools-panel';
+        panel.style.cssText = `
+            position:fixed; bottom:76px; right:20px; z-index:99999;
+            display:none; flex-direction:column; gap:10px;
+            background:rgba(18,18,18,0.94); padding:14px; border-radius:12px;
+            max-height:78vh; overflow-y:auto; min-width:230px;
+            box-shadow:0 4px 18px rgba(0,0,0,0.5);
+        `;
+        toggleBtn.addEventListener('click', () => {
+            panel.style.display = (panel.style.display === 'flex') ? 'none' : 'flex';
+        });
+        document.body.appendChild(panel);
+        document.body.appendChild(toggleBtn);
+        return panel;
+    }
+    function _amacariGetGroup(label, order) {
+        const panel = _amacariGetPanel();
+        const groupId = 'amacari-group-' + label;
+        let group = document.getElementById(groupId);
+        if (group) return group;
+        group = document.createElement('div');
+        group.id = groupId;
+        group.style.cssText = `order:${order}; display:flex; flex-direction:column; gap:6px;`;
+        const title = document.createElement('div');
+        title.textContent = label;
+        title.style.cssText = 'color:#9e9e9e; font-size:11px; font-weight:700; letter-spacing:0.04em; margin-top:2px;';
+        group.appendChild(title);
+        panel.appendChild(group);
+        return group;
     }
 
-    const container = document.createElement('div');
-    container.style.cssText = `
-        display:flex; flex-direction:column; align-items:flex-start; gap:8px;
-        order:30;
-    `;
+    // 2026-11-08：_amacariGetPanel/_amacariGetGroupはdocument.bodyへ即appendするため、
+    // ボタン本体の設置は従来通り危険な時間帯（広告枠の初期化）が過ぎるまでmountReal()で
+    // 遅延させる（ボタン生成自体＝createElementは安全。危険なのはappendChildのみ）。
     const statusEl = document.createElement('div');
     statusEl.style.cssText = `
-        background:rgba(0,0,0,0.78); color:#fff; padding:6px 14px;
-        border-radius:6px; font-size:13px; display:none; max-width:300px; text-align:left;
+        background:rgba(0,0,0,0.5); color:#fff; padding:6px 10px;
+        border-radius:6px; font-size:12px; display:none; max-width:280px; text-align:left;
     `;
     const _amacariBtnBase = `
         padding:11px 20px; color:#fff; border:none; border-radius:8px;
@@ -630,47 +536,13 @@
     const repeatSearchBtn = document.createElement('button');
     repeatSearchBtn.textContent = 'リピート検索';
     repeatSearchBtn.style.cssText = _amacariBtnBase + 'background:#00796B;';
+
     const deepScanBtn = document.createElement('button');
     deepScanBtn.textContent = '深堀り分析（売り切れ）';
     deepScanBtn.style.cssText = 'padding:8px 14px; background:#555; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
     const deepScanMultiBtn = document.createElement('button');
     deepScanMultiBtn.textContent = '深堀り分析（複数メーカー）';
     deepScanMultiBtn.style.cssText = 'padding:8px 14px; background:#333; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
-    container.appendChild(statusEl);
-    container.appendChild(startBtn);
-    container.appendChild(batchBtn);
-    container.appendChild(repeatSearchBtn);
-    container.appendChild(deepScanBtn);
-    container.appendChild(deepScanMultiBtn);
-    container.appendChild(stopBtn);
-
-    const kojimaWrap = document.createElement('div');
-    kojimaWrap.style.cssText = `
-        position:fixed; top:20px; left:20px; z-index:99999;
-        display:flex; flex-direction:column; align-items:flex-start; gap:6px;
-    `;
-    const kojimaBtn = document.createElement('button');
-    kojimaBtn.textContent = 'コジマ';
-    kojimaBtn.style.cssText = `
-        padding:12px 22px; background:#00897B; color:#fff;
-        border:none; border-radius:6px; font-size:14px;
-        cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
-    const kojimaStatus = document.createElement('div');
-    kojimaStatus.style.cssText = `
-        background:rgba(0,0,0,0.82); color:#fff; padding:6px 12px;
-        border-radius:6px; font-size:12px; display:none;
-        max-width:280px; white-space:pre-wrap; line-height:1.4;
-    `;
-    const kojimaDbgBtn = document.createElement('button');
-    kojimaDbgBtn.textContent = 'DBG';
-    kojimaDbgBtn.style.cssText = `
-        padding:6px 14px; background:#555; color:#fff;
-        border:none; border-radius:6px; font-size:12px; cursor:pointer;
-    `;
-    kojimaWrap.appendChild(kojimaBtn);
-    kojimaWrap.appendChild(kojimaDbgBtn);
-    kojimaWrap.appendChild(kojimaStatus);
 
     // ページ初期化直後（広告枠の初期化タイミング）に一度だけ、
     // 見慣れないDOM要素を巻き込んで消す処理が走ることがあるため、
@@ -685,8 +557,15 @@
         function mountReal() {
             if (mounted) return;
             mounted = true;
-            document.body.appendChild(kojimaWrap);
-            _amacariGetStack().appendChild(container);
+            const researchGroup = _amacariGetGroup('リサーチ', 20);
+            researchGroup.appendChild(statusEl);
+            researchGroup.appendChild(startBtn);
+            researchGroup.appendChild(batchBtn);
+            researchGroup.appendChild(repeatSearchBtn);
+            researchGroup.appendChild(stopBtn);
+            const analysisGroup = _amacariGetGroup('分析（一回限り）', 40);
+            analysisGroup.appendChild(deepScanBtn);
+            analysisGroup.appendChild(deepScanMultiBtn);
         }
 
         const mo = new MutationObserver((mutations) => {
@@ -1776,140 +1655,6 @@
         }
     }
 
-    // ========== コジマShopsウォッチ ==========
-    const KOJIMA_URL         = 'https://jp.mercari.com/shops/profile/WBGoQB8mMBB5VTEpM6PKZK';
-    const KOJIMA_SHOPS_SEARCH = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&in_stock=true&category_id=98&autorun=1&catindex=0';
-    const KOJIMA_SERVER = 'http://localhost:8766/check-mercari';
-    const KOJIMA_EXCL   = ['タイヤ', 'ホイール', 'バイク', 'オートバイ', '自動車'];
-    const KOJIMA_CONC   = 5;
-
-    function kojimaUpdateStatus(msg) {
-        kojimaStatus.style.display = 'block';
-        kojimaStatus.textContent = msg;
-    }
-
-    // 一覧ページをiframeでスクロール → {url, price} の配列を返す
-    function collectKojimaItems() {
-        return new Promise(resolve => {
-            kojimaUpdateStatus('iframeでコジマShops読み込み中...');
-            const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:390px;height:700px;border:none;z-index:99990;opacity:0.05;pointer-events:none;';
-            document.body.appendChild(iframe);
-            const cleanup = () => { try { iframe.remove(); } catch(_) {} };
-            setTimeout(() => { cleanup(); resolve([]); }, 180000);
-            iframe.onload = async () => {
-                try {
-                    const iwin = iframe.contentWindow;
-                    const idoc = iframe.contentDocument;
-                    let prev = -1;
-                    while (true) {
-                        iwin.scrollTo(0, idoc.body.scrollHeight);
-                        await sleep(2000);
-                        const count = idoc.querySelectorAll('a[href*="/shops/product/"]').length;
-                        kojimaUpdateStatus(`スクロール中... ${count}件`);
-                        if (count === prev) break;
-                        prev = count;
-                    }
-                    // URL・価格を収集（重複除外）
-                    const seen = new Set();
-                    const items = [];
-                    idoc.querySelectorAll('a[href*="/shops/product/"]').forEach(a => {
-                        const url = a.href.split('?')[0];
-                        if (seen.has(url)) return;
-                        seen.add(url);
-                        const priceMatch = (a.innerText || '').match(/¥\s*([\d,]+)/);
-                        const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
-                        items.push({ url, price });
-                    });
-                    kojimaUpdateStatus(`${items.length}件のURL収集完了`);
-                    cleanup();
-                    resolve(items);
-                } catch(e) {
-                    kojimaUpdateStatus(`iframeエラー: ${e.message}`);
-                    await sleep(3000);
-                    cleanup();
-                    resolve([]);
-                }
-            };
-            iframe.src = KOJIMA_URL;
-        });
-    }
-
-    // 商品ページのHTMLをGM_xmlhttpRequestで取得しog:titleを返す
-    function fetchOgTitle(url) {
-        return new Promise(resolve => {
-            GM_xmlhttpRequest({
-                method: 'GET', url, timeout: 10000,
-                onload: res => {
-                    try {
-                        const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
-                        const t = doc.querySelector('meta[property="og:title"]')?.content
-                               || doc.querySelector('title')?.textContent || '';
-                        resolve(t.replace(/\s*[|｜].*$/, '').trim());
-                    } catch(_) { resolve(''); }
-                },
-                onerror:   () => resolve(''),
-                ontimeout: () => resolve(''),
-            });
-        });
-    }
-
-    async function runKojimaWatch() {
-        kojimaBtn.disabled = true;
-        kojimaBtn.textContent = '実行中...';
-        try {
-            // Step1: 一覧ページからURL・価格を収集
-            const urlItems = await collectKojimaItems();
-            if (urlItems.length === 0) { kojimaUpdateStatus('商品URLが取得できませんでした'); return; }
-
-            // Step2: 全件のog:titleを並列取得（concurrency 5）
-            kojimaUpdateStatus(`タイトル取得中: 0/${urlItems.length}件...`);
-            const items = [];
-            let done = 0;
-            const chunkSize = Math.ceil(urlItems.length / KOJIMA_CONC);
-            await Promise.all(
-                Array.from({ length: KOJIMA_CONC }, (_, i) => urlItems.slice(i * chunkSize, (i + 1) * chunkSize))
-                    .map(async chunk => {
-                        for (const { url, price } of chunk) {
-                            const name = await fetchOgTitle(url);
-                            done++;
-                            if (name && !KOJIMA_EXCL.some(w => name.includes(w))) {
-                                items.push({ name, price, url });
-                            }
-                            if (done % 20 === 0) kojimaUpdateStatus(`タイトル取得: ${done}/${urlItems.length}\n有効: ${items.length}件`);
-                        }
-                    })
-            );
-
-            if (items.length === 0) { kojimaUpdateStatus('有効な商品なし'); return; }
-
-            // Step4: サーバーへ送信
-            kojimaUpdateStatus(`${items.length}件をサーバーへ送信中...`);
-            await new Promise(resolve => {
-                GM_xmlhttpRequest({
-                    method: 'POST', url: KOJIMA_SERVER,
-                    headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ items, source: 'shops' }),
-                    timeout: 180000,
-                    onload: res => {
-                        try {
-                            const r = JSON.parse(res.responseText);
-                            kojimaUpdateStatus(`完了 — ${(r.matches || []).length}件ヒット`);
-                        } catch (_) { kojimaUpdateStatus('完了（レスポンス解析失敗）'); }
-                        resolve();
-                    },
-                    onerror:   () => { kojimaUpdateStatus('サーバー未起動'); resolve(); },
-                    ontimeout: () => { kojimaUpdateStatus('タイムアウト'); resolve(); },
-                });
-            });
-        } catch (e) {
-            kojimaUpdateStatus(`エラー: ${e.message}`);
-        } finally {
-            kojimaBtn.disabled = false;
-            kojimaBtn.textContent = 'コジマ';
-        }
-    }
-
     function goNextBatch() {
         const list  = JSON.parse(localStorage.getItem('batchList') || '[]');
         const index = parseInt(localStorage.getItem('batchIndex') || '0');
@@ -2092,32 +1837,6 @@
     batchBtn.addEventListener('click', startBatch);
     deepScanBtn.addEventListener('click', startDeepScan);
     deepScanMultiBtn.addEventListener('click', startDeepScanMulti);
-    kojimaBtn.addEventListener('click', () => {
-        GM_openInTab(KOJIMA_SHOPS_SEARCH, { active: true });
-        kojimaUpdateStatus('新タブで家電検索を開いています...\n自動スキャンが開始されます');
-    });
-    kojimaDbgBtn.addEventListener('click', async () => {
-        kojimaDbgBtn.disabled = true;
-        kojimaUpdateStatus('RSCペイロード確認中...');
-        const testUrl = 'https://mercari-shops.com/search?shop_ids=WBGoQB8mMBB5VTEpM6PKZK&in_shop=true&in_stock=true&category_id=98';
-        await new Promise(resolve => {
-            GM_xmlhttpRequest({
-                method: 'GET', url: testUrl, timeout: 15000,
-                headers: { 'RSC': '1', 'Accept': 'text/x-component, */*' },
-                onload: res => {
-                    const ct = res.responseHeaders.match(/content-type:\s*([^\r\n]+)/i)?.[1] || '不明';
-                    const preview = res.responseText.substring(0, 400);
-                    const hasProduct = res.responseText.includes('/shops/product/');
-                    console.log('[KOJIMA DBG] RSC response:', res.responseText.substring(0, 2000));
-                    kojimaUpdateStatus(`status: ${res.status}\ncontent-type: ${ct}\n商品URL含む: ${hasProduct}\n---\n${preview}`);
-                    resolve();
-                },
-                onerror:   () => { kojimaUpdateStatus('接続エラー'); resolve(); },
-                ontimeout: () => { kojimaUpdateStatus('タイムアウト'); resolve(); },
-            });
-        });
-        kojimaDbgBtn.disabled = false;
-    });
     stopBtn.addEventListener('click',  () => {
         running = false;
         localStorage.removeItem('batchMode');

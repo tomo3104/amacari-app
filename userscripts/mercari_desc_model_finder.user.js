@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mercari Description Model Finder
 // @namespace    http://tampermonkey.net/
-// @version      3.02
+// @version      3.03
 // @description  タイトルに型番がない商品の説明文から型番を抽出してlist.jsonと照合（2026-10-28：QUEUE_KEY/CRAWLER_KEYはlocalStorageで全タブ共有されるため、クローラー実行中にメルカリのページを何気なく新規タブで開くだけでそのタブも動き出し、複数タブが同じキューを同時に進めようとする事故が起きていた（ユーザー報告）。sessionStorage(タブごとに独立)にTAB_IDを持たせ、状態にownerTabIdを記録して一致するタブだけが実際に処理を行うよう修正。既存状態にownerTabIdが無い場合は最初に見たタブが引き継ぐ（進行中のクローラーを中断させないため）・同一オリジンiframe方式・ウォッチドッグ・説明文抜粋記録・実験ログモード・型番判定の正規表現改善・診断ログのO(n²)化を修正・markProcessedのメーカー横断O(n)蓄積バグを修正・DIAG_LOG_MAXのTDZ位置バグを修正・?start_desc=URLパラメータでの自動起動を追加・1メーカー内100件ごとの予防的リロードを追加(フリーズ対策の安全網)・実データ検証で発見した抽出漏れ2件(先頭数字・スペース区切り)を修正・対応機種除外を「適用」「形名」「車種」にも拡充・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・収集/型番なし候補/抽出成功/説明文取得失敗の内訳をresearch_timingに記録するよう追加・iframe3並列化を試したが実機テストで同時タイムアウト多発により撤回し逐次処理とタイムアウト8秒に戻した・実験ログの実データ全件(18,034件)を検証しラベル付き型番の取りこぼしを2段階で修正(数字接頭辞+区切り無し・純数字型番・3文字の短い型番・数字を含まない5文字以上のラベル付き型番)、母数の12.1%を追加救済・タイトル型番判定(HAS_MODEL_RE)をサーバー側extract_model()と同等のロジックに統一し無駄な説明文取得を削減(現状の対象母数の32.7%は実はタイトルに型番ありと判明)・フリーズ時にlocalStorageの診断ログが復旧できなかった事故を受け、10回に1回サーバーにも診断ログを送信して保存するよう追加・v2.88で追加した診断ログ送信用カウンタがDIAG_LOG_MAXと同じTDZ位置バグを踏んでおり毎回即座に停止する事故を起こしたため早期return前に移動して修正・RESULT_KEY配列が育つほど1件ごとの件数表示(JSON.parse().length)が遅くなりメインスレッドが詰まる事故(動かし始めは快調→時間経過で応答不能)を修正、件数表示専用の軽量カウンター(RESULT_COUNT_KEY)に分離・2026-09-08：メルカリ側のマークアップ変更で説明文取得が100%失敗する事故が発生、DESC_SELを`pre[class*="merText"]`から安定した`[data-testid="description"]`に変更して修正・2026-09-09：16日分のログ集計でヒット0件のメーカー20社を発見しmanufacturersシート側で対象除外、上位5社（アイ・オー・データ/藤井電工/LOGITEC/サンワサプライ/TWINBIRD）はページ深度を1→3に増加、収集アイテムにページ番号(_page)を付与しヒットログにも出力するようにして今後の深度検証を可能にした）・2026-10-20：1件あたり平均7秒かかっていたDOM描画待ちのiframe取得が遅すぎる問題に対し、商品ページ内部のitems/get API通信を別スクリプト(mercari_item_desc_sniffer.user.js、iframe内でのみ動作)が横取りしてlocalStorage経由で渡す方式を追加、DOM描画待ちと並行で監視し先着優先（実験で7秒→4.4秒に短縮を確認・横取りスクリプトが無い環境でも従来のDOM方式にフォールバックするため後方互換）・広告ドメイン遮断・画像読み込み遮断・3並列化はいずれも実測で効果なしと確認（残る4秒台はメルカリ自身のNext.jsアプリの起動コストそのもので、何を遮断しても削れないと判明）・商品ごとにiframeを作り直すのをやめ、起動済みのiframeをwindow.next.router.push()で軽量遷移させる方式に変更、2件目以降は起動コストを払わずに済むため実測4.4秒→1.4〜2.3秒に短縮（起動済みiframeが壊れていた場合は自動でフル再起動にフォールバック）
 // @match        https://jp.mercari.com/*
 // @noframes
@@ -355,23 +355,54 @@
         return (start > 0 ? '…' : '') + clean(text.slice(start, end)) + (end < text.length ? '…' : '');
     }
 
-    // 2026-08-30追加：mercari_asin_checker.user.js・mercari_page1_research.user.jsと
-    // それぞれ個別にposition:fixedでボタン/ステータスを置いていたため、左下に固定ピクセル
-    // 位置の要素が積み重なり見た目が乱れていた。3スクリプト共通の入れ物（他スクリプトが
-    // 先に作っていればそれを再利用）に集約し、flexboxの自動積み上げに任せることで解消する。
-    function _amacariGetStack() {
-        let el = document.getElementById('amacari-fixed-stack-bl');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'amacari-fixed-stack-bl';
-            el.style.cssText = `
-                position:fixed; bottom:20px; left:20px; z-index:99999;
-                display:flex; flex-direction:column; align-items:flex-start; gap:8px;
-            `;
-            document.body.appendChild(el);
-        }
-        return el;
+    // 2026-11-08：他スクリプトと合わせて画面各所にボタンが乱立していたため、右下の
+    // 1つの丸いトグルボタンから開く共通パネルに統合する（他スクリプトが先に作っていれば
+    // それを再利用。関数の実体は各スクリプトに複製している）。
+    function _amacariGetPanel() {
+        let panel = document.getElementById('amacari-tools-panel');
+        if (panel) return panel;
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'amacari-tools-toggle';
+        toggleBtn.textContent = '🛠';
+        toggleBtn.title = 'Amacariツール';
+        toggleBtn.style.cssText = `
+            position:fixed; bottom:20px; right:20px; z-index:100000;
+            width:48px; height:48px; border-radius:50%; border:none;
+            background:#263238; color:#fff; font-size:20px; cursor:pointer;
+            box-shadow:0 2px 8px rgba(0,0,0,0.4);
+        `;
+        panel = document.createElement('div');
+        panel.id = 'amacari-tools-panel';
+        panel.style.cssText = `
+            position:fixed; bottom:76px; right:20px; z-index:99999;
+            display:none; flex-direction:column; gap:10px;
+            background:rgba(18,18,18,0.94); padding:14px; border-radius:12px;
+            max-height:78vh; overflow-y:auto; min-width:230px;
+            box-shadow:0 4px 18px rgba(0,0,0,0.5);
+        `;
+        toggleBtn.addEventListener('click', () => {
+            panel.style.display = (panel.style.display === 'flex') ? 'none' : 'flex';
+        });
+        document.body.appendChild(panel);
+        document.body.appendChild(toggleBtn);
+        return panel;
     }
+    function _amacariGetGroup(label, order) {
+        const panel = _amacariGetPanel();
+        const groupId = 'amacari-group-' + label;
+        let group = document.getElementById(groupId);
+        if (group) return group;
+        group = document.createElement('div');
+        group.id = groupId;
+        group.style.cssText = `order:${order}; display:flex; flex-direction:column; gap:6px;`;
+        const title = document.createElement('div');
+        title.textContent = label;
+        title.style.cssText = 'color:#9e9e9e; font-size:11px; font-weight:700; letter-spacing:0.04em; margin-top:2px;';
+        group.appendChild(title);
+        panel.appendChild(group);
+        return group;
+    }
+    function _amacariGetStack() { return _amacariGetGroup('発掘', 30); }
 
     // ===== ステータスUI（全ページ共通） =====
     const statusEl = document.createElement('div');
