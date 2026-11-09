@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)）
+// @version      3.3
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)・リピート検索(高速・実験)ボタン追加(2026-11-09)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -88,10 +88,18 @@
         border:none; border-radius:6px; font-size:14px;
         cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);
     `;
+    // 2026-11-08追加：メルカリ側のリピート検索(高速・実験)と同じ発想（並列フェッチで
+    // 短縮を試す実験版）。PayPayフリマ側のレート制限の厳しさは未検証のため、
+    // まずは小規模テスト（search_queueシートに数件貼って並列2）から試すこと。
+    // 安定版runRepeatSearchPP()は一切変更していないので、何かあればそちらに戻せる。
+    const repeatSearchFastBtn = document.createElement('button');
+    repeatSearchFastBtn.textContent = 'リピート検索(高速・実験)';
+    repeatSearchFastBtn.style.cssText = 'padding:8px 14px; background:#004D40; color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);';
     container.appendChild(statusEl);
     container.appendChild(batchBtn);
     container.appendChild(catBtn);
     container.appendChild(repeatSearchBtn);
+    container.appendChild(repeatSearchFastBtn);
     container.appendChild(deepScanBtn);
     container.appendChild(deepScanMultiBtn);
     container.appendChild(stopBtn);
@@ -104,6 +112,7 @@
         batchBtn.style.display = on ? 'none'  : 'block';
         catBtn.style.display   = on ? 'none'  : 'block';
         repeatSearchBtn.style.display = on ? 'none' : 'block';
+        repeatSearchFastBtn.style.display = on ? 'none' : 'block';
         deepScanBtn.style.display = on ? 'none' : 'block';
         deepScanMultiBtn.style.display = on ? 'none' : 'block';
         stopBtn.style.display  = on ? 'block' : 'none';
@@ -911,6 +920,115 @@
             ` ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
         );
     }
+
+    // ===== リピート検索（高速・実験版・2026-11-08追加）=====
+    // 安定版runRepeatSearchPP()は1モデルずつ逐次フェッチ→逐次サーバー送信だったため
+    // 時間がかかる（実測：3312件で約5時間18分）。複数モデルを並列フェッチし、
+    // まとめて1回のサーバー送信にすることで短縮できないか試す実験版（メルカリ側の
+    // リピート検索(高速・実験)と同じ発想）。PayPayフリマ側のレート制限の厳しさは
+    // 未検証のため、まずは小規模テストで様子を見ること。
+    const RS_FAST_PP_CONCURRENCY = 5;
+    const RS_FAST_PP_BATCH_SLEEP_MS = 400;
+
+    async function runRepeatSearchPPFast(modelList, concurrency) {
+        concurrency = concurrency || RS_FAST_PP_CONCURRENCY;
+        running = true;
+        setRunningUI(true);
+
+        let completed = 0;
+        let totalHits = 0;
+        let consecutiveBatchErrors = 0;
+        const batchStart = Date.now();
+
+        for (let i = 0; i < modelList.length; i += concurrency) {
+            if (!running) break;
+            const batch = modelList.slice(i, i + concurrency);
+            updateStatus(`[高速リピート検索 ${i + 1}〜${Math.min(i + concurrency, modelList.length)}/${modelList.length}] 並列fetch中(同時${concurrency}件)...`);
+
+            const results = await Promise.allSettled(
+                batch.map(model => fetchPayPayItems(model, 1000, 20000, null, null))
+            );
+
+            let combinedItems = [];
+            let batchErrors = 0;
+            results.forEach(r => {
+                if (r.status === 'fulfilled') {
+                    completed++;
+                    const itemList = Object.values(r.value).map(it => Object.assign({}, it, {
+                        name: '[リピート検索] ' + it.name,
+                    }));
+                    combinedItems = combinedItems.concat(itemList);
+                } else {
+                    batchErrors++;
+                }
+            });
+
+            if (combinedItems.length > 0) {
+                try {
+                    const result = await new Promise(resolve => sendToServer(combinedItems, resolve, { maker: 'リピート検索(高速):' + batch.join(',') + '[Yahoo]' }));
+                    if (result._serverDown) throw new Error('サーバー未起動');
+                    totalHits += (result.matches || []).length;
+                } catch (e) {
+                    updateStatus(`サーバー送信エラー: ${e.message}`);
+                }
+            }
+
+            if (batchErrors === batch.length) {
+                consecutiveBatchErrors++;
+                if (consecutiveBatchErrors >= 3) {
+                    updateStatus(`バッチ全滅が${consecutiveBatchErrors}回連続 → 中断（${completed}/${modelList.length}件で終了・ヒット${totalHits}件）`);
+                    running = false; setRunningUI(false); return;
+                }
+            } else {
+                consecutiveBatchErrors = 0;
+            }
+
+            await sleep(RS_FAST_PP_BATCH_SLEEP_MS);
+        }
+
+        const stoppedByUser = !running;
+        running = false;
+        setRunningUI(false);
+        const elapsedMin = Math.round((Date.now() - batchStart) / 60000);
+        updateStatus(
+            (stoppedByUser ? '中止しました。' : '全件完了！') +
+            ` [高速版・同時${concurrency}件] ${completed}/${modelList.length}件処理・ヒット${totalHits}件・${elapsedMin}分`
+        );
+    }
+
+    repeatSearchFastBtn.addEventListener('click', () => {
+        const mode = prompt(
+            'リピート検索(高速・実験)\n' +
+            '1 = 全件（リピートリスト＋過去仕入れ実績）\n' +
+            '2 = 指定（search_queueシートに貼ったリストのみ）',
+            '1',
+        );
+        if (!mode) return;
+        const concInput = prompt(
+            'リピート検索(高速・実験)\n同時並列数を指定してください\n' +
+            '2 = 安全重視（通常比そこそこ速く、負荷は小さめ）\n' +
+            '5 = 速度重視（通常比最大5倍だが未検証・負荷大きめ）',
+            '2'
+        );
+        if (concInput === null) return;
+        const concurrency = Math.min(10, Math.max(1, parseInt(concInput.trim(), 10) || RS_FAST_PP_CONCURRENCY));
+        const endpoint = mode.trim() === '2' ? '/get-search-queue' : '/get-repeat-search-list';
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: `http://localhost:8766${endpoint}`,
+            onload: res => {
+                try {
+                    const models = JSON.parse(res.responseText).models || [];
+                    if (models.length === 0) { updateStatus('型番リストが空です'); return; }
+                    runRepeatSearchPPFast(models, concurrency);
+                } catch (e) {
+                    updateStatus('型番リストの取得に失敗しました');
+                }
+            },
+            ontimeout: () => { updateStatus('型番リスト取得タイムアウト'); },
+            onerror:   () => { updateStatus('サーバー未起動（0_サーバー起動.batを実行してください）'); },
+        });
+    });
 
     // ===== リピート検索の自動起動（2026-11-08追加）=====
     // ?auto_repeat_search=ALL をつけてこのURLを開くと、ボタン操作・prompt()なしで
