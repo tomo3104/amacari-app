@@ -965,7 +965,7 @@
 
             if (combinedItems.length > 0) {
                 try {
-                    const result = await new Promise(resolve => sendToServer(combinedItems, resolve, { maker: 'リピート検索(高速):' + batch.join(',') + '[Yahoo]' }));
+                    const result = await new Promise(resolve => sendToServer(combinedItems, resolve, { maker: 'リピート検索(高速):' + batch.join(',') }));
                     if (result._serverDown) throw new Error('サーバー未起動');
                     totalHits += (result.matches || []).length;
                 } catch (e) {
