@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 検知ロガー
 // @namespace    http://tampermonkey.net/
-// @version      3.2
-// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード
+// @version      3.3
+// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード＆登録元タグ(プレミアム/既存リピート/通常)をmemoから抽出して送信(2026-11-12・アカウント統合対応)
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -116,6 +116,13 @@
                 ? Math.round(((breakeven - frimPrice) / amazonPrice * 100) * 10) / 10
                 : 0; // memoが読めない古い登録分等は0（フィルターには使わないので実害なし）
 
+            // 2026-11-12追加：複数アカウント（プレミアム用・リピート用）を1つに統合するにあたり、
+            // どの登録元（プレミアム／既存リピート／通常）かが分からなくなる問題への対策。
+            // memo末尾の括弧タグ（export_frima.py/サルベージCSV共通で既に付けている
+            // 「(プレミアム)」「(既存リピート)」等）をそのまま読み取って送る。
+            const sourceMatch = memoText.match(/\(([^()]+)\)\s*$/);
+            const source = sourceMatch ? sourceMatch[1] : '';
+
             const payload = {
                 itemid:      itemid,
                 name:        tr.item.name,
@@ -129,6 +136,7 @@
                 asin:        asinMatch ? asinMatch[0] : '',
                 account:     getAccount() || 'unknown',
                 model:       model,
+                source:      source,
             };
 
             fetch(SERVER_URL, {
