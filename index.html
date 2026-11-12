@@ -20,8 +20,6 @@
   <nav class="tabs">
     <button class="tab active" data-view="review">AR</button>
     <button class="tab" data-view="rt">RT</button>
-    <button class="tab" data-view="rs">RS</button>
-    <button class="tab" data-view="desc">MR</button>
     <button class="tab" data-view="furima">FR</button>
     <button class="tab" data-view="archive">仕入候補<span id="pending-purchase-badge" class="badge hidden"></span></button>
     <button class="tab" data-view="log">ログ</button>
@@ -51,6 +49,9 @@
   <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
 </main>
 
+<!-- 2026-11-12：desc-view/rs-viewはナビのタブボタンのみ削除（リピート検索・発掘リサーチ停止のため）。
+     このdiv自体はapp.js側がdocument.getElementByIdを無条件で参照しているため残してある
+     （削除するとnullになり、タブ切り替え全体がクラッシュする）。タブが無いので実質到達不能。 -->
 <main id="desc-view" class="view hidden">
   <div class="toolbar">
     <span id="desc-progress-label" class="progress-label">0 / 0</span>
@@ -58,6 +59,17 @@
   </div>
   <div id="desc-card-stack" class="card-stack">
     <p class="empty-message" id="desc-empty-message">読み込み中…</p>
+  </div>
+  <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
+</main>
+
+<main id="rs-view" class="view hidden">
+  <div class="toolbar">
+    <span id="rs-progress-label" class="progress-label">0 / 0</span>
+    <button id="rs-undo-btn" class="ghost-btn" disabled>↺ ひとつ戻す</button>
+  </div>
+  <div id="rs-card-stack" class="card-stack">
+    <p class="empty-message" id="rs-empty-message">読み込み中…</p>
   </div>
   <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
 </main>
@@ -101,17 +113,6 @@
   </div>
   <div id="rt-card-stack" class="card-stack">
     <p class="empty-message" id="rt-empty-message">読み込み中…</p>
-  </div>
-  <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
-</main>
-
-<main id="rs-view" class="view hidden">
-  <div class="toolbar">
-    <span id="rs-progress-label" class="progress-label">0 / 0</span>
-    <button id="rs-undo-btn" class="ghost-btn" disabled>↺ ひとつ戻す</button>
-  </div>
-  <div id="rs-card-stack" class="card-stack">
-    <p class="empty-message" id="rs-empty-message">読み込み中…</p>
   </div>
   <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
 </main>
