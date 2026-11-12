@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 検知ロガー
 // @namespace    http://tampermonkey.net/
-// @version      3.3
-// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード＆登録元タグ(プレミアム/既存リピート/通常)をmemoから抽出して送信(2026-11-12・アカウント統合対応)
+// @version      3.4
+// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード＆登録元タグ(プレミアム/既存リピート/通常)をmemoから抽出して送信(2026-11-12・アカウント統合対応)＆商品カテゴリ(categoryName1/2/3)も送信(2026-11-13・ガンプラ/トレカ等の誤マッチ判定精度向上)
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -123,6 +123,10 @@
             const sourceMatch = memoText.match(/\(([^()]+)\)\s*$/);
             const source = sourceMatch ? sourceMatch[1] : '';
 
+            // 2026-11-13追加：ガンプラ・トレカ等への型番誤マッチ（「別物」判定の最多理由）を
+            // 商品名のキーワード一致より確実に検出するため、出品者が選んだ正式なカテゴリ情報
+            // （tr.item.categoryName1/2/3）も送る。言い回しが違っても「カテゴリ＝おもちゃ」
+            // であれば機械的に判定できる（server.py側のCATEGORY_EXCLUDE_TERMS参照）。
             const payload = {
                 itemid:      itemid,
                 name:        tr.item.name,
@@ -137,6 +141,9 @@
                 account:     getAccount() || 'unknown',
                 model:       model,
                 source:      source,
+                category1:   tr.item.categoryName1 || '',
+                category2:   tr.item.categoryName2 || '',
+                category3:   tr.item.categoryName3 || '',
             };
 
             fetch(SERVER_URL, {
