@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.31
-// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離・2026-10-20：buildBodyFromUrl()がbrandId/categoryIdしか巡回先URLから反映しておらず、item_condition_id（新品指定）・status・価格帯・keyword等は最初にテンプレートを取得した時の値のまま全メーカー・全カテゴリで使われ続けていたバグを修正（実機で設定上のコンディションが新品以外の商品が多数ヒットに含まれる実害を確認）
+// @version      3.32
+// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離・2026-10-20：buildBodyFromUrl()がbrandId/categoryIdしか巡回先URLから反映しておらず、item_condition_id（新品指定）・status・価格帯・keyword等は最初にテンプレートを取得した時の値のまま全メーカー・全カテゴリで使われ続けていたバグを修正（実機で設定上のコンディションが新品以外の商品が多数ヒットに含まれる実害を確認）・2026-11-13：8サイクルに1回、全メーカーを売り切れ(status=sold_out)で取得し/collect-itemsへ送る型番収集サイクルを追加（RTは常時回っていて忘れられないため、別途起動が必要だったクローラーコレクトを相乗りさせる狙い。頻度はCOLLECT_EVERY_N_CYCLESで調整可能）
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -14,8 +14,16 @@
     'use strict';
 
     const SERVER      = 'http://localhost:8766/check-mercari';
+    const COLLECT_SERVER = 'http://localhost:8766/collect-items';
     const WAIT_MS     = 60000;  // サイクル間の待機
     const FETCH_DELAY = 3000;   // カテゴリ間のfetch間隔
+    // 2026-11-13追加：RTは常時回っていて忘れられることがないため、クローラーコレクト
+    // （型番収集・売り切れ商品対象）をこのサイクルに相乗りさせる。Nサイクルに1回だけ、
+    // 全メーカーのURLのstatusをon_sale→sold_outに差し替えて取得し、/check-mercari
+    // （販売中×list.json照合）の代わりに/collect-items（新規型番の発見・mercariシート
+    // 蓄積）へ送る。まずは8サイクルに1回から試して、様子を見て頻度を調整する。
+    const P1_CYCLE_COUNT      = 'p1r_cycle_count';
+    const COLLECT_EVERY_N_CYCLES = 8;
     // 2026-10-02追加：RTがページ1（新着順）しか見ないため、自動リサーチが拾う
     // 「売れ残り（2ページ目以降）」の95%をRTは構造的に取りこぼしていることが
     // 20日分のログ分析で判明。1メーカーあたり最大3ページまで遡ることで、
@@ -518,6 +526,48 @@
         }
     }
 
+    // 2026-11-13追加：型番収集サイクル用。URLのstatusをsold_outに差し替える
+    // （buildBodyFromUrlがURLのstatusパラメータをそのまま見ているため、これだけで
+    // 売り切れ商品のAPIリクエストに切り替わる）。
+    function toSoldOutUrl(url) {
+        try {
+            const u = new URL(url);
+            u.searchParams.set('status', 'sold_out');
+            return u.toString();
+        } catch (e) {
+            return url;
+        }
+    }
+
+    // 2026-11-13追加：型番収集サイクル用。/check-mercari（照合）の代わりに
+    // /collect-items（新規型番の発見・mercariシート蓄積）へ送る。
+    async function sendToCollectServer(items, makerName) {
+        const formatted = items
+            .map(item => ({
+                name:   item.name || '',
+                price:  String(parseInt(item.price, 10) || 0),
+                url:    `https://jp.mercari.com/item/${item.id}`,
+                source: makerName || '',
+            }))
+            .filter(i => i.name && parseInt(i.price) > 0);
+
+        if (formatted.length === 0) return 0;
+
+        try {
+            const res  = await fetch(COLLECT_SERVER, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ items: formatted }),
+            });
+            const data = await res.json();
+            p1Log(`  [型番収集] ${makerName}: 新規${data.new_count ?? '?'}件 / 追加${data.add_count ?? '?'}件`);
+            return data.new_count || 0;
+        } catch (e) {
+            p1Log(`  [型番収集] 送信エラー: ${e.message}`);
+            return 0;
+        }
+    }
+
     // ── fetch 直接呼び出し（ページ遷移なし） ─────────────────────────────────
 
     async function fetchCategory(cap) {
@@ -682,16 +732,22 @@
         let _fetchErrors = 0;
 
         while (ls.get(P1_MODE) === 'search') {
+            const cycleCount = parseInt(ls.get(P1_CYCLE_COUNT) || '0', 10) + 1;
+            ls.set(P1_CYCLE_COUNT, String(cycleCount));
+            const isCollectCycle = (cycleCount % COLLECT_EVERY_N_CYCLES === 0);
+            if (isCollectCycle) p1Log(`=== サイクル${cycleCount}: 型番収集モード（売り切れ）===`);
+
             for (let i = 0; i < _searchUrls.length; i++) {
                 if (ls.get(P1_MODE) !== 'search') return;
 
-                setTitle(`🔄 RT ${i + 1}/${_searchUrls.length} ${_searchUrls[i].name}`);
-                showStatus(`[R] ${_searchUrls[i].name} 照合中…`, '#0d47a1');
-                p1Log(`fetch cat${i}`);
+                const targetUrl = isCollectCycle ? toSoldOutUrl(_searchUrls[i].url) : _searchUrls[i].url;
+                setTitle(`${isCollectCycle ? '📦' : '🔄'} RT ${i + 1}/${_searchUrls.length} ${_searchUrls[i].name}`);
+                showStatus(`[${isCollectCycle ? 'C' : 'R'}] ${_searchUrls[i].name} ${isCollectCycle ? '収集' : '照合'}中…`, isCollectCycle ? '#e65100' : '#0d47a1');
+                p1Log(`fetch cat${i}${isCollectCycle ? '(sold_out)' : ''}`);
 
                 let items = [];
                 try {
-                    items = await fetchCategoryPages(tpl, _searchUrls[i].url, MAX_PAGES);
+                    items = await fetchCategoryPages(tpl, targetUrl, MAX_PAGES);
                     _fetchErrors = 0;
                 } catch (e) {
                     _fetchErrors++;
@@ -708,15 +764,19 @@
                 }
 
                 p1Log(`cat${i} items=${items.length}`);
-                reportStatus(`${_searchUrls[i].name} ${items.length}件照合中`, 'loop');
                 let found = 0;
-                try { found = await processItems(items, _searchUrls[i].name); } catch (e) { p1Log(`processItems error: ${e.message}`); }
+                if (isCollectCycle) {
+                    try { found = await sendToCollectServer(items, _searchUrls[i].name); } catch (e) { p1Log(`collect error: ${e.message}`); }
+                } else {
+                    reportStatus(`${_searchUrls[i].name} ${items.length}件照合中`, 'loop');
+                    try { found = await processItems(items, _searchUrls[i].name); } catch (e) { p1Log(`processItems error: ${e.message}`); }
+                }
 
                 const total = parseInt(ls.get(P1_FOUND) || '0', 10) + found;
                 ls.set(P1_FOUND, String(total));
                 showStatus(
-                    `[R] ${_searchUrls[i].name}: ヒット${found}（累計${total}）`,
-                    found > 0 ? '#1b5e20' : '#0d47a1'
+                    `[${isCollectCycle ? 'C' : 'R'}] ${_searchUrls[i].name}: ${isCollectCycle ? '新規' : 'ヒット'}${found}（累計${total}）`,
+                    found > 0 ? '#1b5e20' : (isCollectCycle ? '#e65100' : '#0d47a1')
                 );
 
                 if (i < _searchUrls.length - 1) await sleep(FETCH_DELAY);
