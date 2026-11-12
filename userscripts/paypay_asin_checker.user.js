@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PayPay Flea Market ASIN Checker
 // @namespace    http://tampermonkey.net/
-// @version      3.3
-// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)・リピート検索(高速・実験)ボタン追加(2026-11-09)）
+// @version      3.4
+// @description  PayPayフリマ出品中商品をlist.json(pmax)と照合して仕入れ候補を表示（ブランドID指定検索＋新着順ソート対応・実行進捗ログ(mfr_timing)＋完了時の入念調査自動連鎖に対応・メルカリ側からの自動連鎖起動(?auto_research=)に対応・カテゴリ巡回ボタン追加(2026-10-24・manufacturersシートとは別管理)・売り切れ深堀り分析ボタン追加(2026-11-03)・リピート検索(高速・実験)ボタン追加(2026-11-09)・発掘リサーチへの夜間自動連鎖を再除外(2026-11-12・実測で機能していないと判明)）
 // @match        https://paypayfleamarket.yahoo.co.jp/*
 // @grant        GM_xmlhttpRequest
 // @connect      localhost
@@ -845,11 +845,11 @@
                 updateStatus('自動起動: メーカーリスト取得中...');
                 fetchEligibleMfrs(mfrs => {
                     runBatchFetch(mfrs, groups).then(() => {
-                        // 2026-10-26追加：自動起動時はブランド巡回に続けてカテゴリ巡回も自動実行する
-                        // （メルカリ・ヤフー・ラクマ・発掘を一気通貫で繋ぐ構想の一部）。
-                        // 完了後は発掘リサーチへ連鎖する（2026-09-30に「時間がかかりすぎる」理由で
-                        // 自動連鎖から外していたが、desc_last_run_リセットバグ修正(2026-10-24)で
-                        // 定常運用時は十分速くなったため復活させる）。
+                        // 2026-10-26追加：自動起動時はブランド巡回に続けてカテゴリ巡回も自動実行する。
+                        // 2026-11-12再除外：発掘リサーチへの自動連鎖は2026-10-24に一度復活させたが、
+                        // 実測で直近7夜のヒットが1,0,0,2,0,1,0件（毎晩1〜4時間かけて）とほぼ機能して
+                        // いないと判明したため、再び自動連鎖から外す（手動で使う分には従来通り
+                        // ?start_desc=ALLで起動可能）。カテゴリ巡回完了でこの夜間チェーンは終わり。
                         GM_xmlhttpRequest({
                             method: 'GET',
                             url: CATEGORY_URL,
@@ -857,10 +857,7 @@
                                 let categories = [];
                                 try { categories = JSON.parse(res.responseText).categories || []; } catch (e) {}
                                 runCategoryBatchFetch(categories).then(() => {
-                                    updateStatus('→ 発掘リサーチへ自動移行中...');
-                                    setTimeout(() => {
-                                        window.location.href = 'https://jp.mercari.com/?start_desc=ALL';
-                                    }, 3000);
+                                    updateStatus('カテゴリ巡回まで完了（発掘リサーチへの自動連鎖は無効化済み）');
                                 });
                             },
                             onerror: () => updateStatus('カテゴリ一覧取得失敗（ブランド巡回のみで終了）'),
