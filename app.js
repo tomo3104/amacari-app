@@ -436,19 +436,24 @@ function buildCardEl(card) {
     ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
     : `<div class="card-thumb"></div>`;
 
-  // 2026-11-07追加：実利益率・ROIは現在のメルカリ価格基準の値。これとは別に、
-  // 「仕入れ目標(3割引)」まで値切れた場合の利益率・ROIを括弧内に併記する
-  // （例：15.8%（20.2%））。実利益率・実利益額はメルカリ価格に対して線形
-  // （傾き-1/Amazon価格・-1）なので、価格差分(mercari_price - 目標価格)を
-  // 既存の値に加算するだけで、FBA手数料等をJS側で再計算せずに求められる。
-  const targetPrice   = negotiationTarget(card.pmax);
-  const priceShift    = Number(card.mercari_price) - Number(targetPrice);
-  const amazonPriceNum = Number(card.amazon_price);
-  const marginAtTarget = (Number.isFinite(targetPrice) && Number.isFinite(priceShift) && amazonPriceNum)
-    ? Math.round((Number(card.real_margin) + priceShift / amazonPriceNum * 100) * 10) / 10
+  // 2026-11-14：フリマウォッチ監視タブ（buildFurimaCardEl）の表示方式に統一。
+  // 現在のメルカリ価格から2割値切れた場合の見込み利益を実利益率・ROIの括弧内に
+  // 併記する（例：15.8%（20.2%））。card.pmaxは2026-09-11以降すでに純粋な
+  // 損益分岐点（Amazon価格-FBA手数料、required_margin等の先引きなし）なので、
+  // そのまま損益分岐点として使える。
+  const FURIMA_NEGOTIATION_RATIO = 0.8; // 2割引き
+  const breakeven       = Number(card.pmax);
+  const mercariPriceNum = Number(card.mercari_price);
+  const amazonPriceNum  = Number(card.amazon_price);
+  const negotiatedPrice = Number.isFinite(mercariPriceNum) ? Math.floor(mercariPriceNum * FURIMA_NEGOTIATION_RATIO) : null;
+  const maxProfit = (Number.isFinite(breakeven) && negotiatedPrice !== null)
+    ? breakeven - negotiatedPrice
     : null;
-  const roiAtTarget = (Number.isFinite(targetPrice) && Number.isFinite(priceShift) && targetPrice > 0)
-    ? Math.round(((Number(card.real_profit) + priceShift) / targetPrice * 100) * 10) / 10
+  const marginAtTarget = (maxProfit !== null && amazonPriceNum)
+    ? Math.round((maxProfit / amazonPriceNum * 100) * 10) / 10
+    : null;
+  const roiAtTarget = (maxProfit !== null && negotiatedPrice)
+    ? Math.round((maxProfit / negotiatedPrice * 100) * 10) / 10
     : null;
   const marginTargetText = marginAtTarget === null ? "" : `<span class="value-target">（${formatPercent(marginAtTarget)}）</span>`;
   const roiTargetText    = roiAtTarget === null ? "" : `<span class="value-target">（${formatPercent(roiAtTarget)}）</span>`;
@@ -481,11 +486,11 @@ function buildCardEl(card) {
       </div>
       <div class="card-grid">
         <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
-        <div><span>メルカリ価格</span>${formatYen(card.mercari_price)}</div>
-        <div><span>実利益額</span>${formatYen(card.real_profit)}</div>
-        <div><span>仕入上限</span>${formatYen(card.pmax)}</div>
-        <div><span>仕入れ目標(3割引)</span>${formatYen(negotiationTarget(card.pmax))}</div>
-        <div><span>交渉目安</span>${formatNegotiation(card.mercari_price, card.pmax)}</div>
+        <div><span>損益分岐点</span>${formatYen(card.pmax)}</div>
+        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
+        <div><span>価格</span>${formatYen(card.mercari_price)}</div>
+        <div><span>交渉金額(2割引)</span>${formatYen(negotiatedPrice)}</div>
+        <div><span>最大利益額</span>${formatYen(maxProfit)}</div>
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
       <div class="card-links">
@@ -1568,28 +1573,6 @@ function marketplaceInfo(url) {
 function formatYen(v) {
   const n = Number(v);
   return Number.isFinite(n) && v !== "" ? `¥${n.toLocaleString()}` : "−";
-}
-
-// 2026-09-25追加：「pmaxの3割引き」を仕入れ目標値として表示し、現在のメルカリ価格との
-// 差分を価格交渉の目安として見せる。固定値なので今後変えたくなったらNEGOTIATION_DISCOUNT_RATIOを
-// 調整するだけでよい（2026-11-07：4割引き→3割引きに変更）。
-const NEGOTIATION_DISCOUNT_RATIO = 0.7; // pmax×0.7 = 3割引き
-
-function negotiationTarget(pmax) {
-  const n = Number(pmax);
-  return Number.isFinite(n) ? Math.floor(n * NEGOTIATION_DISCOUNT_RATIO) : null;
-}
-
-function formatNegotiation(mercariPrice, pmax) {
-  const target = negotiationTarget(pmax);
-  const price  = Number(mercariPrice);
-  if (target === null || !Number.isFinite(price)) {
-    return `<span class="nego-val">−</span>`;
-  }
-  const diff = price - target;
-  return diff > 0
-    ? `<span class="nego-val nego-needed">¥${diff.toLocaleString()} 値下げ希望</span>`
-    : `<span class="nego-val nego-ok">達成済み</span>`;
 }
 
 function formatPercent(v) {
