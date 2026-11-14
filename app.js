@@ -486,10 +486,10 @@ function buildCardEl(card) {
       </div>
       <div class="card-grid">
         <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
-        <div><span>損益分岐点</span>${formatYen(card.pmax)}</div>
-        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>価格</span>${formatYen(card.mercari_price)}</div>
+        <div><span>損益分岐点</span>${formatYen(card.pmax)}</div>
         <div><span>交渉金額(2割引)</span>${formatYen(negotiatedPrice)}</div>
+        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>最大利益額</span>${formatYen(maxProfit)}</div>
         <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
       </div>
@@ -586,10 +586,10 @@ function buildFurimaCardEl(card) {
       </div>
       <div class="card-grid">
         <div><span>Amazon価格</span>${formatYen(card.amazon_price)}</div>
-        <div><span>損益分岐点</span>${formatYen(card.breakeven)}</div>
-        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>価格</span>${formatYen(card.price)}</div>
+        <div><span>損益分岐点</span>${formatYen(card.breakeven)}</div>
         <div><span>交渉金額(2割引)</span>${formatYen(card.negotiated_price)}</div>
+        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>最大利益額</span>${formatYen(card.max_profit)}</div>
       </div>
       <div class="card-links">
