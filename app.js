@@ -564,6 +564,9 @@ function buildFurimaCardEl(card) {
   const modelLine = card.model
     ? `型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button> ／ `
     : "";
+  const asinLine = card.asin
+    ? ` ／ ASIN：${escapeHtml(card.asin)}<button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>`
+    : "";
 
   el.innerHTML = `
     <div class="swipe-flag flag-like">仕入れ対象</div>
@@ -573,7 +576,7 @@ function buildFurimaCardEl(card) {
     ${thumb}
     <div class="card-body">
       <p class="card-name">${escapeHtml(card.name)}</p>
-      <p class="card-sub">${modelLine}サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""} ／ 検知：${escapeHtml(formatHitTime(card.date))}</p>
+      <p class="card-sub">${modelLine}サービス：${escapeHtml(card.service)}${asinLine} ／ 検知：${escapeHtml(formatHitTime(card.date))}</p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
@@ -585,7 +588,7 @@ function buildFurimaCardEl(card) {
         </div>
       </div>
       <div class="card-grid">
-        <div><span>Amazon価格</span>${formatYen(card.amazon_price)}</div>
+        <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
         <div><span>価格</span>${formatYen(card.price)}</div>
         <div><span>損益分岐点</span>${formatYen(card.breakeven)}</div>
         <div><span>交渉金額(2割引)</span>${formatYen(card.negotiated_price)}</div>
@@ -617,6 +620,24 @@ function recalcWithNewPrice(card, newPrice) {
   return { amazon_price: newPrice, pmax, diff, roi, margin, score, real_profit, real_margin };
 }
 
+// FRタブ用：breakeven（真の損益分岐点）はシートに直接保存されていないため、
+// AR側のrecalcWithNewPriceと同じ考え方（価格差分をそのまま加算）で再構成する。
+function recalcFurimaWithNewPrice(card, newPrice) {
+  const breakeven = Math.round(Number(card.breakeven) + (newPrice - Number(card.amazon_price)));
+  const price = Number(card.price);
+  const realProfit = breakeven - price;
+  const margin = newPrice ? Math.round(realProfit / newPrice * 1000) / 10 : 0;
+  const roi = price ? Math.round(realProfit / price * 1000) / 10 : 0;
+  const negotiatedPrice = card.negotiated_price;
+  const maxProfit = (negotiatedPrice != null) ? breakeven - negotiatedPrice : null;
+  const maxMargin = (maxProfit != null && newPrice) ? Math.round((maxProfit / newPrice * 100) * 10) / 10 : null;
+  const maxRoi = (maxProfit != null && negotiatedPrice) ? Math.round((maxProfit / negotiatedPrice * 100) * 10) / 10 : null;
+  return {
+    amazon_price: newPrice, breakeven, real_profit: realProfit, margin, roi,
+    max_profit: maxProfit, max_margin: maxMargin, max_roi: maxRoi,
+  };
+}
+
 // 2026-09-11：手入力での価格編集は「利益少ない」に見える商品をわざわざ調べ直す
 // 手間が大きく結局そのまま却下されがちだったため廃止し、その場でSP-APIから
 // 最新のAmazon価格を取得するボタンに置き換えた（GAS側でprice_recheck_queue
@@ -645,6 +666,40 @@ els.stack.addEventListener("click", async e => {
     Object.assign(card, upd);
     await gasPost("updateAmazonPrice", { row, ...upd });
     renderStack();
+  } catch (err) {
+    alert("価格再調査に失敗しました: " + err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+});
+
+// FRタブ用：recheckPrice自体はAR/FR共通（ASIN指定でSP-APIから最新価格を取得する
+// だけの汎用action）だが、更新先の列構成が違うためupdateFurimaAmazonPriceで分ける。
+els.furimaStack.addEventListener("click", async e => {
+  const btn = e.target.closest(".recheck-price-btn");
+  if (!btn) return;
+  e.stopPropagation();
+  if (btn.disabled) return;
+  const row = Number(btn.dataset.row);
+  const asin = btn.dataset.asin;
+  const model = btn.dataset.model;
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const res = await gasPost("recheckPrice", { asin, model });
+    const data = await res.json();
+    if (data.error || !data.price) {
+      alert(data.error || "価格を取得できませんでした");
+      return;
+    }
+    const card = state.furimaCards.find(c => c.row === row);
+    if (!card) return;
+    const upd = recalcFurimaWithNewPrice(card, data.price);
+    Object.assign(card, upd);
+    await gasPost("updateFurimaAmazonPrice", { row, amazon_price: upd.amazon_price, margin: upd.margin });
+    renderFurimaStack();
   } catch (err) {
     alert("価格再調査に失敗しました: " + err);
   } finally {
@@ -728,6 +783,7 @@ els.stack.addEventListener("click", handleCopyClick);
 els.descStack.addEventListener("click", handleCopyClick);
 els.rtStack.addEventListener("click", handleCopyClick);
 els.rsStack.addEventListener("click", handleCopyClick);
+els.furimaStack.addEventListener("click", handleCopyClick);
 
 // ---------- スワイプ操作 ----------
 
