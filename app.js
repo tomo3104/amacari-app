@@ -568,24 +568,24 @@ function buildFurimaCardEl(card) {
     ${thumb}
     <div class="card-body">
       <p class="card-name">${escapeHtml(card.name)}</p>
-      <p class="card-sub">${modelLine}サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""}</p>
+      <p class="card-sub">${modelLine}サービス：${escapeHtml(card.service)}${card.asin ? ` ／ ASIN：${escapeHtml(card.asin)}` : ""} ／ 検知：${escapeHtml(formatHitTime(card.date))}</p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
-          <span class="value">${formatPercent(card.margin)}</span>
+          <span class="value">${formatPercent(card.margin)}${card.max_margin == null ? "" : `<span class="value-target">（${formatPercent(card.max_margin)}）</span>`}</span>
         </div>
         <div class="highlight-box highlight-roi">
           <span class="label">ROI</span>
-          <span class="value">${formatPercent(card.roi)}</span>
+          <span class="value">${formatPercent(card.roi)}${card.max_roi == null ? "" : `<span class="value-target">（${formatPercent(card.max_roi)}）</span>`}</span>
         </div>
       </div>
       <div class="card-grid">
         <div><span>Amazon価格</span>${formatYen(card.amazon_price)}</div>
+        <div><span>損益分岐点</span>${formatYen(card.breakeven)}</div>
+        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
         <div><span>価格</span>${formatYen(card.price)}</div>
-        <div><span>上限価格</span>${formatYen(card.limit_price)}</div>
-        <div><span>差額</span>${formatYen(card.diff)}</div>
-        <div><span>仕入れ目標(3割引)</span>${formatYen(negotiationTarget(card.limit_price))}</div>
-        <div><span>交渉目安</span>${formatNegotiation(card.price, card.limit_price)}</div>
+        <div><span>交渉金額(2割引)</span>${formatYen(card.negotiated_price)}</div>
+        <div><span>最大利益額</span>${formatYen(card.max_profit)}</div>
       </div>
       <div class="card-links">
         ${links.join("\n")}
