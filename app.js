@@ -456,6 +456,15 @@ function buildCardEl(card) {
   const nego10 = negotiationAt(0.9); // 1割引き
   const nego20 = negotiationAt(0.8); // 2割引き
 
+  // 2026-11-17：server.py側の「交渉次第」ルート（NEGOTIATION_ALL_ROUTES、交渉前の
+  // 生価格では利益条件を満たさないが10%交渉できれば成立する候補）は、card.real_profit/
+  // real_margin/roiに最初から10%交渉後の想定利益が入っている。商品名の「[交渉次第]」
+  // タグで交渉前提だと分かるので、利益額・実利益率・ROIは常に「損益分岐点-価格」の
+  // 生の実態値を表示するよう、card側の値を使わずここで算出し直す。
+  const actualProfit = (Number.isFinite(breakeven) && Number.isFinite(mercariPriceNum)) ? breakeven - mercariPriceNum : null;
+  const actualMargin = (actualProfit !== null && amazonPriceNum) ? Math.round((actualProfit / amazonPriceNum * 100) * 10) / 10 : null;
+  const actualRoi    = (actualProfit !== null && mercariPriceNum) ? Math.round((actualProfit / mercariPriceNum * 100) * 10) / 10 : null;
+
   const marginTargetText = (nego10.margin === null && nego20.margin === null) ? "" :
     `<span class="value-target">（1割:${formatPercent(nego10.margin)} ／ 2割:${formatPercent(nego20.margin)}）</span>`;
   const roiTargetText = (nego10.roi === null && nego20.roi === null) ? "" :
@@ -481,11 +490,11 @@ function buildCardEl(card) {
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
-          <span class="value">${formatPercent(card.real_margin)}${marginTargetText}</span>
+          <span class="value">${formatPercent(actualMargin)}${marginTargetText}</span>
         </div>
         <div class="highlight-box highlight-roi">
           <span class="label">ROI</span>
-          <span class="value">${formatPercent(card.roi)}${roiTargetText}</span>
+          <span class="value">${formatPercent(actualRoi)}${roiTargetText}</span>
         </div>
       </div>
       <div class="card-grid">
@@ -495,7 +504,7 @@ function buildCardEl(card) {
         <div><span>交渉利益（1割）</span>${formatYen(nego10.profit)}</div>
         <div><span>価格</span>${formatYen(card.mercari_price)}</div>
         <div><span>交渉金額（2割）</span>${formatYen(nego20.negotiatedPrice)}</div>
-        <div><span>利益額</span>${formatYen(card.real_profit)}</div>
+        <div><span>利益額</span>${formatYen(actualProfit)}</div>
         <div><span>交渉利益（2割）</span>${formatYen(nego20.profit)}</div>
       </div>
       <div class="card-links">
