@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         フリマウォッチ タイムライン 検知ロガー
 // @namespace    http://tampermonkey.net/
-// @version      3.4
-// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード＆登録元タグ(プレミアム/既存リピート/通常)をmemoから抽出して送信(2026-11-12・アカウント統合対応)＆商品カテゴリ(categoryName1/2/3)も送信(2026-11-13・ガンプラ/トレカ等の誤マッチ判定精度向上)
+// @version      3.5
+// @description  商品ページ・公式商品ページを別タブで開く＆モノトレーサーボタン追加＆マッチした行をASIN・型番・実利益率付きでローカルサーバーに無条件でログ記録＆1時間ごとに自動リロード＆登録元タグ(プレミアム/既存リピート/通常)をmemoから抽出して送信(2026-11-12・アカウント統合対応)＆商品カテゴリ(categoryName1/2/3)も送信(2026-11-13・ガンプラ/トレカ等の誤マッチ判定精度向上)＆停止検知用ハートビート送信(2026-11-17)
 // @match        https://www.furimawatch.net/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tomo3104/amacari-app/main/userscripts/furimawatch_highlight.user.js
@@ -34,8 +34,11 @@
     'use strict';
 
     const SERVER_URL = 'http://localhost:8768/furima-hit';
+    const HEARTBEAT_URL = 'http://localhost:8768/furima-heartbeat';
     const LS_KEY = 'furimaNotifiedCache';
     const LS_ACCOUNT_KEY = 'frimaAccount';
+    const LS_HEARTBEAT_SENT_KEY = 'furimaHeartbeatSentAt';
+    const HEARTBEAT_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5分
     const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7日
 
     function getAccount() {
@@ -252,10 +255,26 @@
         });
     }
 
+    // 2026-11-17追加：タイムラインAPIと実際の記録を突き合わせたところ、1時間ごとの
+    // 自動リロード(location.reload())がPCのスリープ等で時々止まり、気づかれないまま
+    // 新着が取りこぼされていることが判明した。このページが生きて動いている証として
+    // 一定間隔でローカルサーバーにハートビートを送る。サーバー側はブラウザが固まっても
+    // 影響されない別プロセスなので、途絶えを検知してDiscordで警告できる。
+    function sendHeartbeat() {
+        try {
+            const lastSent = parseInt(localStorage.getItem(LS_HEARTBEAT_SENT_KEY) || '0', 10);
+            if (Date.now() - lastSent < HEARTBEAT_MIN_INTERVAL_MS) return;
+            fetch(HEARTBEAT_URL, { method: 'POST' })
+                .then(() => localStorage.setItem(LS_HEARTBEAT_SENT_KEY, String(Date.now())))
+                .catch(() => { /* ローカルサーバー未起動時は無視 */ });
+        } catch (err) { /* noop */ }
+    }
+
     function run() {
         scanAndLog();
         fixButtons();
         addMonoTracerButtons();
+        sendHeartbeat();
     }
 
     // フリマウォッチは手動更新（メニューの更新ボタン／ブラウザの再読込）でしか
