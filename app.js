@@ -437,26 +437,29 @@ function buildCardEl(card) {
     : `<div class="card-thumb"></div>`;
 
   // 2026-11-14：フリマウォッチ監視タブ（buildFurimaCardEl）の表示方式に統一。
-  // 現在のメルカリ価格から2割値切れた場合の見込み利益を実利益率・ROIの括弧内に
-  // 併記する（例：15.8%（20.2%））。card.pmaxは2026-09-11以降すでに純粋な
-  // 損益分岐点（Amazon価格-FBA手数料、required_margin等の先引きなし）なので、
-  // そのまま損益分岐点として使える。
-  const FURIMA_NEGOTIATION_RATIO = 0.8; // 2割引き
+  // 現在のメルカリ価格から値切れた場合の見込み利益を実利益率・ROIの括弧内に
+  // 併記する。card.pmaxは2026-09-11以降すでに純粋な損益分岐点（Amazon価格-FBA
+  // 手数料、required_margin等の先引きなし）なので、そのまま損益分岐点として使える。
+  // 2026-11-17：1割引き・2割引きの両方の見込みを並べて見られるよう拡張。
   const breakeven       = Number(card.pmax);
   const mercariPriceNum = Number(card.mercari_price);
   const amazonPriceNum  = Number(card.amazon_price);
-  const negotiatedPrice = Number.isFinite(mercariPriceNum) ? Math.floor(mercariPriceNum * FURIMA_NEGOTIATION_RATIO) : null;
-  const maxProfit = (Number.isFinite(breakeven) && negotiatedPrice !== null)
-    ? breakeven - negotiatedPrice
-    : null;
-  const marginAtTarget = (maxProfit !== null && amazonPriceNum)
-    ? Math.round((maxProfit / amazonPriceNum * 100) * 10) / 10
-    : null;
-  const roiAtTarget = (maxProfit !== null && negotiatedPrice)
-    ? Math.round((maxProfit / negotiatedPrice * 100) * 10) / 10
-    : null;
-  const marginTargetText = marginAtTarget === null ? "" : `<span class="value-target">（${formatPercent(marginAtTarget)}）</span>`;
-  const roiTargetText    = roiAtTarget === null ? "" : `<span class="value-target">（${formatPercent(roiAtTarget)}）</span>`;
+
+  function negotiationAt(ratio) {
+    const negotiatedPrice = Number.isFinite(mercariPriceNum) ? Math.floor(mercariPriceNum * ratio) : null;
+    const profit = (Number.isFinite(breakeven) && negotiatedPrice !== null) ? breakeven - negotiatedPrice : null;
+    const margin = (profit !== null && amazonPriceNum) ? Math.round((profit / amazonPriceNum * 100) * 10) / 10 : null;
+    const roi    = (profit !== null && negotiatedPrice) ? Math.round((profit / negotiatedPrice * 100) * 10) / 10 : null;
+    return { negotiatedPrice, profit, margin, roi };
+  }
+
+  const nego10 = negotiationAt(0.9); // 1割引き
+  const nego20 = negotiationAt(0.8); // 2割引き
+
+  const marginTargetText = (nego10.margin === null && nego20.margin === null) ? "" :
+    `<span class="value-target">（1割:${formatPercent(nego10.margin)} ／ 2割:${formatPercent(nego20.margin)}）</span>`;
+  const roiTargetText = (nego10.roi === null && nego20.roi === null) ? "" :
+    `<span class="value-target">（1割:${formatPercent(nego10.roi)} ／ 2割:${formatPercent(nego20.roi)}）</span>`;
 
   el.innerHTML = `
     ${isTreasure ? '<div class="treasure-badge">💎 お宝</div>' : ''}
@@ -473,6 +476,7 @@ function buildCardEl(card) {
         型番：${escapeHtml(card.model)}<button class="copy-btn" data-copy="${escapeAttr(card.model)}" aria-label="型番をコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         ／ ASIN：${escapeHtml(card.asin)}<button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         ／ 検知：${escapeHtml(formatHitTime(card.date))}
+        ／ ランク：${formatRank(card.rank)}
       </p>
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
@@ -486,12 +490,13 @@ function buildCardEl(card) {
       </div>
       <div class="card-grid">
         <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
-        <div><span>価格</span>${formatYen(card.mercari_price)}</div>
+        <div><span>交渉金額（1割）</span>${formatYen(nego10.negotiatedPrice)}</div>
         <div><span>損益分岐点</span>${formatYen(card.pmax)}</div>
-        <div><span>交渉金額(2割引)</span>${formatYen(negotiatedPrice)}</div>
+        <div><span>交渉利益（1割）</span>${formatYen(nego10.profit)}</div>
+        <div><span>価格</span>${formatYen(card.mercari_price)}</div>
+        <div><span>交渉金額（2割）</span>${formatYen(nego20.negotiatedPrice)}</div>
         <div><span>利益額</span>${formatYen(card.real_profit)}</div>
-        <div><span>最大利益額</span>${formatYen(maxProfit)}</div>
-        <div class="card-grid-wide"><span>Amazonランク</span>${formatRank(card.rank)}</div>
+        <div><span>交渉利益（2割）</span>${formatYen(nego20.profit)}</div>
       </div>
       <div class="card-links">
         <a class="link-btn ${marketplaceInfo(card.mercari_url).cls}" href="${escapeAttr(card.mercari_url)}">${marketplaceInfo(card.mercari_url).label}</a>
@@ -568,6 +573,30 @@ function buildFurimaCardEl(card) {
     ? ` ／ ASIN：${escapeHtml(card.asin)}<button class="copy-btn" data-copy="${escapeAttr(card.asin)}" aria-label="ASINをコピー"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>`
     : "";
 
+  // 2026-11-17：AR/RT（buildCardEl）と同じ1割・2割の2段階表示に統一。
+  // card.negotiated_price/max_profit/max_margin/max_roiはサーバー側で2割固定の
+  // 値しか持っていないため、ここでも同じ考え方（card.breakeven・card.priceから
+  // そのつど算出）に揃えて1割分も自前で計算する。
+  const fPriceNum     = Number(card.price);
+  const fBreakeven    = Number(card.breakeven);
+  const fAmazonPrice  = Number(card.amazon_price);
+
+  function fNegotiationAt(ratio) {
+    const negotiatedPrice = Number.isFinite(fPriceNum) ? Math.floor(fPriceNum * ratio) : null;
+    const profit = (Number.isFinite(fBreakeven) && negotiatedPrice !== null) ? fBreakeven - negotiatedPrice : null;
+    const margin = (profit !== null && fAmazonPrice) ? Math.round((profit / fAmazonPrice * 100) * 10) / 10 : null;
+    const roi    = (profit !== null && negotiatedPrice) ? Math.round((profit / negotiatedPrice * 100) * 10) / 10 : null;
+    return { negotiatedPrice, profit, margin, roi };
+  }
+
+  const fNego10 = fNegotiationAt(0.9); // 1割引き
+  const fNego20 = fNegotiationAt(0.8); // 2割引き
+
+  const fMarginTargetText = (fNego10.margin === null && fNego20.margin === null) ? "" :
+    `<span class="value-target">（1割:${formatPercent(fNego10.margin)} ／ 2割:${formatPercent(fNego20.margin)}）</span>`;
+  const fRoiTargetText = (fNego10.roi === null && fNego20.roi === null) ? "" :
+    `<span class="value-target">（1割:${formatPercent(fNego10.roi)} ／ 2割:${formatPercent(fNego20.roi)}）</span>`;
+
   el.innerHTML = `
     <div class="swipe-flag flag-like">仕入れ対象</div>
     <div class="swipe-flag flag-nope">却下</div>
@@ -580,20 +609,22 @@ function buildFurimaCardEl(card) {
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
-          <span class="value">${formatPercent(card.margin)}${card.max_margin == null ? "" : `<span class="value-target">（${formatPercent(card.max_margin)}）</span>`}</span>
+          <span class="value">${formatPercent(card.margin)}${fMarginTargetText}</span>
         </div>
         <div class="highlight-box highlight-roi">
           <span class="label">ROI</span>
-          <span class="value">${formatPercent(card.roi)}${card.max_roi == null ? "" : `<span class="value-target">（${formatPercent(card.max_roi)}）</span>`}</span>
+          <span class="value">${formatPercent(card.roi)}${fRoiTargetText}</span>
         </div>
       </div>
       <div class="card-grid">
         <div><span>Amazon価格</span><span class="price-val" data-price="${card.amazon_price}">${formatYen(card.amazon_price)}</span><button class="recheck-price-btn no-swipe" data-row="${card.row}" data-asin="${escapeAttr(card.asin)}" data-model="${escapeAttr(card.model)}" aria-label="価格を再調査">🔄</button></div>
-        <div><span>価格</span>${formatYen(card.price)}</div>
+        <div><span>交渉金額（1割）</span>${formatYen(fNego10.negotiatedPrice)}</div>
         <div><span>損益分岐点</span>${formatYen(card.breakeven)}</div>
-        <div><span>交渉金額(2割引)</span>${formatYen(card.negotiated_price)}</div>
+        <div><span>交渉利益（1割）</span>${formatYen(fNego10.profit)}</div>
+        <div><span>価格</span>${formatYen(card.price)}</div>
+        <div><span>交渉金額（2割）</span>${formatYen(fNego20.negotiatedPrice)}</div>
         <div><span>利益額</span>${formatYen(card.real_profit)}</div>
-        <div><span>最大利益額</span>${formatYen(card.max_profit)}</div>
+        <div><span>交渉利益（2割）</span>${formatYen(fNego20.profit)}</div>
       </div>
       <div class="card-links">
         ${links.join("\n")}
@@ -628,14 +659,9 @@ function recalcFurimaWithNewPrice(card, newPrice) {
   const realProfit = breakeven - price;
   const margin = newPrice ? Math.round(realProfit / newPrice * 1000) / 10 : 0;
   const roi = price ? Math.round(realProfit / price * 1000) / 10 : 0;
-  const negotiatedPrice = card.negotiated_price;
-  const maxProfit = (negotiatedPrice != null) ? breakeven - negotiatedPrice : null;
-  const maxMargin = (maxProfit != null && newPrice) ? Math.round((maxProfit / newPrice * 100) * 10) / 10 : null;
-  const maxRoi = (maxProfit != null && negotiatedPrice) ? Math.round((maxProfit / negotiatedPrice * 100) * 10) / 10 : null;
-  return {
-    amazon_price: newPrice, breakeven, real_profit: realProfit, margin, roi,
-    max_profit: maxProfit, max_margin: maxMargin, max_roi: maxRoi,
-  };
+  // 2026-11-17：1割/2割の交渉金額・交渉利益はbuildFurimaCardElがbreakeven・price・
+  // amazon_priceからそのつど算出するため、ここで持つ必要はなくなった。
+  return { amazon_price: newPrice, breakeven, real_profit: realProfit, margin, roi };
 }
 
 // 2026-09-11：手入力での価格編集は「利益少ない」に見える商品をわざわざ調べ直す
