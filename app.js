@@ -436,9 +436,14 @@ function buildThumbHtml(imageUrl) {
   const id = mercariPhotoId(imageUrl);
   if (!id) return `<img class="card-thumb" src="${escapeAttr(imageUrl)}" alt="">`;
   const tiles = [];
+  // 軽量化：1枚目はシート保存済みの軽いサムネ（約10KB）、2枚目以降はorig(JPEG)より
+  // 3〜5割軽いwebp版を使う（item/detail/webp/photos/…、2026-11-19実測）
   for (let n = 1; n <= INDEX_PRINT_MAX; n++) {
-    const src = `https://static.mercdn.net/item/detail/orig/photos/${id}_${n}.jpg`;
-    tiles.push(`<img class="thumb-tile" src="${src}" alt="" draggable="false" onerror="this.remove()">`);
+    const src = n === 1
+      ? imageUrl
+      : `https://static.mercdn.net/item/detail/webp/photos/${id}_${n}.jpg`;
+    const full = `https://static.mercdn.net/item/detail/webp/photos/${id}_${n}.jpg`;
+    tiles.push(`<img class="thumb-tile" src="${escapeAttr(src)}" data-full="${full}" alt="" draggable="false" onerror="this.remove()">`);
   }
   return `<div class="card-thumb-grid">${tiles.join("")}</div>`;
 }
@@ -936,7 +941,7 @@ function attachSwipe(el, card, source) {
       el.style.transform = "";
       flags.forEach(f => f.style.opacity = 0);
       if (tapTile && absX < AXIS_LOCK_THRESHOLD && absY < AXIS_LOCK_THRESHOLD) {
-        openPhotoViewer(tapTile.src);
+        openPhotoViewer(tapTile.dataset.full || tapTile.src);
       }
     }
     tapTile = null;
