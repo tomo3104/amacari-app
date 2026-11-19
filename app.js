@@ -327,6 +327,7 @@ function renderDescStack() {
   const visible = state.descCards.slice(0, 3).reverse();
   visible.forEach((card, i) => {
     const el = buildCardEl(card);
+    hydrateItemPhotos(el);
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
@@ -348,6 +349,7 @@ function renderRtStack() {
   const visible = state.rtCards.slice(0, 3).reverse();
   visible.forEach((card, i) => {
     const el = buildCardEl(card);
+    hydrateItemPhotos(el);
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
@@ -369,6 +371,7 @@ function renderRsStack() {
   const visible = state.rsCards.slice(0, 3).reverse();
   visible.forEach((card, i) => {
     const el = buildCardEl(card);
+    hydrateItemPhotos(el);
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
@@ -396,6 +399,7 @@ function renderStack() {
   const visible = state.cards.slice(0, 3).reverse();
   visible.forEach((card, i) => {
     const el = buildCardEl(card);
+    hydrateItemPhotos(el);
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
@@ -431,10 +435,54 @@ function mercariPhotoId(url) {
   return m ? m[1] : null;
 }
 
-function buildThumbHtml(imageUrl) {
+// 縮小タイル1枚分。wsrv.nlで200px・webp・画質60に縮小し、失敗時は元画像直リンク→それも失敗ならタイル削除
+// ヤフー系画像(auctions.c.yimg.jp)はwsrvが404を返すため、Yahoo自身の縮小プロキシ
+// auc-pctr.c.yimg.jp（200px指定で約8KB）を使う。
+function photoTileHtml(full) {
+  let small;
+  const yahooPath = /auctions\.c\.yimg\.jp\/(images\.auctions\.yahoo\.co\.jp\/[^?]+)/.exec(full);
+  if (yahooPath) {
+    full  = `https://auctions.c.yimg.jp/${yahooPath[1]}`;
+    small = `https://auc-pctr.c.yimg.jp/i/auctions.c.yimg.jp/${yahooPath[1]}?w=200&h=200`;
+  } else {
+    small = `https://wsrv.nl/?url=${encodeURIComponent(full)}&w=200&h=200&fit=cover&output=webp&q=60`;
+  }
+  return `<img class="thumb-tile" src="${escapeAttr(small)}" data-full="${escapeAttr(full)}" data-fb="${escapeAttr(full)}" alt="" draggable="false" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb='';}else{this.remove();}">`;
+}
+
+// 2026-11-19：PayPayフリマ・ラクマは画像URLから他の写真を導出できないため、
+// GAS（action=itemPhotos）に商品ページを読ませて写真URL一覧をもらう。
+// 返ってくるまでは1枚目だけ表示し、2枚以上取れたらグリッドを差し替える。
+// GAS未デプロイ・取得失敗時は1枚表示のまま。
+const OTHER_PLATFORM_PHOTO_RE = /paypayfleamarket\.yahoo\.co\.jp\/item\/|item\.fril\.jp\//;
+const photoListCache = new Map();
+
+function hydrateItemPhotos(el) {
+  const grid = el.querySelector(".card-thumb-grid[data-item-url]");
+  if (!grid) return;
+  const url = grid.dataset.itemUrl;
+  if (!photoListCache.has(url)) {
+    photoListCache.set(url,
+      fetch(`${GAS_URL}?action=itemPhotos&url=${encodeURIComponent(url)}`)
+        .then(r => r.json())
+        .then(d => Array.isArray(d.images) ? d.images : [])
+        .catch(() => []));
+  }
+  photoListCache.get(url).then(images => {
+    if (images.length < 2 || !grid.isConnected) return;
+    grid.innerHTML = images.slice(0, INDEX_PRINT_MAX).map(photoTileHtml).join("");
+  });
+}
+
+function buildThumbHtml(imageUrl, itemUrl) {
   if (!imageUrl) return `<div class="card-thumb"></div>`;
   const id = mercariPhotoId(imageUrl);
-  if (!id) return `<img class="card-thumb" src="${escapeAttr(imageUrl)}" alt="">`;
+  if (!id) {
+    if (itemUrl && OTHER_PLATFORM_PHOTO_RE.test(itemUrl)) {
+      return `<div class="card-thumb-grid" data-item-url="${escapeAttr(itemUrl)}">${photoTileHtml(imageUrl)}</div>`;
+    }
+    return `<img class="card-thumb" src="${escapeAttr(imageUrl)}" alt="">`;
+  }
   const tiles = [];
   // webp版（item/detail/webp/photos/…）はorig(JPEG)より3〜5割軽い（2026-11-19実測）
   // 2026-11-19追記：「視認できればいい」ので画像縮小プロキシwsrv.nlで200px・webp・
@@ -442,9 +490,7 @@ function buildThumbHtml(imageUrl) {
   // wsrvが落ちている時はwebp直リンクにフォールバックし、それも失敗したらタイルを消す。
   // 拡大表示（タップ）は元のwebpを使う。
   for (let n = 1; n <= INDEX_PRINT_MAX; n++) {
-    const full = `https://static.mercdn.net/item/detail/webp/photos/${id}_${n}.jpg`;
-    const small = `https://wsrv.nl/?url=${encodeURIComponent(full)}&w=200&h=200&fit=cover&output=webp&q=60`;
-    tiles.push(`<img class="thumb-tile" src="${small}" data-full="${full}" data-fb="${full}" alt="" draggable="false" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb='';}else{this.remove();}">`);
+    tiles.push(photoTileHtml(`https://static.mercdn.net/item/detail/webp/photos/${id}_${n}.jpg`));
   }
   return `<div class="card-thumb-grid">${tiles.join("")}</div>`;
 }
@@ -476,7 +522,7 @@ function buildCardEl(card) {
     isHot ? "card--hot" : "",
   ].filter(Boolean).join(" ");
 
-  const thumb = buildThumbHtml(card.image_url);
+  const thumb = buildThumbHtml(card.image_url, card.mercari_url);
 
   // 2026-11-14：フリマウォッチ監視タブ（buildFurimaCardEl）の表示方式に統一。
   // 現在のメルカリ価格から値切れた場合の見込み利益を実利益率・ROIの括弧内に
@@ -588,6 +634,7 @@ function renderFurimaStack() {
   const visible = state.furimaCards.slice(0, 3).reverse();
   visible.forEach((card, i) => {
     const el = buildFurimaCardEl(card);
+    hydrateItemPhotos(el);
     const depthFromTop = visible.length - 1 - i;
     el.style.zIndex = String(100 - depthFromTop);
     el.style.transform = `scale(${1 - depthFromTop * 0.04}) translateY(${depthFromTop * 10}px)`;
@@ -600,7 +647,7 @@ function buildFurimaCardEl(card) {
   const el = document.createElement("div");
   el.className = "card";
 
-  const thumb = buildThumbHtml(card.image_url);
+  const thumb = buildThumbHtml(card.image_url, card.url);
 
   const links = [
     `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}">商品ページ</a>`,
