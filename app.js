@@ -418,6 +418,44 @@ function formatPastJudgment(card) {
   return `<div class="past-judgment-badge past-judgment-${pastJudgmentClass(card.past_judgment)}">⚠ 過去に「${escapeHtml(card.past_judgment)}」と判定済み${reasonText}</div>`;
 }
 
+// 2026-11-19：インデックスプリント表示。メルカリの写真は
+//   https://static.mercdn.net/item/detail/orig/photos/m{ID}_{N}.jpg
+// で2枚目以降も取れる（thumb/系URLは_1しか無い）。シートには1枚目のURLしか
+// 保存していないので、商品IDを抜き出して_1〜_MAXを並べ、存在しない番号は
+// 403になったタイルをonerrorで消す。ラクマ/ヤフーはURLから他の写真を割り出せない
+// ため従来どおり1枚表示。
+const INDEX_PRINT_MAX = 8;
+
+function mercariPhotoId(url) {
+  const m = /static\.mercdn\.net\/.*\/(m\d+)_\d+\.jpg/.exec(url || "");
+  return m ? m[1] : null;
+}
+
+function buildThumbHtml(imageUrl) {
+  if (!imageUrl) return `<div class="card-thumb"></div>`;
+  const id = mercariPhotoId(imageUrl);
+  if (!id) return `<img class="card-thumb" src="${escapeAttr(imageUrl)}" alt="">`;
+  const tiles = [];
+  for (let n = 1; n <= INDEX_PRINT_MAX; n++) {
+    const src = `https://static.mercdn.net/item/detail/orig/photos/${id}_${n}.jpg`;
+    tiles.push(`<img class="thumb-tile" src="${src}" alt="" draggable="false" onerror="this.remove()">`);
+  }
+  return `<div class="card-thumb-grid">${tiles.join("")}</div>`;
+}
+
+function openPhotoViewer(src) {
+  let ov = document.getElementById("photo-viewer");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "photo-viewer";
+    ov.innerHTML = `<img alt="">`;
+    ov.addEventListener("click", () => ov.classList.remove("open"));
+    document.body.appendChild(ov);
+  }
+  ov.querySelector("img").src = src;
+  ov.classList.add("open");
+}
+
 function buildCardEl(card) {
   const el = document.createElement("div");
   const isHot = Number(card.real_margin) >= 50;
@@ -432,9 +470,7 @@ function buildCardEl(card) {
     isHot ? "card--hot" : "",
   ].filter(Boolean).join(" ");
 
-  const thumb = card.image_url
-    ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
-    : `<div class="card-thumb"></div>`;
+  const thumb = buildThumbHtml(card.image_url);
 
   // 2026-11-14：フリマウォッチ監視タブ（buildFurimaCardEl）の表示方式に統一。
   // 現在のメルカリ価格から値切れた場合の見込み利益を実利益率・ROIの括弧内に
@@ -558,9 +594,7 @@ function buildFurimaCardEl(card) {
   const el = document.createElement("div");
   el.className = "card";
 
-  const thumb = card.image_url
-    ? `<img class="card-thumb" src="${escapeAttr(card.image_url)}" alt="">`
-    : `<div class="card-thumb"></div>`;
+  const thumb = buildThumbHtml(card.image_url);
 
   const links = [
     `<a class="link-btn link-mercari" href="${escapeAttr(card.url)}">商品ページ</a>`,
@@ -826,6 +860,7 @@ function attachSwipe(el, card, source) {
   source = source || "amacari";
   let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false;
   let axis = null; // "x" or "y" - 最初の動きで方向を決め、以後はその軸だけにスライドを制限する
+  let tapTile = null; // インデックスプリントの写真上で押し始めたら記録（動かさず離したら拡大表示）
 
   const likeFlag = el.querySelector(".flag-like");
   const nopeFlag = el.querySelector(".flag-nope");
@@ -838,6 +873,7 @@ function attachSwipe(el, card, source) {
   function onStart(x, y) {
     dragging = true;
     startX = x; startY = y;
+    dx = 0; dy = 0;
     axis = null;
     el.classList.add("dragging");
   }
@@ -899,12 +935,17 @@ function attachSwipe(el, card, source) {
     } else {
       el.style.transform = "";
       flags.forEach(f => f.style.opacity = 0);
+      if (tapTile && absX < AXIS_LOCK_THRESHOLD && absY < AXIS_LOCK_THRESHOLD) {
+        openPhotoViewer(tapTile.src);
+      }
     }
+    tapTile = null;
   }
 
   el.addEventListener("pointerdown", e => {
     if (e.target.closest(".copy-btn, .keepa-reload-btn, .link-btn, .no-swipe")) return;
     if (state.swipeBlocked) return; // 理由選択中はスワイプ不可
+    tapTile = e.target.closest(".thumb-tile");
     el.setPointerCapture(e.pointerId);
     onStart(e.clientX, e.clientY);
   });
