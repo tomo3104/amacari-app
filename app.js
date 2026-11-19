@@ -436,14 +436,15 @@ function buildThumbHtml(imageUrl) {
   const id = mercariPhotoId(imageUrl);
   if (!id) return `<img class="card-thumb" src="${escapeAttr(imageUrl)}" alt="">`;
   const tiles = [];
-  // 軽量化：1枚目はシート保存済みの軽いサムネ（約10KB）、2枚目以降はorig(JPEG)より
-  // 3〜5割軽いwebp版を使う（item/detail/webp/photos/…、2026-11-19実測）
+  // webp版（item/detail/webp/photos/…）はorig(JPEG)より3〜5割軽い（2026-11-19実測）
+  // 2026-11-19追記：「視認できればいい」ので画像縮小プロキシwsrv.nlで200px・webp・
+  // 画質60に落とす（1枚3〜6KB、webp直より約1/10）。存在しない番号はwsrvが404を返す。
+  // wsrvが落ちている時はwebp直リンクにフォールバックし、それも失敗したらタイルを消す。
+  // 拡大表示（タップ）は元のwebpを使う。
   for (let n = 1; n <= INDEX_PRINT_MAX; n++) {
-    const src = n === 1
-      ? imageUrl
-      : `https://static.mercdn.net/item/detail/webp/photos/${id}_${n}.jpg`;
     const full = `https://static.mercdn.net/item/detail/webp/photos/${id}_${n}.jpg`;
-    tiles.push(`<img class="thumb-tile" src="${escapeAttr(src)}" data-full="${full}" alt="" draggable="false" onerror="this.remove()">`);
+    const small = `https://wsrv.nl/?url=${encodeURIComponent(full)}&w=200&h=200&fit=cover&output=webp&q=60`;
+    tiles.push(`<img class="thumb-tile" src="${small}" data-full="${full}" data-fb="${full}" alt="" draggable="false" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb='';}else{this.remove();}">`);
   }
   return `<div class="card-thumb-grid">${tiles.join("")}</div>`;
 }
