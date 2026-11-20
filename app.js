@@ -339,7 +339,10 @@ function renderDescStack() {
 function renderRtStack() {
   els.rtStack.querySelectorAll(".card").forEach(c => c.remove());
   const done = Math.max(state.rtTotalCount - state.rtCards.length, 0);
-  els.rtProgressLabel.textContent = `${done} / ${state.rtTotalCount}`;
+  // 2026-11-20追加：RTタブにも優先精査（Code.gs getRtCards）
+  const priorityLeft = state.rtCards.filter(c => c.priority).length;
+  els.rtProgressLabel.textContent = `${done} / ${state.rtTotalCount}` + (priorityLeft ? `（優先 残${priorityLeft}）` : "");
+  updatePriorityBadge(priorityLeft, "rt-priority-badge", false);
   if (state.rtCards.length === 0) {
     els.rtEmpty.textContent = "判定待ちの商品はありません。";
     els.rtEmpty.style.display = "block";
@@ -415,12 +418,14 @@ function renderStack() {
 
 // 2026-11-20追加：ARタブに優先精査の残り件数バッジを出す。ホーム画面に追加した
 // PWAで対応端末なら、アプリアイコンにも同じ件数を出す（非対応なら何もしない）。
-function updatePriorityBadge(count) {
-  const badge = document.getElementById("ar-priority-badge");
+// 2026-11-20：RTタブ用にバッジIDを指定できるようにした。アプリアイコンの数字はARのみ。
+function updatePriorityBadge(count, badgeId = "ar-priority-badge", setAppIcon = true) {
+  const badge = document.getElementById(badgeId);
   if (badge) {
     badge.textContent = count > 99 ? "99+" : String(count);
     badge.classList.toggle("hidden", count === 0);
   }
+  if (!setAppIcon) return;
   try {
     if (count > 0 && navigator.setAppBadge) navigator.setAppBadge(count).catch(() => {});
     else if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
