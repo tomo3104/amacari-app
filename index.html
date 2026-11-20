@@ -18,7 +18,7 @@
 <header class="topbar">
   <h1 class="logo">Amacari</h1>
   <nav class="tabs">
-    <button class="tab active" data-view="review">AR</button>
+    <button class="tab active" data-view="review">AR<span id="ar-priority-badge" class="badge hidden"></span></button>
     <button class="tab" data-view="rt">RT</button>
     <button class="tab" data-view="furima">FR</button>
     <button class="tab" data-view="archive">仕入候補<span id="pending-purchase-badge" class="badge hidden"></span></button>
@@ -331,6 +331,19 @@
   border-radius: 20px;
   box-shadow: 0 2px 8px rgba(124,58,237,.45);
   pointer-events: none;
+}
+
+/* 優先精査（2026-11-20追加：Code.gs priorityReason_()が付与。先頭に寄せて表示） */
+.priority-badge {
+  display: inline-block;
+  margin-bottom: 6px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+  font-size: .75rem;
+  font-weight: 800;
+  padding: 2px 10px;
+  border-radius: 20px;
 }
 
 /* 下スワイプ：後回しスタックが空のときのバウンス */

@@ -386,7 +386,10 @@ function renderStack() {
   els.stack.querySelectorAll(".card").forEach(c => c.remove());
 
   const done = Math.max(state.totalCount - state.cards.length, 0);
-  els.progressLabel.textContent = `${done} / ${state.totalCount}`;
+  // 2026-11-20追加：優先精査カードの残り件数も併記する
+  const priorityLeft = state.cards.filter(c => c.priority).length;
+  els.progressLabel.textContent = `${done} / ${state.totalCount}` + (priorityLeft ? `（優先 残${priorityLeft}）` : "");
+  updatePriorityBadge(priorityLeft);
 
   if (state.cards.length === 0) {
     els.empty.textContent = "判定待ちの商品はありません。お疲れさまでした。";
@@ -408,6 +411,20 @@ function renderStack() {
   });
 
   savePosition();
+}
+
+// 2026-11-20追加：ARタブに優先精査の残り件数バッジを出す。ホーム画面に追加した
+// PWAで対応端末なら、アプリアイコンにも同じ件数を出す（非対応なら何もしない）。
+function updatePriorityBadge(count) {
+  const badge = document.getElementById("ar-priority-badge");
+  if (badge) {
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.classList.toggle("hidden", count === 0);
+  }
+  try {
+    if (count > 0 && navigator.setAppBadge) navigator.setAppBadge(count).catch(() => {});
+    else if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+  } catch (_) {}
 }
 
 function pastJudgmentClass(judgment) {
@@ -567,6 +584,7 @@ function buildCardEl(card) {
     <div class="swipe-flag flag-back">戻る</div>
     ${thumb}
     <div class="card-body">
+      ${card.priority ? `<div class="priority-badge">⭐ 優先精査（${escapeHtml(card.priority_reason || "")}）</div>` : ""}
       ${formatPastJudgment(card)}
       <p class="card-name">${escapeHtml(card.name)}</p>
       <p class="card-sub">
