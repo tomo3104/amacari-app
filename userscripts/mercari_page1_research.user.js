@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         メルカリ リアルタイムリサーチ
 // @namespace    http://tampermonkey.net/
-// @version      3.33
-// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離・2026-10-20：buildBodyFromUrl()がbrandId/categoryIdしか巡回先URLから反映しておらず、item_condition_id（新品指定）・status・価格帯・keyword等は最初にテンプレートを取得した時の値のまま全メーカー・全カテゴリで使われ続けていたバグを修正（実機で設定上のコンディションが新品以外の商品が多数ヒットに含まれる実害を確認）・2026-11-13：8サイクルに1回、全メーカーを売り切れ(status=sold_out)で取得し/collect-itemsへ送る型番収集サイクルを追加（RTは常時回っていて忘れられないため、別途起動が必要だったクローラーコレクトを相乗りさせる狙い。頻度はCOLLECT_EVERY_N_CYCLESで調整可能）
+// @version      3.34
+// @description  リアルタイムリサーチ：メーカー101社内蔵・fetch+XHRインターセプト・オークション観測ログ追加・manufacturersシートとの差分9件（新規メーカー4件＋新設カテゴリ5件）を追加・新規開拓5社（ムサシ・ボンマック・ピクセラ・レコルト・CFD販売）を追加・他スクリプトと共有の左下ボタンスタックに統合しUIの乱立を解消・2026-09-07：STATIC_MAKERS(手動追記が必要なため実測でmanufacturersシート286件に対し159件まで乖離)を、サーバーの/get-manufacturersからの動的取得に変更（サーバー未起動時は従来の内蔵リストにフォールバック）・2026-09-13：ページ読み込みのたびに無条件でメーカーリストを先読みしていたのをやめ、実際にRTを開始する時だけ取得するよう変更（発掘リサーチ等の高速なページ遷移中に無関係な接続エラーが大量発生していた問題への対応）・2026-10-02：①1メーカーあたり最大3ページまで遡って取得するよう変更（ページ1のみでは自動リサーチが拾う売れ残り2ページ目以降をRTが構造的に取りこぼしていたため）②maker名をサーバーに送っていなかったため、実験緩和ルール対象のエレコム・サンワサプライ・アイ・オー・データがRTだけ常に厳しい通常ルールで判定されていたバグを修正③動的取得成功時にSTATIC_MAKERS同梱のカテゴリ横断検索（約50件）が丸ごと脱落していた問題を修正し、動的取得の成否に関わらず常時合流するよう分離・2026-10-20：buildBodyFromUrl()がbrandId/categoryIdしか巡回先URLから反映しておらず、item_condition_id（新品指定）・status・価格帯・keyword等は最初にテンプレートを取得した時の値のまま全メーカー・全カテゴリで使われ続けていたバグを修正（実機で設定上のコンディションが新品以外の商品が多数ヒットに含まれる実害を確認）・2026-11-13：8サイクルに1回、全メーカーを売り切れ(status=sold_out)で取得し/collect-itemsへ送る型番収集サイクルを追加（RTは常時回っていて忘れられないため、別途起動が必要だったクローラーコレクトを相乗りさせる狙い。頻度はCOLLECT_EVERY_N_CYCLESで調整可能）・2026-11-20：対象を「メーカー巡回（従来のRT）」と「リアルタイムリピート（RR：仕入れ実績のある型番だけを型番キーワードで検索）」から切り替えられるようにした（実験）
 // @match        https://jp.mercari.com/*
 // @grant        none
 // @run-at       document-start
@@ -40,6 +40,19 @@
     const P1_PHASE     = 'p1r_phase';    // 'capture' | 'loop'
     const P1_CAPTURES  = 'p1r_captures'; // localStorage に保存するキャプチャデータ
     const WD_TIMEOUT   = 300000;         // ウォッチドッグ5分
+
+    // 2026-11-20追加：リアルタイムリピート（RR・実験）。メーカーの新着巡回の代わりに、
+    // 仕入れ実績のある型番（サーバーの/get-rr-list＝build_rr_list.pyが生成）を型番
+    // キーワードで検索する。1周＝tier1（上位200件）全部＋tier2から順番にRR_TIER2_SLICE件。
+    // 型番検索は新着順の1ページ目だけで十分なためRR_MAX_PAGES=1。
+    // 送信時の名前は「[R] [RR] 」始まり（[R]を含むのでAmacariではRTタブに出る）。
+    const P1_TARGET      = 'p1r_target';     // 'maker'（既定・従来のRT） | 'repeat'（RR）
+    const P1_RR_OFFSET   = 'p1r_rr_offset';  // tier2の次の開始位置
+    const RR_TIER2_SLICE = 200;
+    const RR_MAX_PAGES   = 1;
+    const RR_LIST_URL    = 'http://localhost:8766/get-rr-list';
+    let _rrAll = null;          // /get-rr-listの結果（tier付き）
+    let _activeTarget = null;   // 現在_searchUrlsを組んだ対象（途中切り替えの検知用）
 
 
     const STATIC_MAKERS = [
@@ -323,7 +336,72 @@
         // 二重チェックされる程度でヒット判定上の問題はないため許容する。
         const categoryUrls = STATIC_CATEGORIES.map(m => ({ name: m.name, url: normalizeRtUrl(m.url) }));
         _searchUrls = makerUrls.concat(categoryUrls);
+        _activeTarget = 'maker';
         p1Log(`makers合計: ${_searchUrls.length}件（カテゴリ横断${categoryUrls.length}件含む）`);
+    }
+
+    // ── リアルタイムリピート（RR）の対象 ───────────────────────────────────
+    function isRepeatTarget() { return ls.get(P1_TARGET) === 'repeat'; }
+
+    function buildRrUrl(model) {
+        const u = new URL('https://jp.mercari.com/search');
+        u.searchParams.set('keyword', model);
+        u.searchParams.set('status', 'on_sale');
+        u.searchParams.set('sort', 'created_time');
+        u.searchParams.set('order', 'desc');
+        u.searchParams.set('item_condition_id', '1');
+        u.searchParams.set('shipping_payer_id', '2');
+        u.searchParams.set('item_types', 'mercari');
+        return u.toString();
+    }
+
+    async function fetchRrList() {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        try {
+            const res = await _origFetch.call(window, RR_LIST_URL, { signal: controller.signal });
+            const data = await res.json();
+            return (data.models || []).filter(m => m && m.model);
+        } catch (e) {
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    // 1周分の検索先を組む：tier1全部＋tier2から順番にRR_TIER2_SLICE件（周ごとにずらす）
+    function buildRrCycle() {
+        const tier1 = _rrAll.filter(m => m.tier === 1);
+        const tier2 = _rrAll.filter(m => m.tier !== 1);
+        let slice = [];
+        if (tier2.length > 0) {
+            let offset = parseInt(ls.get(P1_RR_OFFSET) || '0', 10);
+            if (!(offset >= 0 && offset < tier2.length)) offset = 0;
+            for (let k = 0; k < Math.min(RR_TIER2_SLICE, tier2.length); k++) {
+                slice.push(tier2[(offset + k) % tier2.length]);
+            }
+            ls.set(P1_RR_OFFSET, String((offset + RR_TIER2_SLICE) % tier2.length));
+        }
+        return tier1.concat(slice).map(m => ({ name: m.model, url: buildRrUrl(m.model) }));
+    }
+
+    async function loadRepeatTargets() {
+        const list = await fetchRrList();
+        if (!list || list.length === 0) {
+            p1Log('RRリスト取得失敗（サーバー未起動 or rr_list.json未生成）→ メーカー巡回で代用');
+            await loadMakers();
+            return false;
+        }
+        _rrAll = list;
+        _searchUrls = buildRrCycle();
+        _activeTarget = 'repeat';
+        p1Log(`RR対象: 全${list.length}件 / 今回の周: ${_searchUrls.length}件`);
+        return true;
+    }
+
+    async function loadTargets() {
+        if (isRepeatTarget()) return loadRepeatTargets();
+        return loadMakers();
     }
 
     // ── キャプチャデータ（ページ遷移を超えてlocalStorageで保持） ──────────────
@@ -490,10 +568,10 @@
 
     // ── アイテム処理・サーバー送信 ────────────────────────────────────────────
 
-    async function processItems(items, makerName) {
+    async function processItems(items, makerName, isRepeat) {
         const formatted = items
             .map(item => ({
-                name:  '[R] ' + (item.name || ''),
+                name:  (isRepeat ? '[R] [RR] ' : '[R] ') + (item.name || ''),
                 price: String(parseInt(item.price, 10) || 0),
                 url:   `https://jp.mercari.com/item/${item.id}`,
                 image: (item.thumbnails && item.thumbnails[0]) || '',
@@ -512,7 +590,10 @@
             const res  = await fetch(SERVER, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ items: formatted, source: 'realtime', maker: makerName || '' }),
+                // RRは型番検索なのでmakerは送らない（メーカー別の実験緩和ルールの対象外）
+                body:    JSON.stringify(isRepeat
+                    ? { items: formatted, source: 'realtime_repeat', maker: '' }
+                    : { items: formatted, source: 'realtime', maker: makerName || '' }),
             });
             const data    = await res.json();
             const matches = data.matches || [];
@@ -731,23 +812,39 @@
         p1Log('=== ループ開始（ナビなし）===');
         let _fetchErrors = 0;
 
+        let isFirstCycle = true;
         while (ls.get(P1_MODE) === 'search') {
+            // 2026-11-20追加：対象（メーカー巡回／リアルタイムリピート）の切り替えを周の頭で反映。
+            // RRは周ごとにtier2の担当範囲をずらすため、毎周組み直す（初回は起動時に組んだものを使う）。
+            const wantRepeat = isRepeatTarget();
+            if (wantRepeat !== (_activeTarget === 'repeat')) {
+                p1Log(`対象切り替え → ${wantRepeat ? 'リアルタイムリピート' : 'メーカー巡回'}`);
+                await loadTargets();
+            } else if (_activeTarget === 'repeat' && _rrAll && !isFirstCycle) {
+                _searchUrls = buildRrCycle();
+            }
+            isFirstCycle = false;
+            const isRepeat = _activeTarget === 'repeat';
+            const label = isRepeat ? 'RR' : 'RT';
+
             const cycleCount = parseInt(ls.get(P1_CYCLE_COUNT) || '0', 10) + 1;
             ls.set(P1_CYCLE_COUNT, String(cycleCount));
-            const isCollectCycle = (cycleCount % COLLECT_EVERY_N_CYCLES === 0);
+            // 型番収集（売り切れ）サイクルはメーカー巡回のときだけ
+            const isCollectCycle = !isRepeat && (cycleCount % COLLECT_EVERY_N_CYCLES === 0);
             if (isCollectCycle) p1Log(`=== サイクル${cycleCount}: 型番収集モード（売り切れ）===`);
+            const cycleStart = Date.now();
 
             for (let i = 0; i < _searchUrls.length; i++) {
                 if (ls.get(P1_MODE) !== 'search') return;
 
                 const targetUrl = isCollectCycle ? toSoldOutUrl(_searchUrls[i].url) : _searchUrls[i].url;
-                setTitle(`${isCollectCycle ? '📦' : '🔄'} RT ${i + 1}/${_searchUrls.length} ${_searchUrls[i].name}`);
-                showStatus(`[${isCollectCycle ? 'C' : 'R'}] ${_searchUrls[i].name} ${isCollectCycle ? '収集' : '照合'}中…`, isCollectCycle ? '#e65100' : '#0d47a1');
+                setTitle(`${isCollectCycle ? '📦' : '🔄'} ${label} ${i + 1}/${_searchUrls.length} ${_searchUrls[i].name}`);
+                showStatus(`[${isCollectCycle ? 'C' : (isRepeat ? 'RR' : 'R')}] ${_searchUrls[i].name} ${isCollectCycle ? '収集' : '照合'}中…`, isCollectCycle ? '#e65100' : (isRepeat ? '#6a1b9a' : '#0d47a1'));
                 p1Log(`fetch cat${i}${isCollectCycle ? '(sold_out)' : ''}`);
 
                 let items = [];
                 try {
-                    items = await fetchCategoryPages(tpl, targetUrl, MAX_PAGES);
+                    items = await fetchCategoryPages(tpl, targetUrl, isRepeat ? RR_MAX_PAGES : MAX_PAGES);
                     _fetchErrors = 0;
                 } catch (e) {
                     _fetchErrors++;
@@ -769,7 +866,7 @@
                     try { found = await sendToCollectServer(items, _searchUrls[i].name); } catch (e) { p1Log(`collect error: ${e.message}`); }
                 } else {
                     reportStatus(`${_searchUrls[i].name} ${items.length}件照合中`, 'loop');
-                    try { found = await processItems(items, _searchUrls[i].name); } catch (e) { p1Log(`processItems error: ${e.message}`); }
+                    try { found = await processItems(items, _searchUrls[i].name, isRepeat); } catch (e) { p1Log(`processItems error: ${e.message}`); }
                 }
 
                 const total = parseInt(ls.get(P1_FOUND) || '0', 10) + found;
@@ -783,9 +880,11 @@
             }
 
             const total = ls.get(P1_FOUND) || '0';
-            p1Log(`cycle完了 累計${total}件 ${WAIT_MS / 1000}秒待機`);
-            setTitle(`✅ RT完了 累計${total}件 | ${WAIT_MS / 1000}秒待機中`);
-            showStatus(`1周完了 累計${total}件 | ${WAIT_MS / 1000}秒後に再スキャン`, '#0d47a1');
+            const cycleMin = ((Date.now() - cycleStart) / 60000).toFixed(1);
+            p1Log(`cycle完了(${label}・${_searchUrls.length}件・${cycleMin}分) 累計${total}件 ${WAIT_MS / 1000}秒待機`);
+            reportStatus(`${label} 1周完了 ${_searchUrls.length}件 ${cycleMin}分`, 'cycle');
+            setTitle(`✅ ${label}完了 累計${total}件 | ${WAIT_MS / 1000}秒待機中`);
+            showStatus(`${label} 1周完了（${cycleMin}分）累計${total}件 | ${WAIT_MS / 1000}秒後に再スキャン`, isRepeat ? '#6a1b9a' : '#0d47a1');
             await sleep(WAIT_MS);
         }
     }
@@ -872,9 +971,16 @@
 
     function updateBtn(active) {
         const b = document.getElementById('p1r-btn');
-        if (!b) return;
-        b.textContent      = active ? '■ リアルタイムリサーチ停止' : '▶ リアルタイムリサーチ開始';
-        b.style.background = active ? '#616161' : '#0d47a1';
+        if (b) {
+            const what = isRepeatTarget() ? 'リアルタイムリピート' : 'リアルタイムリサーチ';
+            b.textContent      = active ? `■ ${what}停止` : `▶ ${what}開始`;
+            b.style.background = active ? '#616161' : (isRepeatTarget() ? '#6a1b9a' : '#0d47a1');
+        }
+        const t = document.getElementById('p1r-target-btn');
+        if (t) {
+            t.textContent      = isRepeatTarget() ? '対象：リアルタイムリピート（RR）⇄' : '対象：メーカー巡回（RT）⇄';
+            t.style.background = isRepeatTarget() ? '#4a148c' : '#1a237e';
+        }
     }
 
     // ページ初期化直後（広告枠の初期化タイミング）に一度だけ、見慣れないDOM要素を
@@ -954,6 +1060,26 @@
             ].join(';');
             _amacariGetStack().appendChild(btn);
 
+            // 2026-11-20追加：対象の切り替えボタン（メーカー巡回 ⇄ リアルタイムリピート）。
+            // 実行中に押した場合は、今の周が終わった次の周から切り替わる。
+            const targetBtn = document.createElement('button');
+            targetBtn.id            = 'p1r-target-btn';
+            targetBtn.style.cssText = [
+                'padding:6px 12px', 'border:none', 'border-radius:8px',
+                'cursor:pointer', 'font-size:12px', 'font-weight:600',
+                'color:#fff', 'box-shadow:0 2px 6px rgba(0,0,0,.4)', 'order:11',
+            ].join(';');
+            targetBtn.onclick = () => {
+                ls.set(P1_TARGET, isRepeatTarget() ? 'maker' : 'repeat');
+                const running = ls.get(P1_MODE) === 'search';
+                if (!running) _searchUrls = [];  // 停止中なら次の開始時に組み直す
+                updateBtn(running);
+                showStatus(running
+                    ? `次の周から${isRepeatTarget() ? 'リアルタイムリピート' : 'メーカー巡回'}に切り替えます`
+                    : `対象：${isRepeatTarget() ? 'リアルタイムリピート' : 'メーカー巡回'}`, isRepeatTarget() ? '#6a1b9a' : '#0d47a1');
+            };
+            _amacariGetStack().appendChild(targetBtn);
+
             const active = ls.get(P1_MODE) === 'search';
             updateBtn(active);
 
@@ -970,15 +1096,15 @@
                     ls.set(P1_PHASE,  'capture');
                     updateBtn(true);
                     if (_searchUrls.length === 0) {
-                        showStatus('メーカーリスト読み込み中…', '#424242');
-                        await loadMakers();
+                        showStatus(isRepeatTarget() ? 'RRリスト読み込み中…' : 'メーカーリスト読み込み中…', '#424242');
+                        await loadTargets();
                     }
                     window.location.href = _searchUrls[0].url;
                 }
             };
 
             if (active) {
-                if (_searchUrls.length === 0) await loadMakers();
+                if (_searchUrls.length === 0) await loadTargets();
                 const phase = ls.get(P1_PHASE);
                 if (phase === 'loop') {
                     startLoopPhase();
@@ -998,7 +1124,7 @@
                 ls.set(P1_FOUND,  '0');
                 ls.set(P1_PHASE,  'capture');
                 updateBtn(true);
-                if (_searchUrls.length === 0) await loadMakers();
+                if (_searchUrls.length === 0) await loadTargets();
                 window.location.href = _searchUrls[0].url;
             }
         });
