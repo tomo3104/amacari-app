@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QS販売数係（Amacari）
 // @namespace    amacari
-// @version      1.0
+// @version      1.1
 // @description  精査待ちの商品のAmazonページを順に開き、クイックショップの「過去の販売数」を読み取ってAmacariに送る。専用タブでだけ動く。
 // @match        https://www.amazon.co.jp/*
 // @run-at       document-idle
@@ -30,7 +30,10 @@
   const IDLE_WAIT_MIN = 5;                        // キューが空/待機のときの再確認間隔
   const ERROR_WAIT_MIN = 2;                       // サーバーに繋がらないとき
   const CAPTCHA_WAIT_MIN = 30;                    // ロボット確認が出たとき
-  const READ_TIMEOUT_SEC = 25;                    // クイックショップの表が出るまで待つ上限
+  // クイックショップの表が出るまで待つ上限。v1.1：ミニPCはページ表示が遅く、1件目が
+  // 25秒で間に合わず「表なし」になったため延長＋出なければ1回だけ再読み込みして再挑戦。
+  const READ_TIMEOUT_SEC = { main: 30, mini: 60 };
+  const KEY_RETRY = "amacariQsRetry";
 
   // ---- 開始／停止の印 ----
   const params = new URLSearchParams(location.search);
@@ -140,12 +143,21 @@
     }
     setStatus(`${asin} のクイックショップ表示を待っています…`);
     const started = Date.now();
+    const limit = (READ_TIMEOUT_SEC[worker] || 60) * 1000;
     let data = null;
-    while (Date.now() - started < READ_TIMEOUT_SEC * 1000) {
+    while (Date.now() - started < limit) {
       data = readQs();
       if (data) break;
       await new Promise(r => setTimeout(r, 1000));
     }
+    if (!data && sessionStorage.getItem(KEY_RETRY) !== asin) {
+      // 1回だけ再読み込みして再挑戦（表示が遅いだけのことが多い）
+      sessionStorage.setItem(KEY_RETRY, asin);
+      setStatus(`${asin} 表が出ないので再読み込みして再挑戦します`);
+      location.reload();
+      return;
+    }
+    sessionStorage.removeItem(KEY_RETRY);
     const payload = Object.assign({ asin, worker, status: data ? "ok" : "nodata" }, data || {});
     try {
       await request("POST", "/qs/result", payload);
