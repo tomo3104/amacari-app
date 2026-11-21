@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ワカルンダ読み取りテスト（Amacari販売数）
 // @namespace    amacari
-// @version      0.1
+// @version      0.2
 // @description  Amazon商品ページでワカルンダが表示した販売数・危険度・出品者数を読み取れるか確認するだけのテスト。何も送信しない。
 // @match        https://www.amazon.co.jp/*
 // @run-at       document-idle
@@ -106,10 +106,29 @@
         `（${elapsed}秒で検出）`, ok);
     } else if (Date.now() - started > 30000) {
       clearInterval(timer);
-      const iframes = [...document.querySelectorAll("iframe")].map(f => f.src).filter(s => s && !s.includes("amazon")).slice(0, 10);
-      const diag = `ASIN: ${asin}\n30秒待ったが「販売数」の表をページ内で見つけられませんでした。\n` +
-        `（閉じたshadow DOM や 拡張機能専用のiframe の中に表示している可能性）\n` +
-        `amazon以外のiframe: ${JSON.stringify(iframes)}`;
+      // token等を含むURLは貼らせないよう、iframeは拡張機能IDとパスだけ出す
+      const iframes = [...document.querySelectorAll("iframe")].map(f => f.src)
+        .filter(s => s && !s.includes("amazon"))
+        .map(s => s.split(/[?#]/)[0]).slice(0, 10);
+      // 他の拡張機能（クイックショップ等）がページに直接書き込んだ表示を探す
+      const KW = /販売数|販売個数|売れ|出品者数|月間|推定/;
+      const hits = [];
+      for (const root of collectRoots(document, [])) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let n;
+        while ((n = walker.nextNode()) && hits.length < 15) {
+          const v = (n.nodeValue || "").trim();
+          if (!v || !KW.test(v) || v.length > 60) continue;
+          const p = n.parentElement;
+          if (!p || p.closest("#dp-container #feature-bullets, #productDescription, #reviewsMedley, script, style")) continue;
+          let box = p;
+          for (let i = 0; box && i < 4; i++) box = box.parentElement;
+          hits.push(`[${root !== document ? "shadow" : "dom"}] <${p.tagName.toLowerCase()} id="${p.id}" class="${(p.className || "").toString().slice(0, 60)}"> "${v}"\n    周辺: ${((box || p).innerText || "").replace(/\s+/g, " ").slice(0, 200)}`);
+        }
+      }
+      const diag = `ASIN: ${asin}\n30秒待ったが「販売数…1年間」の表は見つかりませんでした。\n` +
+        `amazon以外のiframe: ${JSON.stringify(iframes)}\n` +
+        `--- iframe外で見つかった販売系の表示(${hits.length}件) ---\n` + (hits.join("\n") || "(なし)");
       window.__wakarundaProbe = diag;
       console.log("[ワカルンダ読み取りテスト]\n" + diag);
       show("❌ " + diag, false);
