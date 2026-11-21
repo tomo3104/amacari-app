@@ -418,6 +418,24 @@ function renderStack() {
   savePosition();
 }
 
+// 2026-11-21追加：クイックショップの「過去の販売数」（QS販売数係→qs_salesシート→Code.gs
+// attachQsSales_でcard.qs）。モノトレを開かずに売れ行きを判断できるようにする。
+// 色：月間平均2個未満=赤（売れてない）／5個以上=緑（よく売れる）／その間=黄。
+const QS_RED_BELOW_ = 2;
+const QS_GREEN_FROM_ = 5;
+function formatQsLine(card) {
+  const q = card.qs;
+  if (!q) return `<div class="qs-line qs-none">📦 販売数：取得中</div>`;
+  if (q.status !== "ok" || q.avg === null || q.avg === undefined) {
+    return `<div class="qs-line qs-none">📦 販売数：クイックショップ表示なし</div>`;
+  }
+  const avg = Number(q.avg);
+  const cls = avg < QS_RED_BELOW_ ? "qs-red" : avg >= QS_GREEN_FROM_ ? "qs-green" : "qs-mid";
+  const recent = (q.m1 !== null && q.m1 !== undefined) ? `（直近1か月 ${q.m1}）` : "";
+  const sellers = (q.new_sellers !== null && q.new_sellers !== undefined) ? `／新品${q.new_sellers}人` : "";
+  return `<div class="qs-line ${cls}">📦 月平均 <b>${avg}</b>個${recent}${sellers}</div>`;
+}
+
 // 2026-11-21追加：上スワイプ（後回し）で優先カードを通り過ぎた時に、残っている
 // 優先カードを一度に先頭へ戻すボタン。優先カードが残っていて先頭が優先でない時だけ出す。
 function updatePriorityJumpBtn(btnId, cards, priorityLeft) {
@@ -625,6 +643,7 @@ function buildCardEl(card) {
         ／ 検知：${escapeHtml(formatHitTime(card.date))}
         ／ ランク：${formatRank(card.rank)}
       </p>
+      ${formatQsLine(card)}
       <div class="card-highlight">
         <div class="highlight-box highlight-margin">
           <span class="label">実利益率</span>
