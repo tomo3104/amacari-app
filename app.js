@@ -542,6 +542,9 @@ function buildCardEl(card) {
     "card",
     isTreasure ? "card--treasure" : "",
     isHot ? "card--hot" : "",
+    // 2026-11-21：優先精査カードが通常カードと見分けにくい（小さなラベルだけだった）
+    // というユーザー指摘で、カード最上部の帯＋枠色＋背景色で一目で分かるようにした。
+    card.priority ? "card--priority" : "",
   ].filter(Boolean).join(" ");
 
   const thumb = buildThumbHtml(card.image_url, card.mercari_url);
@@ -587,9 +590,9 @@ function buildCardEl(card) {
     <div class="swipe-flag flag-nope">却下</div>
     <div class="swipe-flag flag-skip">あとで</div>
     <div class="swipe-flag flag-back">戻る</div>
+    ${card.priority ? `<div class="priority-band">⭐ 優先精査<span class="priority-band-reason">${escapeHtml(card.priority_reason || "")}</span></div>` : ""}
     ${thumb}
     <div class="card-body">
-      ${card.priority ? `<div class="priority-badge">⭐ 優先精査（${escapeHtml(card.priority_reason || "")}）</div>` : ""}
       ${formatPastJudgment(card)}
       <p class="card-name">${escapeHtml(card.name)}</p>
       <p class="card-sub">
