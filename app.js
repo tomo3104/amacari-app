@@ -343,6 +343,7 @@ function renderRtStack() {
   const priorityLeft = state.rtCards.filter(c => c.priority).length;
   els.rtProgressLabel.textContent = `${done} / ${state.rtTotalCount}` + (priorityLeft ? `（優先 残${priorityLeft}）` : "");
   updatePriorityBadge(priorityLeft, "rt-priority-badge", false);
+  updatePriorityJumpBtn("rt-priority-jump-btn", state.rtCards, priorityLeft);
   if (state.rtCards.length === 0) {
     els.rtEmpty.textContent = "判定待ちの商品はありません。";
     els.rtEmpty.style.display = "block";
@@ -393,6 +394,7 @@ function renderStack() {
   const priorityLeft = state.cards.filter(c => c.priority).length;
   els.progressLabel.textContent = `${done} / ${state.totalCount}` + (priorityLeft ? `（優先 残${priorityLeft}）` : "");
   updatePriorityBadge(priorityLeft);
+  updatePriorityJumpBtn("priority-jump-btn", state.cards, priorityLeft);
 
   if (state.cards.length === 0) {
     els.empty.textContent = "判定待ちの商品はありません。お疲れさまでした。";
@@ -414,6 +416,28 @@ function renderStack() {
   });
 
   savePosition();
+}
+
+// 2026-11-21追加：上スワイプ（後回し）で優先カードを通り過ぎた時に、残っている
+// 優先カードを一度に先頭へ戻すボタン。優先カードが残っていて先頭が優先でない時だけ出す。
+function updatePriorityJumpBtn(btnId, cards, priorityLeft) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  const show = priorityLeft > 0 && cards.length > 0 && !cards[0].priority;
+  btn.classList.toggle("hidden", !show);
+  if (show) btn.textContent = `⭐ 優先カードに戻る（残${priorityLeft}）`;
+}
+
+function jumpToPriority(source) {
+  const isRt = source === "rt";
+  const cardsKey = isRt ? "rtCards" : "cards";
+  const skipKey  = isRt ? "rtSkipStack" : "skipStack";
+  const cards = state[cardsKey];
+  // 優先カードを今の並び順のまま先頭へ（通常カード同士の順番も保つ）
+  state[cardsKey] = cards.filter(c => c.priority).concat(cards.filter(c => !c.priority));
+  // 先頭に戻した優先カードは後回しスタックからも外す（下スワイプで二重に呼ばれないように）
+  state[skipKey] = state[skipKey].filter(c => !c.priority);
+  if (isRt) renderRtStack(); else renderStack();
 }
 
 // 2026-11-20追加：ARタブに優先精査の残り件数バッジを出す。ホーム画面に追加した
@@ -1747,6 +1771,8 @@ els.furimaAccountSelect.addEventListener("change", () => {
 });
 
 els.undoBtn.addEventListener("click", () => undoLastReject("amacari"));
+document.getElementById("priority-jump-btn").addEventListener("click", () => jumpToPriority("amacari"));
+document.getElementById("rt-priority-jump-btn").addEventListener("click", () => jumpToPriority("rt"));
 els.furimaUndoBtn.addEventListener("click", () => undoLastReject("furima"));
 els.descUndoBtn.addEventListener("click", () => undoLastReject("desc"));
 els.rtUndoBtn.addEventListener("click", () => undoLastReject("rt"));
