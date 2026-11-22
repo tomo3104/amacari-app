@@ -432,8 +432,16 @@ function formatQsLine(card) {
   const avg = Number(q.avg);
   const cls = avg < QS_RED_BELOW_ ? "qs-red" : avg >= QS_GREEN_FROM_ ? "qs-green" : "qs-mid";
   const recent = (q.m1 !== null && q.m1 !== undefined) ? `（直近1か月 ${q.m1}）` : "";
-  const sellers = (q.new_sellers !== null && q.new_sellers !== undefined) ? `／新品${q.new_sellers}人` : "";
-  return `<div class="qs-line ${cls}">📦 月平均 <b>${avg}</b>個${recent}${sellers}</div>`;
+  // 2026-11-22：FBA出品者数・Amazon本体の有無と「売れる目安日数」（Code.gs turnoverDays_）も出す。
+  // カートを取り合う実質のライバルはFBA出品者とAmazon本体なので、目安はそれで計算している。
+  let sellers = "";
+  if (q.new_sellers !== null && q.new_sellers !== undefined) {
+    const fba = (q.fba_sellers !== null && q.fba_sellers !== undefined)
+      ? `（FBA ${q.fba_sellers}人${q.amazon_seller ? "・Amazon本体あり" : ""}）` : "";
+    sellers = `／新品${q.new_sellers}人${fba}`;
+  }
+  const days = (q.days !== null && q.days !== undefined) ? `<br>⏱ 売れる目安 <b>約${q.days}日</b>` : "";
+  return `<div class="qs-line ${cls}">📦 月平均 <b>${avg}</b>個${recent}${sellers}${days}</div>`;
 }
 
 // 2026-11-21追加：上スワイプ（後回し）で優先カードを通り過ぎた時に、残っている
@@ -587,6 +595,8 @@ function buildCardEl(card) {
     // 2026-11-21：優先精査カードが通常カードと見分けにくい（小さなラベルだけだった）
     // というユーザー指摘で、カード最上部の帯＋枠色＋背景色で一目で分かるようにした。
     card.priority ? "card--priority" : "",
+    // 2026-11-22：高回転・薄利（Code.gs applyTurnoverRules_）は緑で区別（優先カードの次に並ぶ）
+    (!card.priority && card.thin_fast) ? "card--thinfast" : "",
   ].filter(Boolean).join(" ");
 
   const thumb = buildThumbHtml(card.image_url, card.mercari_url);
@@ -632,7 +642,8 @@ function buildCardEl(card) {
     <div class="swipe-flag flag-nope">却下</div>
     <div class="swipe-flag flag-skip">あとで</div>
     <div class="swipe-flag flag-back">戻る</div>
-    ${card.priority ? `<div class="priority-band">⭐ 優先精査<span class="priority-band-reason">${escapeHtml(card.priority_reason || "")}</span></div>` : ""}
+    ${card.priority ? `<div class="priority-band">⭐ 優先精査<span class="priority-band-reason">${escapeHtml(card.priority_reason || "")}</span></div>`
+      : card.thin_fast ? `<div class="thinfast-band">🔄 高回転・薄利<span class="priority-band-reason">約${escapeHtml(String(card.thin_fast_days))}日で売れる見込み</span></div>` : ""}
     ${thumb}
     <div class="card-body">
       ${formatPastJudgment(card)}
