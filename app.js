@@ -111,11 +111,6 @@ const els = {
   archiveEmpty: document.getElementById("archive-empty"),
   archiveModeSelect: document.getElementById("archive-mode-select"),
   autoRejectedList: document.getElementById("auto-rejected-list"),
-  statsMonthlyList: document.getElementById("stats-monthly-list"),
-  statsDailyList: document.getElementById("stats-daily-list"),
-  statsEmpty: document.getElementById("stats-empty"),
-  goalProgressFill: document.getElementById("goal-progress-fill"),
-  goalProgressText: document.getElementById("goal-progress-text"),
   furimaView: document.getElementById("furima-view"),
   furimaStack: document.getElementById("furima-card-stack"),
   furimaEmpty: document.getElementById("furima-empty-message"),
@@ -221,19 +216,6 @@ async function loadRejected() {
     renderRejected(data.items || []);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
-  }
-}
-
-async function loadStats() {
-  els.statsEmpty.textContent = "読み込み中…";
-  els.statsEmpty.style.display = "block";
-  els.statsMonthlyList.innerHTML = "";
-  els.statsDailyList.innerHTML = "";
-  try {
-    const data = await gasFetch("purchasedStats");
-    renderStats(data.items || []);
-  } catch (e) {
-    els.statsEmpty.textContent = "読み込みに失敗しました。";
   }
 }
 
@@ -1522,168 +1504,6 @@ function renderRejected(items) {
   `).join("");
 }
 
-// ---------- 実績集計 ----------
-
-const STATS_ROUTE_ORDER = ["AR", "RT", "RS", "MR", "FR"];
-const MONTHLY_PROFIT_GOAL = 250000;
-
-function currentMonthKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function renderGoalProgress(monthly) {
-  const key = currentMonthKey();
-  const current = monthly.find(agg => agg.key === key);
-  const profit = current ? current.profit : 0;
-  const pct = Math.min(100, Math.max(0, profit / MONTHLY_PROFIT_GOAL * 100));
-  els.goalProgressFill.style.width = `${pct}%`;
-  els.goalProgressFill.classList.toggle("goal-achieved", profit >= MONTHLY_PROFIT_GOAL);
-  const remain = MONTHLY_PROFIT_GOAL - profit;
-  const remainText = remain > 0 ? `（残り¥${remain.toLocaleString()}）` : "（達成！🎉）";
-  els.goalProgressText.textContent =
-    `¥${profit.toLocaleString()} / ¥${MONTHLY_PROFIT_GOAL.toLocaleString()}（${pct.toFixed(1)}%）${remainText}`;
-}
-
-// 2026-09-27追加：「今月の仕入れ候補」グラフ。今月の目標バー（購入済み＝確定分の見込実利益）
-// の下に、仕入れ対象＋購入済みを合わせた「仕入れ候補」の見込実利益を積み上げ棒で描き、
-// そのうち確定（購入済み）がどれだけ含まれるかを色分けで見せる。
-// 棒の長さの基準は max(月間目標, 候補合計)。候補が目標を超えた場合は目標位置に縦線を出す。
-// 色だけに頼らないよう、凡例に金額・件数・割合を必ず併記する。
-function renderCandidateGraph(monthlyAll, monthlyPurchased) {
-  const key = currentMonthKey();
-  const all  = monthlyAll.find(a => a.key === key)       || { count: 0, profit: 0 };
-  const conf = monthlyPurchased.find(a => a.key === key) || { count: 0, profit: 0 };
-
-  const barEl    = document.getElementById("cand-bar");
-  const legendEl = document.getElementById("cand-legend");
-  const textEl   = document.getElementById("cand-text");
-  const markEl   = document.getElementById("cand-goal-mark");
-
-  if (all.count === 0) {
-    barEl.innerHTML = "";
-    markEl.classList.add("hidden");
-    markEl.parentElement.classList.remove("has-goal-mark");
-    legendEl.innerHTML = "";
-    textEl.textContent = "今月の仕入れ候補はまだありません。";
-    return;
-  }
-
-  const confProfit   = Math.max(0, conf.profit);
-  const totalProfit  = Math.max(confProfit, all.profit);
-  const unconfProfit = totalProfit - confProfit;
-  const unconfCount  = Math.max(0, all.count - conf.count);
-  const scale = Math.max(MONTHLY_PROFIT_GOAL, totalProfit);
-  const w = v => (v / scale * 100).toFixed(2);
-  const yen = v => `¥${Math.round(v).toLocaleString()}`;
-  const ratio = totalProfit > 0 ? confProfit / totalProfit * 100 : 0;
-
-  const seg = (cls, value, title) => value > 0
-    ? `<div class="status-stack-seg ${cls}" style="width:${w(value)}%; min-width:3px" title="${escapeAttr(title)}"></div>`
-    : "";
-  barEl.innerHTML =
-    seg("seg-cand-confirmed",   confProfit,   `確定（購入済み）${yen(confProfit)}・${conf.count}件`) +
-    seg("seg-cand-unconfirmed", unconfProfit, `未確定（仕入れ対象）${yen(unconfProfit)}・${unconfCount}件`);
-
-  // 候補が目標を超えたときだけ、目標の位置に縦線＋直接ラベルを出す（超えていなければ
-  // 棒の右端＝目標なので不要）。ラベル分の余白は.has-goal-markで確保する。
-  const showMark = scale > MONTHLY_PROFIT_GOAL;
-  markEl.classList.toggle("hidden", !showMark);
-  markEl.parentElement.classList.toggle("has-goal-mark", showMark);
-  if (showMark) {
-    markEl.style.left = `${(MONTHLY_PROFIT_GOAL / scale * 100).toFixed(2)}%`;
-    markEl.title = `今月の目標 ${yen(MONTHLY_PROFIT_GOAL)}`;
-    markEl.querySelector(".cand-goal-label").textContent = `目標${MONTHLY_PROFIT_GOAL / 10000}万`;
-  }
-
-  // 定義（確定＝購入済み／未確定＝仕入れ対象のまま）は見出しに書き、凡例は短くして1行に収める
-  legendEl.innerHTML = `
-    <span><span class="swatch" style="background:#0ca30c"></span>確定 ${yen(confProfit)}（${conf.count}件）</span>
-    <span><span class="swatch" style="background:#2f6fdb"></span>未確定 ${yen(unconfProfit)}（${unconfCount}件）</span>
-  `;
-  textEl.textContent =
-    `候補合計 ${yen(totalProfit)}（${all.count}件）・確定率 ${ratio.toFixed(1)}%`;
-}
-
-function aggregateBy(items, keyFn) {
-  const map = new Map();
-  items.forEach(item => {
-    const key = keyFn(item.date);
-    if (!key) return;
-    if (!map.has(key)) map.set(key, { key, count: 0, sales: 0, cost: 0, profit: 0, routes: {} });
-    const a = map.get(key);
-    a.count += 1;
-    if (item.has_amount) {
-      a.sales += num(item.amazon_price);
-      a.cost += num(item.mercari_price);
-      a.profit += num(item.real_profit);
-    }
-    const r = item.route || "不明";
-    a.routes[r] = (a.routes[r] || 0) + 1;
-  });
-  return Array.from(map.values()).sort((a, b) => a.key < b.key ? 1 : -1);
-}
-
-function num(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function renderStatRow(agg, label) {
-  const margin = agg.sales ? agg.profit / agg.sales * 100 : 0;
-  const roi = agg.cost ? agg.profit / agg.cost * 100 : 0;
-  const routeText = STATS_ROUTE_ORDER
-    .filter(r => agg.routes[r])
-    .map(r => `${r}${agg.routes[r]}`)
-    .join("・");
-  return `
-    <li class="stats-row">
-      <div class="stats-row-head">
-        <span class="stats-date">${escapeHtml(label)}</span>
-        <span class="stats-count">${agg.count}件${routeText ? `（${escapeHtml(routeText)}）` : ""}</span>
-      </div>
-      <div class="stats-row-grid">
-        <div><span>見込売上</span>¥${agg.sales.toLocaleString()}</div>
-        <div><span>見込仕入額</span>¥${agg.cost.toLocaleString()}</div>
-        <div><span>見込実利益</span>¥${agg.profit.toLocaleString()}</div>
-        <div><span>実利益率</span>${margin.toFixed(1)}%</div>
-        <div><span>ROI</span>${roi.toFixed(1)}%</div>
-      </div>
-    </li>
-  `;
-}
-
-const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
-
-function formatDailyLabel(key) {
-  const [y, m, d] = key.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  return `${m}月${d}日（${WEEKDAY_JA[date.getDay()]}）`;
-}
-
-function renderStats(items) {
-  if (items.length === 0) {
-    els.statsEmpty.textContent = "購入済みの商品はまだありません。";
-    els.statsEmpty.style.display = "block";
-    renderGoalProgress([]);
-    renderCandidateGraph([], []);
-    return;
-  }
-  els.statsEmpty.style.display = "none";
-
-  const monthly = aggregateBy(items, date => date.slice(0, 7));
-  const daily = aggregateBy(items, date => date.slice(0, 10));
-  const purchasedOnly = items.filter(item => item.judgment === "購入済み");
-  const purchasedMonthly = aggregateBy(purchasedOnly, date => date.slice(0, 7));
-  renderGoalProgress(purchasedMonthly);
-  renderCandidateGraph(monthly, purchasedMonthly);
-
-  els.statsMonthlyList.innerHTML = monthly.map(agg =>
-    renderStatRow(agg, agg.key.replace("-", "年") + "月")
-  ).join("");
-  els.statsDailyList.innerHTML = daily.map(agg => renderStatRow(agg, formatDailyLabel(agg.key))).join("");
-}
-
 els.archiveList.addEventListener("click", async e => {
   const btn = e.target.closest("button[data-action]");
   if (!btn) return;
@@ -1748,23 +1568,6 @@ els.autoRejectedList.addEventListener("click", async e => {
 });
 
 els.archiveModeSelect.addEventListener("change", loadArchive);
-
-document.getElementById("log-stats-toggle").addEventListener("click", () => {
-  const section = document.getElementById("log-stats-section");
-  const btn = document.getElementById("log-stats-toggle");
-  const isHidden = section.classList.contains("hidden");
-  section.classList.toggle("hidden");
-  btn.textContent = isHidden ? "▲ 実績を閉じる" : "📊 実績を見る";
-  if (isHidden) loadStats();
-});
-
-document.getElementById("stats-daily-toggle").addEventListener("click", () => {
-  const list = els.statsDailyList;
-  const btn = document.getElementById("stats-daily-toggle");
-  const isHidden = list.classList.contains("hidden");
-  list.classList.toggle("hidden");
-  btn.textContent = isHidden ? "日別を閉じる ▴" : "日別を見る ▾";
-});
 
 // ---------- タブ切り替え ----------
 
@@ -1860,248 +1663,575 @@ function formatHitTime(dateStr) {
   return `${parseInt(m[2], 10)}/${parseInt(m[3], 10)} ${m[4]}`;
 }
 
-// ---------- ログ ----------
+// ---------- ログ：目標ダッシュボード（2026-11-22作り直し） ----------
+// 1日1万円から逆算して「今日なにをするか」を決める画面。集計は Code.gs getDashboard_。
+//   1日の利益 ＝ 精査枚数 × 仕入れ率 × 1個あたりの利益
+// 利益・仕入れ個数は売上管理シート（数日おきにまとめて記入）から数えるため、
+// 1日あたりの値は「最後に記入した日まで」で割る（未記入の日で平均を下げない）。
+// 精査枚数は review_log（スワイプごとの記録。11/15〜11/22は検知日ベースの推定）。
 
-async function loadLog() {
-  const rtBody  = document.getElementById("rt-log-body");
-  const autoList = document.getElementById("auto-log-list");
-  rtBody.innerHTML   = '<tr><td colspan="5" class="log-loading">読み込み中…</td></tr>';
-  autoList.innerHTML = '<li class="log-loading">読み込み中…</li>';
-  loadStatusReport();
+const DAILY_PROFIT_GOAL = 10000;
+const DASH_ROUTE_ORDER = ["AR", "RT", "RR", "RS", "MR", "FR", "Amacari外"];
+const DASH_ROUTE_LABEL = {
+  AR: "AR 自動リサーチ", RT: "RT リアルタイム", RR: "RR リピート", RS: "RS リピート検索",
+  MR: "MR 説明文", FR: "FR フリマ監視", "Amacari外": "Amacari外",
+};
+// 見直しの予定。日付の7日前から「見直しの提案」に出す
+const DASH_REVIEW_SCHEDULE = [
+  { date: "2026-12-06", text: "高回転・薄利のルール（[薄利]・売れる目安30日以内を緑表示）を見直す" },
+];
+// 却下理由が増えたときのヒント
+const DASH_REASON_HINT = {
+  "利益不足": "回転が良ければ薄利でも拾う方針です。利益より「売れる目安日数」で判断できているか確認を",
+  "回転不良": "ランク帯ごとの必要利益率（profit_rules.py）を見直す候補です",
+  "不一致": "型番の誤マッチが増えています。不一致再検証の結果を確認しましょう",
+  "高値仕入": "pmax近くの出品が多いです。値下げ交渉で拾えるものがないか",
+  "開封・状態不良": "収集の除外ワードに足せる言葉がないか確認を",
+  "状態不明": "写真が少ない出品が多いです。画像インデックスで判断できるか確認を",
+  "売切れ": "精査までの時間が長いと売り切れます。リアルタイム系を先に見ましょう",
+};
+const DASH_WEEKDAY = ["日", "月", "火", "水", "木", "金", "土"];
+const DASH_COLOR = { bar: "#2a78d6", barSoft: "#86b6ef", ink2: "#52514e", muted: "#898781", grid: "#e1e0d9", band: "#f0efec" };
+
+let dashData = null;
+
+async function loadLog(fresh) {
+  const body = document.getElementById("dash-body");
+  const updated = document.getElementById("dash-updated");
+  if (!dashData) body.innerHTML = '<p class="log-loading">読み込み中…（集計に20秒ほどかかることがあります）</p>';
+  updated.textContent = "読み込み中…";
   try {
-    const [rtData, autoData] = await Promise.all([
-      gasFetch("realtimeLog"),
-      gasFetch("researchTiming"),
-    ]);
-    renderRealtimeLog(rtData.rows   || []);
-    renderAutoLog(autoData.rows || []);
+    const data = await gasFetch("dashboard", fresh === true ? { fresh: "1" } : undefined);
+    if (data.error) throw new Error(data.error);
+    dashData = data;
+    renderDashboard(data);
   } catch (e) {
-    rtBody.innerHTML   = '<tr><td colspan="5" class="log-loading">読み込みに失敗しました。</td></tr>';
-    autoList.innerHTML = '<li class="log-loading">読み込みに失敗しました。</li>';
+    updated.textContent = "";
+    if (!dashData) body.innerHTML = '<p class="log-loading">読み込みに失敗しました。</p>';
   }
 }
 
-// ---------- ステータス（2026-09-20新設） ----------
-// 集計自体はasin-tools/status_report.pyが定期実行してシートに書き出す。
-// ここではそのシートを読んで表示するだけ（重い集計はGAS/フロント側でやらない）。
+document.getElementById("dash-refresh").addEventListener("click", () => loadLog(true));
 
-async function loadStatusReport() {
-  const updatedEl = document.getElementById("status-updated");
-  const summaryEl = document.getElementById("status-summary");
-  updatedEl.textContent = "";
-  summaryEl.innerHTML = '<p class="log-loading">読み込み中…</p>';
-  try {
-    const data = await gasFetch("status");
-    renderStatusReport(data);
-  } catch (e) {
-    summaryEl.innerHTML = '<p class="log-loading">読み込みに失敗しました。</p>';
-  }
+// --- 日付・数値の小道具 ---
+function dashAddDays(ymd, n) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+function dashDiffDays(from, to) {
+  return Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 864e5);
+}
+function dashMd(ymd) {
+  const [, m, d] = ymd.split("-").map(Number);
+  return `${m}/${d}`;
+}
+function dashMdw(ymd) {
+  return `${dashMd(ymd)}（${DASH_WEEKDAY[new Date(ymd + "T00:00:00Z").getUTCDay()]}）`;
+}
+function dashYen(v) { return `¥${Math.round(v || 0).toLocaleString()}`; }
+function dashCompact(v) {
+  if (Math.abs(v) >= 10000) return `${+(v / 10000).toFixed(1)}万`;
+  return Math.round(v).toLocaleString();
+}
+function dashPct(v, digits = 1) { return `${(v * 100).toFixed(digits)}%`; }
+function dashHours(h) {
+  if (h == null) return "記録なし";
+  if (h < 1) return `${Math.round(h * 60)}分前`;
+  if (h < 48) return `${+h.toFixed(1)}時間前`;
+  return `${Math.round(h / 24)}日前`;
+}
+function dashNiceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= v) return k * p;
+  return 10 * p;
 }
 
-function renderStatusReport(data) {
-  const updatedEl = document.getElementById("status-updated");
-  const summaryEl = document.getElementById("status-summary");
-  const toggleBtn = document.getElementById("status-source-toggle");
-  const sourceWrap = document.getElementById("status-source-wrap");
-  const sourceBody = document.getElementById("status-source-body");
+// --- 集計（画面の数字はすべてここで作る） ---
+function dashModel(d) {
+  const today = d.today;
+  const sales = d.sales || { days: [], months: [], lastEntryDate: "" };
+  const reviews = d.reviews || { days: [], firstDate: "", reasons: { recent: {}, prior: {} }, sources: [] };
+  const salesByDate = Object.fromEntries(sales.days.map(x => [x.date, x]));
+  const revByDate = Object.fromEntries(reviews.days.map(x => [x.date, x]));
+  const last = sales.lastEntryDate || "";
 
-  if (!data || !data.summary) {
-    summaryEl.innerHTML = '<p class="log-loading">まだ集計データがありません（status_report.pyの実行待ち）。</p>';
-    toggleBtn.classList.add("hidden");
-    return;
-  }
+  const monthKey = today.slice(0, 7);
+  const monthStart = `${monthKey}-01`;
+  const thisMonth = sales.months.find(x => x.month === monthKey) || { count: 0, profit: 0 };
+  const monthDays = last >= monthStart ? dashDiffDays(monthStart, last) + 1 : 0;
+  const prevEnd = dashAddDays(monthStart, -1);
+  const prevMonth = sales.months.find(x => x.month === prevEnd.slice(0, 7));
+  const prevPerDay = prevMonth ? prevMonth.profit / Number(prevEnd.slice(8)) : null;
 
-  updatedEl.textContent = data.updated ? `更新：${data.updated}` : "";
-
-  const s = data.summary;
-  const n = v => Number(v || 0).toLocaleString();
-  const pct = (part, total) => total > 0 ? Math.round((part / total) * 100) : 0;
-
-  // 型番リスト・プレミアム候補は「全体のうちどれだけ済んでいるか」なので、
-  // 既存の月間目標と同じ「メーター」表現（track+fill）で進捗として見せる。
-  // 新型番待ち・Keepa待ちは「まだ何も進んでいない残数」なので単純な数値タイルにする。
-  const listPct    = pct(s.listValid, s.listTotal);
-  const premiumPct = pct(s.premiumRegistered, s.premiumTotal);
-
-  summaryEl.innerHTML = `
-    <div class="status-meter">
-      <div class="status-meter-label"><span>型番リスト（有効な件数の割合）</span><span>${n(s.listValid)} / ${n(s.listTotal)}（${listPct}%）</span></div>
-      <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${listPct}%"></div></div>
-    </div>
-    <div class="status-meter">
-      <div class="status-meter-label"><span>プレミアム候補（Keepa登録済みの割合）</span><span>${n(s.premiumRegistered)} / ${n(s.premiumTotal)}（${premiumPct}%）</span></div>
-      <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${premiumPct}%"></div></div>
-    </div>
-    <div class="status-grid">
-      <div class="status-card">
-        <h3>新型番（コレクト経由・価格調査待ち）</h3>
-        <p><strong>${n(s.candCollectPending)}</strong> 件</p>
-      </div>
-      <div class="status-card">
-        <h3>新型番（リサーチ経由・価格調査待ち）</h3>
-        <p><strong>${n(s.candResearchPending)}</strong> 件</p>
-      </div>
-      <div class="status-card">
-        <h3>Keepa登録待ち</h3>
-        <p><strong>${n(s.keepaQueuePending)}</strong> 件</p>
-      </div>
-    </div>
-  `;
-
-  renderStatusBreakdown(data.breakdown);
-
-  const sources = data.sources || [];
-  if (!sources.length) {
-    toggleBtn.classList.add("hidden");
-    sourceWrap.classList.add("hidden");
-    return;
-  }
-  toggleBtn.classList.remove("hidden");
-
-  // 2026-09-20夜修正：単純なヒット数だけで並べると「収集量が多いだけ」の順位に
-  // なってしまうという指摘を受け、型番一致数に対するヒット率（%）で見せる
-  // ように変更（並び順自体はstatus_report.py側で一致数不足を除外済み・降順）。
-  const top = sources.slice(0, 10);
-  document.getElementById("status-source-chart").innerHTML = top.map(r => {
-    const rate = Number(r.hitRate) || 0;
-    const w = Math.min(100, Math.round(rate));
-    return `
-      <div class="status-bar-row">
-        <span class="status-bar-name">${escapeHtml(r.name)}</span>
-        <div class="status-bar-track">
-          <div class="status-bar-fill" style="width:${w}%"></div>
-        </div>
-        <span class="status-bar-value">${rate.toFixed(1)}%</span>
-      </div>
-    `;
-  }).join("");
-
-  sourceBody.innerHTML = sources.map(r => `
-    <tr>
-      <td>${escapeHtml(r.name)}</td>
-      <td>${escapeHtml(r.route)}</td>
-      <td>${n(r.items)}</td>
-      <td>${n(r.matched)}</td>
-      <td class="${Number(r.hits) > 0 ? 'rt-log-hit' : ''}">${n(r.hits)}</td>
-      <td class="${Number(r.newModels) > 0 ? 'rt-log-new' : ''}">${n(r.newModels)}</td>
-      <td>${Number(r.hitRate || 0).toFixed(1)}%</td>
-    </tr>
-  `).join("");
-}
-
-// 2026-09-20深夜追加：list.jsonの構成（有効/プレミアム/無効の積み上げ棒）、
-// 無効の理由、ランク分布を表示する。単一指標のカテゴリ別内訳なので、それぞれ
-// 単色の横棒（.status-bar-chart）で見せ、構成だけは部分と全体の関係なので
-// 積み上げ棒＋凡例にする。
-function renderStatusBreakdown(breakdown) {
-  const compWrap = document.getElementById("status-composition-wrap");
-  const invalidDetails = document.getElementById("status-invalid-details");
-  const rankDetails = document.getElementById("status-rank-details");
-  const n = v => Number(v || 0).toLocaleString();
-
-  if (!breakdown || !(breakdown.composition || []).length) {
-    compWrap.classList.add("hidden");
-    invalidDetails.classList.add("hidden");
-    rankDetails.classList.add("hidden");
-    return;
-  }
-
-  compWrap.classList.remove("hidden");
-  const comp = breakdown.composition;
-  const total = comp.reduce((sum, c) => sum + Number(c.count || 0), 0) || 1;
-  const segClass = { "有効(通常)": "seg-valid", "有効(プレミアム)": "seg-premium", "無効": "seg-invalid" };
-  document.getElementById("status-composition-bar").innerHTML = comp.map(c => {
-    const w = Math.round((Number(c.count) || 0) / total * 100);
-    return `<div class="status-stack-seg ${segClass[c.label] || ''}" style="width:${w}%"></div>`;
-  }).join("");
-  document.getElementById("status-composition-legend").innerHTML = comp.map(c => `
-    <span><span class="swatch" style="background:${
-      c.label === "有効(通常)" ? "#0ca30c" : c.label === "有効(プレミアム)" ? "var(--blue)" : "#c9ccd1"
-    }"></span>${escapeHtml(c.label)} ${n(c.count)}</span>
-  `).join("");
-
-  const renderMiniChart = (containerId, items) => {
-    const max = Math.max(1, ...items.map(r => Number(r.count) || 0));
-    // 2026-09-25追加：件数だけだと全体に対する割合が一目で分からないという指摘を受け、
-    // 内訳合計に対する%も併記する（ランク分布・無効理由の両方で共用のため両方に効く）。
-    const sum = items.reduce((s, r) => s + (Number(r.count) || 0), 0) || 1;
-    document.getElementById(containerId).innerHTML = items.map(r => {
-      const count = Number(r.count) || 0;
-      const w = Math.round(count / max * 100);
-      const pct = Math.round(count / sum * 100);
-      return `
-        <div class="status-bar-row">
-          <span class="status-bar-name">${escapeHtml(r.label)}</span>
-          <div class="status-bar-track"><div class="status-bar-fill" style="width:${w}%"></div></div>
-          <span class="status-bar-value">${n(r.count)}<span class="status-bar-pct">（${pct}%）</span></span>
-        </div>
-      `;
-    }).join("");
+  const sumRange = (from, to) => {
+    const r = { from, to, n: 0, rev: 0, cnt: 0, profit: 0 };
+    for (let x = from; x <= to; x = dashAddDays(x, 1)) {
+      r.n++;
+      r.rev += (revByDate[x] || {}).total || 0;
+      const s = salesByDate[x];
+      if (s) { r.cnt += s.count; r.profit += s.profit; }
+    }
+    r.revPerDay = r.n ? r.rev / r.n : 0;
+    r.rate = r.rev ? r.cnt / r.rev : 0;
+    r.avg = r.cnt ? r.profit / r.cnt : 0;
+    r.perDay = r.n ? r.profit / r.n : 0;
+    return r;
   };
 
-  if ((breakdown.invalidReasons || []).length) {
-    invalidDetails.classList.remove("hidden");
-    renderMiniChart("status-invalid-chart", breakdown.invalidReasons);
-  } else {
-    invalidDetails.classList.add("hidden");
+  // 逆算に使う期間：売上が記入済みで、精査の記録もある直近7日
+  let win = null, prevWin = null;
+  if (last && reviews.firstDate && last >= reviews.firstDate) {
+    const from = [dashAddDays(last, -6), reviews.firstDate].sort().pop();
+    win = sumRange(from, last);
+    const pTo = dashAddDays(from, -1);
+    const pFrom = dashAddDays(pTo, -(win.n - 1));
+    if (pFrom >= reviews.firstDate) prevWin = sumRange(pFrom, pTo);
   }
 
-  if ((breakdown.rankDistribution || []).length) {
-    rankDetails.classList.remove("hidden");
-    renderMiniChart("status-rank-chart", breakdown.rankDistribution);
-  } else {
-    rankDetails.classList.add("hidden");
-  }
+  return {
+    d, today, sales, reviews, salesByDate, revByDate, last,
+    monthKey, monthStart, thisMonth, monthDays,
+    monthPerDay: monthDays ? thisMonth.profit / monthDays : 0,
+    prevPerDay, win, prevWin,
+    todayReviews: (revByDate[today] || {}).total || 0,
+    unenteredDays: last ? dashDiffDays(last, today) : null,
+  };
 }
 
-document.getElementById("status-source-toggle").addEventListener("click", () => {
-  const wrap = document.getElementById("status-source-wrap");
-  const btn = document.getElementById("status-source-toggle");
-  const isHidden = wrap.classList.contains("hidden");
-  wrap.classList.toggle("hidden");
-  btn.textContent = isHidden ? "収集元別の実績を閉じる ▴" : "収集元別の実績を見る ▾";
-});
-
-function renderRealtimeLog(rows) {
-  const tbody = document.getElementById("rt-log-body");
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="log-loading">データがありません。</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${escapeHtml(r.date)}</td>
-      <td>${Number(r.collected).toLocaleString()}</td>
-      <td>${Number(r.matched).toLocaleString()}</td>
-      <td class="${Number(r.hits) > 0 ? 'rt-log-hit' : ''}">${Number(r.hits).toLocaleString()}</td>
-      <td class="${Number(r.new_candidates) > 0 ? 'rt-log-new' : ''}">${Number(r.new_candidates).toLocaleString()}</td>
-    </tr>
-  `).join("");
+function renderDashboard(d) {
+  const m = dashModel(d);
+  document.getElementById("dash-updated").textContent =
+    `集計 ${d.generatedAt}（10分ごとに更新・↻で今すぐ）` + ((d.errors || []).length ? ` ／ 一部読めませんでした：${d.errors.join("、")}` : "");
+  document.getElementById("dash-body").innerHTML = [
+    dashHeroHtml(m),
+    dashTodoHtml(m),
+    dashLeverHtml(m),
+    dashDailyHtml(m),
+    dashPaceHtml(m),
+    dashRouteHtml(m),
+    dashProposalHtml(m),
+    dashHealthHtml(m),
+  ].join("");
+  document.querySelectorAll("#dash-body .dash-chart").forEach(dashAttachTips);
 }
 
-function renderAutoLog(rows) {
-  const list = document.getElementById("auto-log-list");
-  if (!rows.length) {
-    list.innerHTML = '<li class="log-loading">データがありません。</li>';
-    return;
+// --- ① 目標（ヒーロー） ---
+function dashHeroHtml(m) {
+  const pct = m.monthPerDay / DAILY_PROFIT_GOAL;
+  const delta = m.prevPerDay != null ? m.monthPerDay - m.prevPerDay : null;
+  const range = m.monthDays
+    ? `${dashMd(m.monthStart)}〜${dashMd(m.last)}（記入済み${m.monthDays}日）で ${dashYen(m.thisMonth.profit)}・${m.thisMonth.count}個`
+    : "今月の記入はまだありません";
+  return `
+    <section class="dash-card dash-hero">
+      <div class="dash-label">今月の1日あたり利益</div>
+      <div class="dash-hero-row">
+        <span class="dash-hero-value">${dashYen(m.monthPerDay)}</span>
+        <span class="dash-hero-goal">／ 目標 ${dashYen(DAILY_PROFIT_GOAL)}</span>
+      </div>
+      <div class="dash-meter" role="img" aria-label="目標の${Math.round(pct * 100)}%">
+        <div class="dash-meter-fill${pct >= 1 ? " is-done" : ""}" style="width:${Math.min(100, pct * 100).toFixed(1)}%"></div>
+      </div>
+      <div class="dash-hero-meta">
+        <span>目標の <strong>${Math.round(pct * 100)}%</strong></span>
+        ${delta != null ? `<span class="${delta >= 0 ? "dash-up" : "dash-down"}">${delta >= 0 ? "▲" : "▼"} 先月比 ${delta >= 0 ? "+" : "−"}${dashYen(Math.abs(delta))}/日</span>` : ""}
+      </div>
+      <p class="dash-sub">${range}</p>
+    </section>`;
+}
+
+// --- ② 今日やること ---
+function dashTodoHtml(m) {
+  const items = [];
+  (m.d.health || []).forEach(h => {
+    if (h.key === "sales") return; // 売上管理シートの未記入は下で別に出す
+    if (h.key === "backlog") {
+      if (h.count > h.warnCount) items.push({ lv: "warn", text: `新型番の価格調査待ちが ${h.count.toLocaleString()}件 たまっています`, sub: `${h.note} を実行` });
+      return;
+    }
+    if (h.hours == null || h.hours > h.warnHours) {
+      items.push({ lv: "warn", text: `${h.label}が${h.hours == null ? "見つかりません" : `${dashHours(h.hours)}で止まっています`}`, sub: h.note });
+    }
+  });
+  const c = m.d.cards || {};
+  if (c.priorityCards > 0) {
+    items.push({ lv: "do", text: `ARの優先カードが ${c.priorityCards}枚 あります。先に見ましょう`, sub: `優先カードの仕入れ率は7.7%（通常0.6%）・${(c.at || "").slice(5, 16)}時点` });
   }
-  list.innerHTML = rows.map(r => `
-    <li class="auto-log-card">
-      <div class="auto-log-head">
-        <span class="auto-log-group">グループ ${escapeHtml(r.group)}</span>
-        <div class="auto-log-meta">
-          <span>${escapeHtml(r.datetime)}</span>
-          ${r.elapsed ? `<span class="auto-log-elapsed">${escapeHtml(r.elapsed)}</span>` : ''}
+  if (c.thinFastCards > 0) {
+    items.push({ lv: "do", text: `緑の高回転・薄利カードが ${c.thinFastCards}枚 あります`, sub: "売れる目安30日以内。優先カードの次に" });
+  }
+  if (m.win && m.win.rate > 0 && m.win.avg > 0) {
+    const need = Math.ceil(DAILY_PROFIT_GOAL / (m.win.rate * m.win.avg));
+    const left = Math.max(0, need - m.todayReviews);
+    items.push({
+      lv: left > 0 ? "do" : "good",
+      text: left > 0 ? `今日の精査はあと ${left.toLocaleString()}枚 が目安です` : "今日の精査は目安の枚数に届きました",
+      sub: `今日 ${m.todayReviews.toLocaleString()}枚 ／ 目安 ${need.toLocaleString()}枚（今の仕入れ率と1個の利益で1万円に届く枚数）`,
+    });
+  }
+  const p = m.d.pending || {};
+  if (p.olderThan7 > 0) {
+    items.push({ lv: "do", text: `仕入れ対象のまま7日以上たった商品が ${p.olderThan7}件 あります`, sub: "仕入候補タブで「購入済み」か「結局買わなかった」に整理" });
+  }
+  if (m.unenteredDays != null && m.unenteredDays >= 3) {
+    items.push({ lv: "info", text: `売上管理シートが ${dashMd(dashAddDays(m.last, 1))}から${m.unenteredDays}日分 未記入です`, sub: "記入すると利益と逆算の数字が今に追いつきます" });
+  }
+  if (!items.length) items.push({ lv: "good", text: "やることは全部片付いています", sub: "" });
+
+  const icon = { warn: "⚠", do: "▶", info: "ℹ", good: "✓" };
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">今日やること</h3>
+      <ul class="dash-todo">
+        ${items.map(it => `
+          <li class="dash-todo-item is-${it.lv}">
+            <span class="dash-todo-icon" aria-hidden="true">${icon[it.lv]}</span>
+            <div><div class="dash-todo-text">${escapeHtml(it.text)}</div>${it.sub ? `<div class="dash-todo-sub">${escapeHtml(it.sub)}</div>` : ""}</div>
+          </li>`).join("")}
+      </ul>
+    </section>`;
+}
+
+// --- ③ 逆算（精査 × 仕入れ率 × 1個の利益） ---
+function dashLeverHtml(m) {
+  const w = m.win;
+  if (!w || !w.rev) {
+    return `<section class="dash-card"><h3 class="dash-title">逆算</h3><p class="dash-sub">精査の記録と売上管理シートの記入が重なる日がまだありません。</p></section>`;
+  }
+  const p = m.prevWin;
+  const ch = (cur, prev) => (p && prev > 0 ? cur / prev - 1 : null);
+  const levers = [
+    { key: "rev", label: "精査", value: `${Math.round(w.revPerDay).toLocaleString()}<small>枚/日</small>`, change: ch(w.revPerDay, p && p.revPerDay) },
+    { key: "rate", label: "仕入れ率", value: `${(w.rate * 100).toFixed(2)}<small>%</small>`, change: ch(w.rate, p && p.rate) },
+    { key: "avg", label: "1個の利益", value: `${dashYen(w.avg)}`, change: ch(w.avg, p && p.avg) },
+  ];
+  // 前の期間より一番下がった数字を「改善ポイント」として目立たせる
+  const worst = levers.filter(l => l.change != null && l.change < -0.05).sort((a, b) => a.change - b.change)[0];
+  const pct = w.perDay / DAILY_PROFIT_GOAL;
+  const g = w.perDay > 0 ? DAILY_PROFIT_GOAL / w.perDay : null;
+  const f = g ? Math.sqrt(g) : null;
+  const short = w.n < 7 ? "・データ蓄積中" : "";
+
+  const leverBox = l => `
+    <div class="dash-lever${worst && worst.key === l.key ? " is-down" : ""}">
+      <div class="dash-lever-label">${l.label}</div>
+      <div class="dash-lever-value">${l.value}</div>
+      <div class="dash-lever-delta">${l.change == null ? "比較なし" : `${l.change >= 0 ? "▲" : "▼"} 前の期間 ${l.change >= 0 ? "+" : "−"}${Math.abs(Math.round(l.change * 100))}%`}</div>
+    </div>`;
+
+  let need = "";
+  if (g && g > 1) {
+    need = `
+      <div class="dash-need">
+        <div class="dash-need-head">1万円に届くには、どれか1つなら <strong>${g.toFixed(1)}倍</strong> に</div>
+        <ul>
+          <li><span>精査</span><b>${Math.ceil(w.revPerDay * g).toLocaleString()}枚/日</b></li>
+          <li><span>仕入れ率</span><b>${(w.rate * g * 100).toFixed(2)}%</b></li>
+          <li><span>1個の利益</span><b>${dashYen(w.avg * g)}</b></li>
+        </ul>
+        <p class="dash-sub">2つを少しずつなら、精査 ${Math.ceil(w.revPerDay * f).toLocaleString()}枚/日 と 仕入れ率 ${(w.rate * f * 100).toFixed(2)}%（各${f.toFixed(1)}倍）。優先カードを先に見ると、同じ枚数でも仕入れ率が上がります。</p>
+      </div>`;
+  } else if (g) {
+    need = `<div class="dash-need"><div class="dash-need-head">この期間は目標ペースに届いています ✓</div></div>`;
+  }
+
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">逆算：1日の利益 ＝ 精査 × 仕入れ率 × 1個の利益</h3>
+      <p class="dash-sub">${dashMd(w.from)}〜${dashMd(w.to)}（${w.n}日${short}）・精査 ${w.rev.toLocaleString()}枚 → 仕入れ ${w.cnt}個 → ${dashYen(w.profit)}${p ? ` ／ 比較：${dashMd(p.from)}〜${dashMd(p.to)}` : ""}</p>
+      <div class="dash-eq">
+        ${leverBox(levers[0])}<span class="dash-op">×</span>${leverBox(levers[1])}<span class="dash-op">×</span>${leverBox(levers[2])}
+      </div>
+      <div class="dash-eq-result">
+        <span class="dash-op">＝</span><strong>${dashYen(w.perDay)}<small>/日</small></strong>
+        <div class="dash-meter dash-meter-sm"><div class="dash-meter-fill${pct >= 1 ? " is-done" : ""}" style="width:${Math.min(100, pct * 100).toFixed(1)}%"></div></div>
+        <span class="dash-eq-pct">目標の${Math.round(pct * 100)}%</span>
+      </div>
+      ${worst ? `<p class="dash-callout">▼ <b>${worst.label}</b>が前の期間より${Math.abs(Math.round(worst.change * 100))}%下がっています。ここを戻すのが一番の近道です。</p>` : ""}
+      ${need}
+    </section>`;
+}
+
+// --- ④ 日別の利益・精査枚数（棒グラフ） ---
+function dashDailyHtml(m) {
+  const days = [];
+  for (let i = 27; i >= 0; i--) days.push(dashAddDays(m.today, -i));
+  const profitItems = days.map((x, i) => {
+    const s = m.salesByDate[x];
+    const unentered = !m.last || x > m.last;
+    return {
+      value: s ? s.profit : 0,
+      muted: unentered,
+      label: i % 7 === 0 || i === days.length - 1 ? dashMd(x) : "",
+      tip: unentered ? `${dashMdw(x)} 売上管理シート未記入` : `${dashMdw(x)} ${dashYen(s ? s.profit : 0)}・${s ? s.count : 0}個`,
+    };
+  });
+  const revDays = days.filter(x => m.reviews.firstDate && x >= m.reviews.firstDate);
+  const revItems = revDays.map((x, i) => {
+    const r = m.revByDate[x] || { total: 0, targets: 0 };
+    return {
+      value: r.total,
+      label: i % 7 === 0 || i === revDays.length - 1 ? dashMd(x) : "",
+      tip: `${dashMdw(x)} 精査 ${r.total.toLocaleString()}枚・仕入れ対象 ${r.targets}枚`,
+    };
+  });
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">日別の利益（直近4週間）</h3>
+      <div class="dash-chart">
+        ${dashBarSvg(profitItems, { goal: DAILY_PROFIT_GOAL, goalLabel: "目標 1万", yen: true })}
+        <p class="dash-tip">棒をタップすると金額が出ます。灰色の帯は売上管理シートが未記入の日です。</p>
+      </div>
+      ${revItems.length ? `
+      <h3 class="dash-title dash-title-gap">日別の精査枚数</h3>
+      <div class="dash-chart">
+        ${dashBarSvg(revItems, { height: 110, soft: true })}
+        <p class="dash-tip">${dashMd(m.reviews.firstDate)}から記録（11/22までは検知日ベースの推定）。</p>
+      </div>` : ""}
+    </section>`;
+}
+
+// 縦棒グラフ（1系列）。items: [{value, label, tip, muted}]
+function dashBarSvg(items, opt = {}) {
+  const W = 340, H = opt.height || 150, padL = 34, padR = 8, padT = 16, padB = 20;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxV = dashNiceMax(Math.max(opt.goal || 0, ...items.map(x => x.value)) * 1.08);
+  const y = v => padT + plotH - (v / maxV) * plotH;
+  const n = items.length;
+  const slot = plotW / n;
+  const bw = Math.min(24, Math.max(3, slot * 0.68));
+  const parts = [];
+  // 未記入の帯
+  const firstMuted = items.findIndex(x => x.muted);
+  if (firstMuted >= 0) {
+    const bx = padL + firstMuted * slot;
+    parts.push(`<rect x="${bx}" y="${padT}" width="${padL + plotW - bx}" height="${plotH}" fill="${DASH_COLOR.band}" rx="4"/>`);
+    parts.push(`<text x="${bx + 4}" y="${padT + 11}" class="dash-ax">未記入</text>`);
+  }
+  // 目盛り（0・半分・最大）
+  [0, maxV / 2, maxV].forEach(v => {
+    parts.push(`<line x1="${padL}" x2="${padL + plotW}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? "#c3c2b7" : DASH_COLOR.grid}" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 5}" y="${y(v) + 3.5}" text-anchor="end" class="dash-ax">${dashCompact(v)}</text>`);
+  });
+  items.forEach((it, i) => {
+    const x = padL + i * slot + (slot - bw) / 2;
+    const h = Math.max(0, (it.value / maxV) * plotH);
+    if (h > 0) {
+      const r = Math.min(4, bw / 2, h);
+      const top = padT + plotH - h, bot = padT + plotH;
+      parts.push(`<path class="dash-bar" d="M${x},${bot}V${top + r}Q${x},${top} ${x + r},${top}H${x + bw - r}Q${x + bw},${top} ${x + bw},${top + r}V${bot}Z" fill="${opt.soft ? DASH_COLOR.barSoft : DASH_COLOR.bar}"/>`);
+    }
+    if (it.label) parts.push(`<text x="${padL + i * slot + slot / 2}" y="${H - 5}" text-anchor="middle" class="dash-ax">${it.label}</text>`);
+    parts.push(`<rect class="dash-hit" x="${padL + i * slot}" y="${padT}" width="${slot}" height="${plotH}" fill="transparent" data-tip="${escapeAttr(it.tip)}"/>`);
+  });
+  if (opt.goal) {
+    const gy = y(opt.goal);
+    parts.push(`<line x1="${padL}" x2="${padL + plotW}" y1="${gy}" y2="${gy}" stroke="${DASH_COLOR.ink2}" stroke-width="1.5"/>`);
+    parts.push(`<text x="${padL + 2}" y="${gy - 4}" class="dash-ax dash-ax-strong">${opt.goalLabel || ""}</text>`);
+  }
+  return `<svg class="dash-svg" viewBox="0 0 ${W} ${H}" role="img">${parts.join("")}</svg>`;
+}
+
+// --- ⑤ 今月の進み具合（累計の折れ線） ---
+function dashPaceHtml(m) {
+  const [yy, mm] = m.monthKey.split("-").map(Number);
+  const dim = new Date(yy, mm, 0).getDate();
+  const goalTotal = DAILY_PROFIT_GOAL * dim;
+  let cum = 0;
+  const pts = [{ day: 0, v: 0 }];
+  for (let day = 1; day <= m.monthDays; day++) {
+    const ymd = `${m.monthKey}-${String(day).padStart(2, "0")}`;
+    cum += (m.salesByDate[ymd] || {}).profit || 0;
+    pts.push({ day, v: cum, ymd });
+  }
+  const W = 340, H = 170, padL = 38, padR = 12, padT = 14, padB = 20;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxV = dashNiceMax(Math.max(goalTotal, cum) * 1.02);
+  const x = dd => padL + (dd / dim) * plotW;
+  const y = v => padT + plotH - (v / maxV) * plotH;
+  const parts = [];
+  [0, maxV / 2, maxV].forEach(v => {
+    parts.push(`<line x1="${padL}" x2="${padL + plotW}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? "#c3c2b7" : DASH_COLOR.grid}" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 5}" y="${y(v) + 3.5}" text-anchor="end" class="dash-ax">${dashCompact(v)}</text>`);
+  });
+  [1, 8, 15, 22, 29].filter(dd => dd <= dim).forEach(dd => {
+    parts.push(`<text x="${x(dd)}" y="${H - 5}" text-anchor="middle" class="dash-ax">${mm}/${dd}</text>`);
+  });
+  // 目標ペース（1日1万円の直線）
+  parts.push(`<line x1="${x(0)}" y1="${y(0)}" x2="${x(dim)}" y2="${y(goalTotal)}" stroke="${DASH_COLOR.muted}" stroke-width="1.5"/>`);
+  parts.push(`<text x="${x(dim) - 2}" y="${y(goalTotal) - 6}" text-anchor="end" class="dash-ax">目標ペース ${dashCompact(goalTotal)}</text>`);
+  if (pts.length > 1) {
+    const poly = pts.map(p => `${x(p.day).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+    parts.push(`<polygon points="${x(0)},${y(0)} ${poly} ${x(pts[pts.length - 1].day)},${y(0)}" fill="${DASH_COLOR.bar}" opacity="0.1"/>`);
+    parts.push(`<polyline points="${poly}" fill="none" stroke="${DASH_COLOR.bar}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`);
+    const e = pts[pts.length - 1];
+    parts.push(`<circle cx="${x(e.day)}" cy="${y(e.v)}" r="4.5" fill="${DASH_COLOR.bar}" stroke="#fff" stroke-width="2"/>`);
+    const anchor = e.day > dim * 0.7 ? "end" : "start";
+    parts.push(`<text x="${x(e.day) + (anchor === "end" ? -8 : 8)}" y="${y(e.v) + 4}" text-anchor="${anchor}" class="dash-ax dash-ax-strong">${dashYen(e.v)}</text>`);
+    pts.slice(1).forEach(p => {
+      const goalAt = DAILY_PROFIT_GOAL * p.day;
+      parts.push(`<rect class="dash-hit" x="${x(p.day - 0.5)}" y="${padT}" width="${plotW / dim}" height="${plotH}" fill="transparent" data-tip="${escapeAttr(`${dashMdw(p.ymd)}まで 累計 ${dashYen(p.v)}（目標ペース ${dashYen(goalAt)}・差 ${p.v - goalAt >= 0 ? "+" : "−"}${dashYen(Math.abs(p.v - goalAt))}）`)}"/>`);
+    });
+  }
+  const lastGoal = DAILY_PROFIT_GOAL * m.monthDays;
+  const gap = cum - lastGoal;
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">今月の進み具合（累計）</h3>
+      <div class="dash-chart">
+        <svg class="dash-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="今月の累計利益と目標ペース">${parts.join("")}</svg>
+        <p class="dash-tip">${m.monthDays ? `${dashMd(m.last)}時点で目標ペースより ${gap >= 0 ? "+" : "−"}${dashYen(Math.abs(gap))}。線をタップすると日ごとの累計が出ます。` : "今月の記入はまだありません。"}</p>
+      </div>
+      <div class="dash-legend"><span><i style="background:${DASH_COLOR.bar}"></i>実績（売上管理シートの想定利益）</span><span><i style="background:${DASH_COLOR.muted}"></i>目標ペース（1日1万円）</span></div>
+    </section>`;
+}
+
+// --- ⑥ ルート別 ---
+function dashRouteHtml(m) {
+  if (!m.last) return "";
+  const from = [dashAddDays(m.last, -27), m.reviews.firstDate || dashAddDays(m.last, -27)].sort().pop();
+  const acc = {};
+  const get = r => (acc[r] = acc[r] || { route: r, rev: 0, cnt: 0, profit: 0 });
+  for (let x = from; x <= m.last; x = dashAddDays(x, 1)) {
+    const s = m.salesByDate[x];
+    if (s) Object.entries(s.routes || {}).forEach(([r, v]) => { const a = get(r); a.cnt += v.count; a.profit += v.profit; });
+    const rv = m.revByDate[x];
+    if (rv) Object.entries(rv.routes || {}).forEach(([r, v]) => { get(r).rev += v.total; });
+  }
+  const rows = DASH_ROUTE_ORDER.map(r => acc[r]).filter(a => a && (a.rev || a.cnt));
+  Object.values(acc).forEach(a => { if (!DASH_ROUTE_ORDER.includes(a.route) && (a.rev || a.cnt)) rows.push(a); });
+  if (!rows.length) return "";
+  const maxP = Math.max(1, ...rows.map(a => a.profit));
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">ルート別（${dashMd(from)}〜${dashMd(m.last)}）</h3>
+      <div class="status-bar-chart">
+        ${rows.map(a => `
+          <div class="status-bar-row">
+            <span class="status-bar-name">${escapeHtml(DASH_ROUTE_LABEL[a.route] || a.route)}</span>
+            <div class="status-bar-track"><div class="status-bar-fill" style="width:${Math.round(a.profit / maxP * 100)}%"></div></div>
+            <span class="status-bar-value">${dashYen(a.profit)}</span>
+          </div>`).join("")}
+      </div>
+      <div class="rt-log-wrap dash-table">
+        <table class="rt-log-table">
+          <thead><tr><th>ルート</th><th>精査</th><th>仕入れ</th><th>仕入れ率</th><th>1個の利益</th></tr></thead>
+          <tbody>
+            ${rows.map(a => `
+              <tr>
+                <td>${escapeHtml(a.route)}</td>
+                <td>${a.rev.toLocaleString()}</td>
+                <td>${a.cnt}</td>
+                <td>${a.rev ? dashPct(a.cnt / a.rev, 2) : "−"}</td>
+                <td>${a.cnt ? dashYen(a.profit / a.cnt) : "−"}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+      <p class="dash-sub">仕入れは売上管理シートのASINをAmacariの判定と突き合わせて振り分け。Amacariに判定が無いものは「Amacari外」。</p>
+    </section>`;
+}
+
+// --- ⑦ 見直しの提案 ---
+function dashProposalHtml(m) {
+  const items = [];
+  DASH_REVIEW_SCHEDULE.forEach(s => {
+    const left = dashDiffDays(m.today, s.date);
+    if (left <= 7) items.push({ title: `${dashMd(s.date)}の見直し予定${left > 0 ? `（あと${left}日）` : left === 0 ? "（今日）" : "（過ぎています）"}`, text: s.text });
+  });
+
+  // 却下理由の変化（直近7日 vs その前）
+  const rc = m.reviews.reasons || { recent: {}, prior: {} };
+  const sum = o => Object.values(o).reduce((s, v) => s + v, 0);
+  const rT = sum(rc.recent), pT = sum(rc.prior);
+  if (rT >= 30 && pT >= 30) {
+    Object.keys(rc.recent).forEach(k => {
+      const diff = rc.recent[k] / rT - (rc.prior[k] || 0) / pT;
+      if (diff >= 0.08 && rc.recent[k] >= 10) {
+        items.push({ title: `却下理由「${k}」が増えています（${dashPct((rc.prior[k] || 0) / pT, 0)} → ${dashPct(rc.recent[k] / rT, 0)}）`, text: DASH_REASON_HINT[k] || "この理由で落ちる商品を、収集やフィルタの段階で外せないか検討を" });
+      }
+    });
+  }
+
+  // 収集元：たくさん見たのに仕入れ対象ゼロ／当たりが多い
+  const src = m.reviews.sources || [];
+  const zero = src.filter(s => s.reviewed >= 60 && s.targets === 0).slice(0, 5);
+  if (zero.length) {
+    items.push({ title: "巡回から外す候補（30日で60枚以上見て仕入れ対象0）", text: zero.map(s => `${s.source}（${s.reviewed}枚）`).join("、") });
+  }
+  const good = src.filter(s => s.reviewed >= 20 && s.targets / s.reviewed >= 0.05)
+    .sort((a, b) => b.targets / b.reviewed - a.targets / a.reviewed).slice(0, 5);
+  if (good.length) {
+    items.push({ title: "当たりが多い収集元（巡回を増やす候補）", text: good.map(s => `${s.source}（${dashPct(s.targets / s.reviewed, 0)}・${s.reviewed}枚中${s.targets}）`).join("、") });
+  }
+
+  // 却下理由の内訳（直近7日）
+  const top = Object.entries(rc.recent).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const maxR = Math.max(1, ...top.map(t => t[1]));
+  const reasonChart = top.length ? `
+    <h3 class="dash-title dash-title-gap">却下理由（直近7日・手動）</h3>
+    <div class="status-bar-chart">
+      ${top.map(([k, v]) => `
+        <div class="status-bar-row">
+          <span class="status-bar-name">${escapeHtml(k)}</span>
+          <div class="status-bar-track"><div class="status-bar-fill" style="width:${Math.round(v / maxR * 100)}%"></div></div>
+          <span class="status-bar-value">${v}<span class="status-bar-pct">（${Math.round(v / rT * 100)}%）</span></span>
+        </div>`).join("")}
+    </div>` : "";
+
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">見直しの提案</h3>
+      ${items.length ? `<ul class="dash-proposals">${items.map(it => `<li><div class="dash-todo-text">${escapeHtml(it.title)}</div><div class="dash-todo-sub">${escapeHtml(it.text)}</div></li>`).join("")}</ul>`
+        : `<p class="dash-sub">今のところ大きな変化はありません。データが増えると提案が出ます。</p>`}
+      ${reasonChart}
+    </section>`;
+}
+
+// --- ⑧ 稼働チェック ---
+function dashHealthHtml(m) {
+  const rows = (m.d.health || []).map(h => {
+    let ok, detail;
+    if (h.key === "backlog") {
+      ok = h.count <= h.warnCount;
+      detail = `${h.count.toLocaleString()}件（${h.warnCount.toLocaleString()}件を超えたら警告）`;
+    } else {
+      ok = h.hours != null && h.hours <= h.warnHours;
+      detail = h.last ? `${h.last.slice(5).replace("-", "/")}（${dashHours(h.hours)}）` : "記録なし";
+    }
+    return `
+      <li class="dash-health-item ${ok ? "is-ok" : "is-warn"}">
+        <span class="dash-todo-icon" aria-hidden="true">${ok ? "✓" : "⚠"}</span>
+        <div>
+          <div class="dash-todo-text">${escapeHtml(h.label)} <span class="dash-health-state">${ok ? "正常" : "要確認"}</span></div>
+          <div class="dash-todo-sub">${escapeHtml(detail)}${h.note ? `・${escapeHtml(h.note)}` : ""}</div>
         </div>
-      </div>
-      <div class="auto-log-stats">
-        <div class="auto-log-stat"><span class="label">社数</span><span class="value">${Number(r.total).toLocaleString()}</span></div>
-        <div class="auto-log-stat"><span class="label">収集</span><span class="value">${Number(r.collected).toLocaleString()}</span></div>
-        <div class="auto-log-stat is-hit"><span class="label">ヒット</span><span class="value">${Number(r.hits).toLocaleString()}</span></div>
-        <div class="auto-log-stat is-new"><span class="label">新規型番</span><span class="value">${Number(r.new_candidates).toLocaleString()}</span></div>
-      </div>
-    </li>
-  `).join("");
+      </li>`;
+  });
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">稼働チェック</h3>
+      <ul class="dash-todo">${rows.join("") || '<li class="dash-sub">データがありません</li>'}</ul>
+    </section>`;
+}
+
+// グラフのタップ／ホバーで、その棒・日の値をグラフ下の行に出す
+function dashAttachTips(chart) {
+  const tip = chart.querySelector(".dash-tip");
+  if (!tip) return;
+  const base = tip.textContent;
+  let active = null;
+  const show = target => {
+    const el = target && target.closest && target.closest("[data-tip]");
+    if (active) active.classList.remove("is-active");
+    active = el;
+    if (el) { el.classList.add("is-active"); tip.textContent = el.getAttribute("data-tip"); tip.classList.add("is-on"); }
+    else { tip.textContent = base; tip.classList.remove("is-on"); }
+  };
+  chart.addEventListener("pointerdown", e => show(e.target));
+  chart.addEventListener("pointermove", e => { if (e.pointerType === "mouse") show(e.target); });
+  chart.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") show(null); });
 }
 
 // ---------- 仕入候補バッジ（未購入の「仕入れ対象」件数） ----------

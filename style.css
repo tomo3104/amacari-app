@@ -840,6 +840,79 @@ body {
 .auto-log-stat.is-new .value { color: #1565c0; }
 .log-loading { text-align: center; color: #888; font-size: 13px; padding: 16px; display: block; }
 
+/* ログタブ：目標ダッシュボード（2026-11-22）
+   グラフ配色：系列＝青 #2a78d6（1系列のみ）、目標線＝#52514e、未記入の帯＝#f0efec。
+   状態色は ✓/⚠ のアイコンと「正常/要確認」の文字を必ず併記し、色だけに頼らない。 */
+.dash-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dash-page-title { font-size: 17px; font-weight: 800; margin: 0; color: var(--navy); }
+.dash-updated { margin: 2px 0 10px; }
+.dash-body { display: flex; flex-direction: column; gap: 12px; padding-bottom: 24px; }
+.dash-card { background: #fff; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); padding: 14px; }
+.dash-title { font-size: 14px; font-weight: 700; margin: 0 0 8px; color: var(--navy); }
+.dash-title-gap { margin-top: 16px; }
+.dash-sub { font-size: 12px; color: #6b6a66; margin: 4px 0 0; line-height: 1.5; }
+.dash-label { font-size: 12px; font-weight: 700; color: #6b6a66; }
+
+.dash-hero-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
+.dash-hero-value { font-size: 44px; font-weight: 800; line-height: 1.05; color: var(--navy); letter-spacing: -0.5px; }
+.dash-hero-goal { font-size: 14px; color: #6b6a66; font-weight: 600; }
+.dash-hero-meta { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; color: var(--navy); }
+.dash-up { color: #006300; font-weight: 700; }
+.dash-down { color: #b3261e; font-weight: 700; }
+
+.dash-meter { height: 12px; background: #cde2fb; border-radius: 999px; overflow: hidden; }
+.dash-meter-sm { height: 8px; flex: 1; min-width: 60px; }
+.dash-meter-fill { height: 100%; background: #2a78d6; border-radius: 999px; transition: width 0.4s ease; }
+.dash-meter-fill.is-done { background: #0ca30c; }
+
+.dash-todo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dash-todo-item, .dash-health-item { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 10px; background: #f7f7f5; }
+.dash-todo-icon { flex: 0 0 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color: #fff; background: #2a78d6; }
+.dash-todo-text { font-size: 13px; font-weight: 700; color: var(--navy); line-height: 1.45; }
+.dash-todo-sub { font-size: 11.5px; color: #6b6a66; margin-top: 2px; line-height: 1.45; }
+.is-warn > .dash-todo-icon { background: #fab219; color: #0b0b0b; }
+.is-warn { background: #fff7e6; }
+.is-info > .dash-todo-icon { background: #898781; }
+.is-good > .dash-todo-icon, .is-ok > .dash-todo-icon { background: #0ca30c; }
+.dash-health-state { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; margin-left: 4px; background: #e8f5e8; color: #006300; }
+.is-warn .dash-health-state { background: #fab219; color: #0b0b0b; }
+
+.dash-eq { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: stretch; gap: 4px; margin-top: 10px; }
+.dash-op { align-self: center; font-size: 16px; font-weight: 700; color: #898781; }
+.dash-lever { background: #f2f6fd; border-radius: 10px; padding: 8px 6px; text-align: center; border: 2px solid transparent; min-width: 0; }
+.dash-lever.is-down { border-color: #fab219; background: #fff7e6; }
+.dash-lever-label { font-size: 11px; font-weight: 700; color: #52514e; }
+.dash-lever-value { font-size: 18px; font-weight: 800; color: var(--navy); margin: 2px 0; white-space: nowrap; }
+.dash-lever-value small, .dash-eq-result small { font-size: 11px; font-weight: 600; color: #6b6a66; margin-left: 1px; }
+.dash-lever-delta { font-size: 10.5px; color: #6b6a66; white-space: nowrap; }
+.dash-eq-result { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.dash-eq-result strong { font-size: 22px; font-weight: 800; color: var(--navy); white-space: nowrap; }
+.dash-eq-pct { font-size: 12px; font-weight: 700; color: var(--navy); white-space: nowrap; }
+.dash-callout { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: #fff7e6; font-size: 12.5px; color: var(--navy); line-height: 1.5; }
+.dash-need { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e1e0d9; }
+.dash-need-head { font-size: 13px; font-weight: 700; color: var(--navy); }
+.dash-need ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.dash-need li { background: #f7f7f5; border-radius: 8px; padding: 6px; text-align: center; }
+.dash-need li span { display: block; font-size: 10.5px; color: #6b6a66; }
+.dash-need li b { font-size: 13px; color: var(--navy); white-space: nowrap; }
+
+.dash-chart { position: relative; touch-action: pan-y; }
+.dash-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.dash-ax { font-size: 9.5px; fill: #898781; font-variant-numeric: tabular-nums; }
+.dash-ax-strong { fill: #52514e; font-weight: 700; }
+.dash-hit { cursor: pointer; }
+.dash-hit.is-active { fill: rgba(42,120,214,0.10); }
+.dash-tip { min-height: 18px; margin: 4px 0 0; font-size: 12px; color: #6b6a66; }
+.dash-tip.is-on { color: var(--navy); font-weight: 700; }
+.dash-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 11.5px; color: #52514e; }
+.dash-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+
+.dash-card .status-bar-fill { background: #2a78d6; }
+.dash-card .status-bar-name { flex-basis: 34%; }
+.dash-table { margin-top: 12px; box-shadow: none; border: 1px solid #eee; }
+.dash-proposals { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dash-proposals li { padding: 9px 10px; border-radius: 10px; background: #f7f7f5; border-left: 3px solid #2a78d6; }
+
 /* Amazon価格インライン編集 */
 .card-grid .price-val { color: var(--navy); }
 .card-grid .nego-needed { color: var(--orange); font-weight: 700; }
