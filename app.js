@@ -199,7 +199,8 @@ async function loadArchive() {
   els.archiveList.innerHTML = "";
   try {
     const data = await gasFetch("archive");
-    renderArchive(data.items || []);
+    renderArchive(data.items || [], data.autoMatched || []);
+    if ((data.autoMatched || []).length) refreshPendingPurchaseBadge();
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
   }
@@ -1453,32 +1454,113 @@ document.getElementById("purchase-cancel-btn").addEventListener("click", () => {
 
 // ---------- アーカイブ ----------
 
-function renderArchive(items) {
-  if (items.length === 0) {
-    els.archiveEmpty.textContent = "アーカイブされた商品はまだありません。";
-    els.archiveEmpty.style.display = "block";
-    return;
-  }
-  els.archiveEmpty.style.display = "none";
-  els.archiveList.innerHTML = items.map(item => `
-    <li class="archive-item" data-row="${item.row}">
+// 2026-11-22改善：値段・差益・経過日数を表示し、同じ商品（ASIN）をまとめ、
+// 差益が大きく新しいものから並べる。先頭に合計（1商品1個として数えた見込み差益）を出す。
+// 売上管理シートと照合して自動で購入済みにした分は、上にお知らせを出す（Code.gs reconcilePurchasesWithSales_）。
+function archiveAgeDays(dateStr) {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  return Math.round((t - d) / 864e5);
+}
+
+function archiveAgeLabel(days) {
+  if (days == null) return "";
+  return days === 0 ? "今日" : `${days}日前`;
+}
+
+function archiveItemHtml(item) {
+  const age = archiveAgeDays(item.date);
+  const diff = Number(item.diff) || 0;
+  const purchased = item.judgment === "購入済み";
+  return `
+    <li class="archive-item${purchased ? " is-purchased" : ""}" data-row="${item.row}">
       ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
       <div class="archive-info">
         <p class="name">${escapeHtml(item.name)}</p>
-        <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}</p>
+        <p class="archive-money">
+          <span class="archive-price">${formatYen(item.mercari_price)}</span>
+          <span class="archive-diff${diff >= 2000 ? " is-big" : ""}">差益 ${formatYen(item.diff)}</span>
+          <span class="archive-age${age != null && age >= 8 ? " is-old" : ""}">${archiveAgeLabel(age)}</span>
+        </p>
+        <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}${item.reason === "売上管理シートで確認" ? "（売上管理シートで確認）" : ""}</p>
       </div>
       <div class="archive-actions">
         <a class="${marketplaceInfo(item.mercari_url).cls}" href="${escapeAttr(item.mercari_url)}">${marketplaceInfo(item.mercari_url).label}で見る</a>
         <a class="link-monotracer" href="https://www.mono-tracer.com/#/product/${encodeURIComponent(item.asin)}">モノトレ</a>
         <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>
-        ${item.judgment === "購入済み"
+        ${purchased
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
              <button data-action="not-purchased">結局買わなかった</button>
              <button data-action="reject-archive">却下に戻す</button>`}
       </div>
-    </li>
-  `).join("");
+    </li>`;
+}
+
+function renderArchive(items, autoMatched = []) {
+  if (items.length === 0) {
+    els.archiveList.innerHTML = "";
+    els.archiveEmpty.textContent = "アーカイブされた商品はまだありません。";
+    els.archiveEmpty.style.display = "block";
+    return;
+  }
+  els.archiveEmpty.style.display = "none";
+
+  // 仕入れ対象を同じASINでまとめる（ASINが無いものは1件ずつ）
+  const pending = items.filter(i => i.judgment !== "購入済み");
+  const purchased = items.filter(i => i.judgment === "購入済み");
+  const groups = new Map();
+  pending.forEach(i => {
+    const key = i.asin || `row${i.row}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  });
+  const list = Array.from(groups.values()).map(g => {
+    g.sort((a, b) => (Number(a.mercari_price) || 0) - (Number(b.mercari_price) || 0));
+    const best = Math.max(...g.map(i => Number(i.diff) || 0));
+    const newest = g.reduce((s, i) => (i.date > s ? i.date : s), "");
+    return { items: g, best, newest, age: archiveAgeDays(newest) };
+  });
+  // 差益が大きいものを上に。ただし8日以上前のもの（売れている可能性が高い）は下へ
+  list.sort((a, b) => {
+    const ao = a.age != null && a.age >= 8, bo = b.age != null && b.age >= 8;
+    if (ao !== bo) return ao ? 1 : -1;
+    if (b.best !== a.best) return b.best - a.best;
+    return a.newest < b.newest ? 1 : -1;
+  });
+
+  const totalBest = list.reduce((s, g) => s + Math.max(0, g.best), 0);
+  const fresh = list.filter(g => g.age == null || g.age < 8);
+  const freshBest = fresh.reduce((s, g) => s + Math.max(0, g.best), 0);
+  const summary = `
+    <li class="archive-summary">
+      <div class="archive-summary-main">候補 <strong>${list.length}商品</strong>（${pending.length}件）・見込み差益 <strong>${formatYen(totalBest)}</strong></div>
+      <div class="archive-summary-sub">うち7日以内 ${fresh.length}商品・${formatYen(freshBest)}（同じ商品は1個として計算）</div>
+    </li>`;
+  const notice = autoMatched.length ? `
+    <li class="archive-notice">✓ 売上管理シートと照合して <strong>${autoMatched.length}件</strong> を購入済みにしました
+      <div class="archive-summary-sub">${autoMatched.map(m => escapeHtml(`${m.name.slice(0, 24)}（${m.bought.slice(5).replace("-", "/")}仕入れ）`)).join("、")}</div>
+    </li>` : "";
+
+  const groupHtml = g => {
+    if (g.items.length === 1) return archiveItemHtml(g.items[0]);
+    return `
+      <li class="archive-group">
+        <div class="archive-group-head">同じ商品 ${g.items.length}件 ・ 最安 ${formatYen(g.items[0].mercari_price)} ・ 最大差益 ${formatYen(g.best)}</div>
+        <ul class="archive-list archive-group-list">${g.items.map(archiveItemHtml).join("")}</ul>
+      </li>`;
+  };
+
+  const oldStart = list.findIndex(g => g.age != null && g.age >= 8);
+  const body = list.map((g, i) =>
+    (i === oldStart ? `<li class="archive-divider">8日以上前（売り切れている可能性が高い）</li>` : "") + groupHtml(g)
+  ).join("");
+  const purchasedHtml = purchased.length
+    ? `<li class="archive-divider">購入済み（30日以内）</li>` + purchased.map(archiveItemHtml).join("")
+    : "";
+  els.archiveList.innerHTML = notice + summary + body + purchasedHtml;
 }
 
 function renderRejected(items) {
@@ -1517,16 +1599,18 @@ els.archiveList.addEventListener("click", async e => {
     if (action === "purchased") {
       await gasPost("purchased", { row });
     } else if (action === "not-purchased") {
-      await gasPost("judge", { row, judgment: "却下", reason: "未購入" });
+      await gasPost("judge", { row, judgment: "却下", reason: "未購入", noLog: true });
     } else if (action === "reject-archive") {
-      await gasPost("judge", { row, judgment: "却下", reason: "キャンセル" });
+      await gasPost("judge", { row, judgment: "却下", reason: "キャンセル", noLog: true });
     }
     refreshPendingPurchaseBadge();
     // 2026-09-02修正：判定ごとに一覧全体をloadArchive()で読み直していたため、
     // 件数が増えるほど1件処理するたびに待たされていた。書き込みは既に成功しているので、
     // 該当行だけDOMから消せば十分（サーバーへの再問い合わせ・全件再描画は不要）。
+    const group = li.closest(".archive-group");
     li.remove();
-    if (!els.archiveList.children.length) {
+    if (group && !group.querySelector(".archive-item")) group.remove();
+    if (!els.archiveList.querySelector(".archive-item")) {
       els.archiveEmpty.textContent = "アーカイブされた商品はまだありません。";
       els.archiveEmpty.style.display = "block";
     }
