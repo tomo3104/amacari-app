@@ -1411,9 +1411,25 @@ els.otherSubmit.addEventListener("click", () => {
 // 仕入候補タブ側で後から見分けられるようにする。既存のjudge()をそのまま使うため
 // GAS側の変更は不要（judgment/reason列に書き込むだけの汎用APIのため）。
 
-function openPurchaseModal(card, source) {
+// 2026-11-22追加：仕入確定のとき、支払額・数量・出品者名（メルカリのみ手入力）を入れてもらい、
+// 売上管理シートの今月のシートへ1行記録する（Code.gs recordPurchaseToSales_）。
+// mode "archive"：仕入候補タブの「購入済みにする」から開いたとき（仕入候補ボタンは隠す）。
+function cardListingUrl(card) { return card.mercari_url || card.url || ""; }
+function cardPaidPrice(card) { return Number(card.mercari_price ?? card.price) || ""; }
+
+function openPurchaseModal(card, source, mode) {
   state.pendingPurchase = card;
   state.pendingPurchaseSource = source || "amacari";
+  state.pendingPurchaseMode = mode || "swipe";
+  const url = cardListingUrl(card);
+  const isMercari = !/paypayfleamarket|fril\.jp/.test(url);
+  document.getElementById("purchase-price").value = cardPaidPrice(card);
+  document.getElementById("purchase-qty").value = 1;
+  document.getElementById("purchase-seller").value = "";
+  document.getElementById("purchase-seller-wrap").classList.toggle("hidden", !isMercari);
+  const archive = state.pendingPurchaseMode === "archive";
+  document.getElementById("purchase-title").textContent = archive ? "購入済みにして記録" : "仕入れの状況は？";
+  document.getElementById("purchase-candidate-btn").classList.toggle("hidden", archive);
   document.getElementById("purchase-modal").classList.remove("hidden");
 }
 
@@ -1423,11 +1439,70 @@ function closePurchaseModal() {
   document.getElementById("purchase-modal").classList.add("hidden");
 }
 
-document.getElementById("purchase-confirm-btn").addEventListener("click", () => {
+let toastTimer = null;
+function showToast(text, isError) {
+  const el = document.getElementById("toast");
+  el.textContent = text;
+  el.classList.toggle("is-error", !!isError);
+  el.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add("hidden"), isError ? 8000 : 5000);
+}
+
+async function recordPurchase(card, source, input) {
+  const body = {
+    key: `${source}:${card.row}:${card.asin}`,
+    asin: card.asin,
+    url: cardListingUrl(card),
+    name: card.name,
+    amazon_price: card.amazon_price,
+    price: input.price,
+    qty: input.qty,
+    seller: input.seller,
+  };
+  try {
+    const res = await gasPost("recordPurchase", body);
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || "記録に失敗しました");
+    showToast(r.duplicate ? "売上管理シートには記録済みです" :
+      `売上管理シート ${r.sheet}${r.created ? "（新しく作成）" : ""} の${r.row}行目に記録・想定利益 ¥${Math.round(r.profit).toLocaleString()}`);
+  } catch (e) {
+    showToast(`売上管理シートへの記録に失敗：${e.message}。シートに手で記入してください`, true);
+  }
+}
+
+function readPurchaseInputs(card) {
+  const price = Number(document.getElementById("purchase-price").value) || cardPaidPrice(card);
+  const qty = Math.max(1, Number(document.getElementById("purchase-qty").value) || 1);
+  const seller = document.getElementById("purchase-seller").value.trim();
+  return { price, qty, seller };
+}
+
+document.getElementById("purchase-confirm-btn").addEventListener("click", async () => {
   const card = state.pendingPurchase;
   const source = state.pendingPurchaseSource;
+  const mode = state.pendingPurchaseMode;
+  const input = card ? readPurchaseInputs(card) : null;
   closePurchaseModal();
-  if (card) judge(card, "購入済み", "", source);
+  if (!card) return;
+  if (mode === "archive") {
+    const li = els.archiveList.querySelector(`.archive-item[data-row="${card.row}"]`);
+    try {
+      await gasPost("purchased", { row: card.row });
+      refreshPendingPurchaseBadge();
+      if (li) {
+        const group = li.closest(".archive-group");
+        li.remove();
+        if (group && !group.querySelector(".archive-item")) group.remove();
+      }
+    } catch (e) {
+      alert("更新に失敗しました。");
+      return;
+    }
+  } else {
+    judge(card, "購入済み", "", source);
+  }
+  recordPurchase(card, source, input);
 });
 
 document.getElementById("purchase-candidate-btn").addEventListener("click", () => {
@@ -1440,8 +1515,9 @@ document.getElementById("purchase-candidate-btn").addEventListener("click", () =
 document.getElementById("purchase-cancel-btn").addEventListener("click", () => {
   const card = state.pendingPurchase;
   const source = state.pendingPurchaseSource;
+  const mode = state.pendingPurchaseMode;
   closePurchaseModal();
-  if (!card) return;
+  if (!card || mode === "archive") return; // 仕入候補タブから開いたときは何もしない
   // 判定せずカードを山の先頭に戻す
   const cardsKey = source === "furima" ? "furimaCards" : source === "desc" ? "descCards" : source === "rt" ? "rtCards" : source === "rs" ? "rsCards" : "cards";
   state[cardsKey].unshift(card);
@@ -1507,6 +1583,7 @@ function renderArchive(items, autoMatched = []) {
     return;
   }
   els.archiveEmpty.style.display = "none";
+  state.archiveItems = new Map(items.map(i => [i.row, i]));
 
   // 仕入れ対象を同じASINでまとめる（ASINが無いものは1件ずつ）
   const pending = items.filter(i => i.judgment !== "購入済み");
@@ -1592,6 +1669,11 @@ els.archiveList.addEventListener("click", async e => {
   const li = btn.closest(".archive-item");
   const row = Number(li.dataset.row);
   const action = btn.dataset.action;
+  if (action === "purchased") {
+    // 2026-11-22：支払額などを入れてもらい、購入済み＋売上管理シートへの記録をまとめて行う
+    const item = (state.archiveItems || new Map()).get(row);
+    if (item) { openPurchaseModal(item, "archive", "archive"); return; }
+  }
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = "更新中…";

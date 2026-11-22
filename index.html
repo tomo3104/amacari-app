@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=27">
+<link rel="stylesheet" href="style.css?v=28">
 </head>
 <body>
 <header class="topbar">
@@ -179,10 +179,19 @@
   </div>
 </div>
 
+<div id="toast" class="toast hidden" role="status"></div>
+
 <!-- 仕入れの状況ピッカー -->
 <div id="purchase-modal" class="modal hidden">
   <div class="modal-card">
-    <h2>仕入れの状況は？</h2>
+    <h2 id="purchase-title">仕入れの状況は？</h2>
+    <!-- 2026-11-22追加：仕入確定のとき売上管理シートへ記録する内容 -->
+    <div class="purchase-fields">
+      <label>支払額（円）<input type="number" id="purchase-price" inputmode="numeric" min="0"></label>
+      <label>数量<input type="number" id="purchase-qty" inputmode="numeric" min="1" value="1"></label>
+      <label id="purchase-seller-wrap" class="purchase-seller">出品者名（任意・メルカリは自動で取れません）<input type="text" id="purchase-seller" autocomplete="off"></label>
+    </div>
+    <p class="purchase-note">仕入確定にすると売上管理シートに1行記録します</p>
     <div class="purchase-grid">
       <button class="purchase-btn purchase-btn--confirm" id="purchase-confirm-btn">仕入確定</button>
       <button class="purchase-btn purchase-btn--candidate" id="purchase-candidate-btn">仕入候補</button>
@@ -345,6 +354,6 @@
 
 </style>
 
-<script src="app.js?v=58"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>
