@@ -1424,9 +1424,68 @@ async function judge(card, judgment, reason, source) {
     }
     if (judgment === "仕入れ対象") refreshPendingPurchaseBadge();
   } catch (e) {
-    alert("判定の保存に失敗しました。通信状況を確認してください。");
+    // 2026-11-24変更：以前はalertを出して判定を捨てていた（スワイプが保存されないまま消える）。
+    // 端末に保存して、通信が戻ったら自動で送り直す。
+    enqueueFailedSave(action, { row: card.row, judgment, reason }, e);
   }
 }
+
+// ---------- 保存に失敗した判定の再送 ----------
+const SAVE_QUEUE_KEY = "amacari_save_queue";
+
+function readSaveQueue() {
+  try { return JSON.parse(localStorage.getItem(SAVE_QUEUE_KEY) || "[]"); } catch (e) { return []; }
+}
+function writeSaveQueue(q) {
+  try { localStorage.setItem(SAVE_QUEUE_KEY, JSON.stringify(q)); } catch (e) {}
+}
+
+function enqueueFailedSave(action, body, err) {
+  const q = readSaveQueue();
+  q.push({ action, body, at: Date.now() });
+  writeSaveQueue(q);
+  const msg = err && err.message ? `（${err.name || "Error"}: ${err.message}）` : "";
+  showToast(`保存待ち ${q.length}件：自動で送り直します${msg}`, true);
+  scheduleSaveRetry(15000);
+}
+
+let saveRetryTimer = null;
+let saveFlushing = false;
+function scheduleSaveRetry(ms) {
+  clearTimeout(saveRetryTimer);
+  saveRetryTimer = setTimeout(flushSaveQueue, ms);
+}
+
+async function flushSaveQueue() {
+  if (saveFlushing) return;
+  let q = readSaveQueue();
+  if (!q.length) return;
+  saveFlushing = true;
+  try {
+    while (q.length) {
+      const item = q[0];
+      try {
+        await gasPost(item.action, item.body);
+      } catch (e) {
+        showToast(`保存待ち ${q.length}件：まだ送れません。少ししたら再送します`, true);
+        scheduleSaveRetry(30000);
+        return;
+      }
+      q = readSaveQueue();
+      q.shift();
+      writeSaveQueue(q);
+    }
+    showToast("保存待ちだった判定をすべて保存しました");
+  } finally {
+    saveFlushing = false;
+  }
+}
+
+window.addEventListener("online", () => scheduleSaveRetry(1000));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") scheduleSaveRetry(1000);
+});
+scheduleSaveRetry(3000);
 
 async function undoLastReject(source) {
   source = source || "amacari";
