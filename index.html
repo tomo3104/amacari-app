@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=30">
+<link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
 <header class="topbar">
@@ -99,6 +99,12 @@
       <select id="archive-mode-select">
         <option value="normal" selected>仕入れ対象・購入済み</option>
         <option value="rejected">却下済み</option>
+      </select>
+    </label>
+    <label id="archive-sort-wrap">並び：
+      <select id="archive-sort-select">
+        <option value="profit" selected>差益順</option>
+        <option value="added">追加順（新しい順）</option>
       </select>
     </label>
   </div>
@@ -355,6 +361,6 @@
 
 </style>
 
-<script src="app.js?v=62"></script>
+<script src="app.js?v=63"></script>
 </body>
 </html>

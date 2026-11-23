@@ -110,6 +110,7 @@ const els = {
   archiveList: document.getElementById("archive-list"),
   archiveEmpty: document.getElementById("archive-empty"),
   archiveModeSelect: document.getElementById("archive-mode-select"),
+  archiveSortSelect: document.getElementById("archive-sort-select"),
   autoRejectedList: document.getElementById("auto-rejected-list"),
   furimaView: document.getElementById("furima-view"),
   furimaStack: document.getElementById("furima-card-stack"),
@@ -199,6 +200,7 @@ async function loadArchive() {
   els.archiveList.innerHTML = "";
   try {
     const data = await gasFetch("archive");
+    state.archiveLastItems = data.items || [];  // 並び替えの切り替えで読み直さないため
     renderArchive(data.items || [], data.autoMatched || []);
     if ((data.autoMatched || []).length) refreshPendingPurchaseBadge();
   } catch (e) {
@@ -1501,6 +1503,7 @@ document.getElementById("purchase-confirm-btn").addEventListener("click", async 
     try {
       await gasPost("purchased", { row: card.row, kind: card.kind || "hits", date: input.date });
       refreshPendingPurchaseBadge();
+      dropArchiveItem(archiveKey(card));
       if (li) {
         const group = li.closest(".archive-group");
         li.remove();
@@ -1560,6 +1563,18 @@ function archiveAgeLabel(days) {
 // 仕入候補はhits・furima_hits・desc_hitsの3シートから来るため、行番号だけでは区別できない
 // （2026-11-23）。GASが返すkey（"furima:5268"等）を使い、無い古い応答ではhitsとみなす。
 function archiveKey(item) { return item.key || `hits:${item.row}`; }
+function archiveSortMode() { return els.archiveSortSelect ? els.archiveSortSelect.value : "profit"; }
+// 仕入候補にした時刻（GASのadded_at。古い応答では検知時刻）
+function archiveAddedAt(item) { return item.added_at || item.date || ""; }
+// "2026-11-23 18:52" → "11/23 18:52"
+function shortDateTime(s) {
+  const m = String(s || "").match(/^\d{4}-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/);
+  return m ? `${+m[1]}/${+m[2]}${m[3] ? ` ${m[3]}:${m[4]}` : ""}` : "";
+}
+// ボタンで片付けた候補を、並び替え用に覚えている一覧からも外す
+function dropArchiveItem(key) {
+  if (state.archiveLastItems) state.archiveLastItems = state.archiveLastItems.filter(i => archiveKey(i) !== key);
+}
 function archiveJudgeAction(item) {
   return item.kind === "furima" ? "furimaJudge" : item.kind === "desc" ? "descJudge" : "judge";
 }
@@ -1580,6 +1595,9 @@ function archiveItemHtml(item) {
           <span class="archive-diff${diff >= 2000 ? " is-big" : ""}">差益 ${formatYen(item.diff)}</span>
           <span class="archive-age${age != null && age >= 8 ? " is-old" : ""}">${archiveAgeLabel(age)}</span>
         </p>
+        ${archiveSortMode() === "added" && !purchased
+          ? `<p class="archive-added">追加 ${shortDateTime(archiveAddedAt(item))}${item.added_exact === false ? "ごろ" : ""}</p>`
+          : ""}
         <p class="meta">実利益率 ${formatPercent(item.real_margin)} ／ ROI ${formatPercent(item.roi)} ／ ${escapeHtml(item.judgment)}${item.reason === "売上管理シートで確認" ? "（売上管理シートで確認）" : ""}</p>
       </div>
       <div class="archive-actions">
@@ -1615,19 +1633,28 @@ function renderArchive(items, autoMatched = []) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(i);
   });
+  const byAdded = archiveSortMode() === "added";
   const list = Array.from(groups.values()).map(g => {
-    g.sort((a, b) => (Number(a.mercari_price) || 0) - (Number(b.mercari_price) || 0));
+    g.sort(byAdded
+      ? (a, b) => (archiveAddedAt(a) < archiveAddedAt(b) ? 1 : -1)
+      : (a, b) => (Number(a.mercari_price) || 0) - (Number(b.mercari_price) || 0));
     const best = Math.max(...g.map(i => Number(i.diff) || 0));
     const newest = g.reduce((s, i) => (i.date > s ? i.date : s), "");
-    return { items: g, best, newest, age: archiveAgeDays(newest) };
+    const added = g.reduce((s, i) => (archiveAddedAt(i) > s ? archiveAddedAt(i) : s), "");
+    return { items: g, best, newest, added, age: archiveAgeDays(newest) };
   });
-  // 差益が大きいものを上に。ただし8日以上前のもの（売れている可能性が高い）は下へ
-  list.sort((a, b) => {
-    const ao = a.age != null && a.age >= 8, bo = b.age != null && b.age >= 8;
-    if (ao !== bo) return ao ? 1 : -1;
-    if (b.best !== a.best) return b.best - a.best;
-    return a.newest < b.newest ? 1 : -1;
-  });
+  if (byAdded) {
+    // 追加順：仕入候補にした時刻が新しいものを上に（同じ商品はまとめたまま、その中の一番新しい時刻で並べる）
+    list.sort((a, b) => (a.added < b.added ? 1 : a.added > b.added ? -1 : 0));
+  } else {
+    // 差益が大きいものを上に。ただし8日以上前のもの（売れている可能性が高い）は下へ
+    list.sort((a, b) => {
+      const ao = a.age != null && a.age >= 8, bo = b.age != null && b.age >= 8;
+      if (ao !== bo) return ao ? 1 : -1;
+      if (b.best !== a.best) return b.best - a.best;
+      return a.newest < b.newest ? 1 : -1;
+    });
+  }
 
   const totalBest = list.reduce((s, g) => s + Math.max(0, g.best), 0);
   const fresh = list.filter(g => g.age == null || g.age < 8);
@@ -1651,7 +1678,7 @@ function renderArchive(items, autoMatched = []) {
       </li>`;
   };
 
-  const oldStart = list.findIndex(g => g.age != null && g.age >= 8);
+  const oldStart = byAdded ? -1 : list.findIndex(g => g.age != null && g.age >= 8);
   const body = list.map((g, i) =>
     (i === oldStart ? `<li class="archive-divider">8日以上前（売り切れている可能性が高い）</li>` : "") + groupHtml(g)
   ).join("");
@@ -1722,6 +1749,7 @@ els.archiveList.addEventListener("click", async e => {
     // 該当行だけDOMから消せば十分（サーバーへの再問い合わせ・全件再描画は不要）。
     const group = li.closest(".archive-group");
     li.remove();
+    dropArchiveItem(archiveKey(item));
     if (group && !group.querySelector(".archive-item")) group.remove();
     if (!els.archiveList.querySelector(".archive-item")) {
       els.archiveEmpty.textContent = "アーカイブされた商品はまだありません。";
@@ -1764,7 +1792,20 @@ els.autoRejectedList.addEventListener("click", async e => {
   }
 });
 
-els.archiveModeSelect.addEventListener("change", loadArchive);
+els.archiveModeSelect.addEventListener("change", () => {
+  document.getElementById("archive-sort-wrap").classList.toggle("hidden", els.archiveModeSelect.value === "rejected");
+  loadArchive();
+});
+
+// 2026-11-23追加：仕入候補の並び（差益順／追加順）。選んだ並びはこの端末に覚えておく
+try {
+  const saved = localStorage.getItem("amacari_archive_sort");
+  if (saved === "added" || saved === "profit") els.archiveSortSelect.value = saved;
+} catch (e) {}
+els.archiveSortSelect.addEventListener("change", () => {
+  try { localStorage.setItem("amacari_archive_sort", els.archiveSortSelect.value); } catch (e) {}
+  if (state.archiveLastItems) renderArchive(state.archiveLastItems, []);
+});
 
 // ---------- タブ切り替え ----------
 
