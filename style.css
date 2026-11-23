@@ -8,20 +8,31 @@
 
 * { box-sizing: border-box; }
 
+/* 2026-11-23修正：ヘッダーの実際の高さ（ロゴ＋タブで約90px）が .view の計算（100vh-56px）と
+   合っておらず、ページ全体が下にはみ出していた。そのぶん iPhone の Safari でページごと上に
+   スクロールし、タブがステータスバー（時計の所。タップすると「一番上へ」になる）に潜り込んで
+   押せなくなった。画面の高さを body の縦並びで割り当て、ページ全体はスクロールさせない。 */
+html { height: 100%; overflow: hidden; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
   background: var(--bg);
   color: var(--navy);
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
+  display: flex;
+  flex-direction: column;
 }
 
 .topbar {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: env(safe-area-inset-top, 12px) 14px 10px;
+  padding: max(env(safe-area-inset-top, 0px), 10px) 14px 10px;
   background: var(--navy);
   color: white;
   gap: 8px;
@@ -82,7 +93,8 @@ body {
 .badge.hidden { display: none; }
 
 .view {
-  height: calc(100vh - 56px);
+  flex: 1 1 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 12px 16px;
