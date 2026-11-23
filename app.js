@@ -1578,6 +1578,7 @@ function archiveItemHtml(item) {
         ${purchased
           ? `<button class="done" disabled>購入済み</button>`
           : `<button data-action="purchased">購入済みにする</button>
+             <button data-action="purchased-norecord">購入済み（シート記入済み）</button>
              <button data-action="not-purchased">結局買わなかった</button>
              <button data-action="reject-archive">却下に戻す</button>`}
       </div>
@@ -1690,7 +1691,16 @@ els.archiveList.addEventListener("click", async e => {
   btn.textContent = "更新中…";
   try {
     // 2026-11-23：フリマ・発掘の候補はそれぞれのシートへ書く（archiveJudgeAction）
-    if (action === "not-purchased") {
+    if (action === "purchased-norecord") {
+      // 売上管理シートに手入力済みの商品用：購入済みにするだけで、シートには書かない
+      // （「購入済みにする」は必ず1行書き足すため、手入力の行と二重になる）
+      if (!confirm("売上管理シートには書かずに、購入済みにだけします。よろしいですか？")) {
+        btn.disabled = false;
+        btn.textContent = original;
+        return;
+      }
+      await gasPost("purchased", { row, kind: item.kind || "hits" });
+    } else if (action === "not-purchased") {
       await gasPost(archiveJudgeAction(item), { row, judgment: "却下", reason: "未購入", noLog: true });
     } else if (action === "reject-archive") {
       await gasPost(archiveJudgeAction(item), { row, judgment: "却下", reason: "キャンセル", noLog: true });
