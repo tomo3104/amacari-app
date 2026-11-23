@@ -212,6 +212,7 @@ async function loadArchive() {
 }
 
 // 2026-11-23追加：仕入候補タブの「購入済み」面（後から売上管理シートと突き合わせて見返す用）
+const PURCHASED_LIST_SINCE = "2026-11-01";
 async function loadPurchasedList() {
   els.autoRejectedList.classList.add("hidden");
   els.archiveList.classList.remove("hidden");
@@ -220,7 +221,11 @@ async function loadPurchasedList() {
   els.archiveList.innerHTML = "";
   try {
     const data = await gasFetch("purchasedList");
-    renderPurchasedList(data.items || []);
+    // 2026-11-23：11月より前の購入は突き合わせしない（ユーザー判断）。購入日が無いものは検知日で判定
+    const since = PURCHASED_LIST_SINCE;
+    const items = (data.items || []).filter(i =>
+      String(i.purchased_at || i.date || "").slice(0, 10) >= since);
+    renderPurchasedList(items);
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
   }
@@ -273,7 +278,7 @@ els.archiveList.addEventListener("click", async e => {
 
 function renderPurchasedList(items) {
   if (!items.length) {
-    els.archiveEmpty.textContent = "直近90日の購入済みはありません。";
+    els.archiveEmpty.textContent = "11/1以降の購入済みはありません。";
     els.archiveEmpty.style.display = "block";
     return;
   }
@@ -313,7 +318,7 @@ function renderPurchasedList(items) {
   const missing = items.filter(i => !purchasedSalesMatch(i) && salesExemptReason(i) == null).length;
   const summary = `
     <li class="archive-summary">
-      <div class="archive-summary-main">購入済み <strong>${items.length}件</strong>（直近90日・購入日の新しい順）</div>
+      <div class="archive-summary-main">購入済み <strong>${items.length}件</strong>（11/1以降・購入日の新しい順）</div>
       <div class="archive-summary-sub">売上管理シートに見当たらない ${missing}件${missing ? "（シートへの記入漏れか、ASIN違いの可能性。載せない商品は「シート対象外にする」）" : ""}</div>
     </li>`;
   els.archiveList.innerHTML = summary + rows.join("");
