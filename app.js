@@ -238,6 +238,39 @@ function purchasedSalesMatch(item) {
   return pool.reduce((best, d) => (!best || dist(d) < dist(best) ? d : best), null);
 }
 
+// 「シート対象外：サビ」→ "サビ"（印が無ければ null）。印はGAS markSalesExempt_ が理由列に書く
+function salesExemptReason(item) {
+  const m = String(item.reason || "").match(/^シート対象外(?:：(.*))?$/);
+  return m ? (m[1] || "") : null;
+}
+
+// 2026-11-23追加：購入済み面の「シート対象外にする／取り消す」
+els.archiveList.addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-action='exempt'], button[data-action='unexempt']");
+  if (!btn) return;
+  e.stopImmediatePropagation();
+  const li = btn.closest(".archive-item");
+  const item = (state.purchasedListItems || new Map()).get(li.dataset.key);
+  if (!item) return;
+  let reason = "";
+  if (btn.dataset.action === "exempt") {
+    const input = prompt("売上管理シートに載せない理由（例：出品規制、サビ・不良）", "");
+    if (input === null) return;
+    reason = input.trim() || "理由なし";
+  }
+  btn.disabled = true;
+  try {
+    const res = await gasPost("markSalesExempt", { kind: item.kind || "hits", row: item.row, reason });
+    const r = await res.json();
+    if (r.error) throw new Error(r.error);
+    item.reason = reason ? `シート対象外：${reason}` : "";
+    renderPurchasedList(Array.from(state.purchasedListItems.values()));
+  } catch (err) {
+    btn.disabled = false;
+    alert(`更新に失敗しました：${err.message}`);
+  }
+}, true);
+
 function renderPurchasedList(items) {
   if (!items.length) {
     els.archiveEmpty.textContent = "直近90日の購入済みはありません。";
@@ -245,15 +278,19 @@ function renderPurchasedList(items) {
     return;
   }
   els.archiveEmpty.style.display = "none";
+  state.purchasedListItems = new Map(items.map(i => [archiveKey(i), i]));
   const rows = items.map(item => {
     const m = purchasedSalesMatch(item);
+    const exempt = salesExemptReason(item);
     const kindLabel = item.kind === "furima" ? "フリマ" : item.kind === "desc" ? "発掘" : "";
     const sales = m
       ? `<span class="sales-ok">✓ 売上管理シート ${shortDateTime(m.date)}${m.qty > 1 ? ` ×${m.qty}` : ""}</span>`
-      : `<span class="sales-ng">売上管理シートに見当たらない</span>`;
+      : exempt != null
+        ? `<span class="sales-exempt">シート対象外${exempt ? `：${escapeHtml(exempt)}` : ""}</span>`
+        : `<span class="sales-ng">売上管理シートに見当たらない</span>`;
     const bought = item.purchased_at ? `購入 ${shortDateTime(item.purchased_at)}` : `購入日不明（検知 ${shortDateTime(item.date)}）`;
     return `
-      <li class="archive-item is-purchased-list">
+      <li class="archive-item is-purchased-list" data-key="${escapeAttr(archiveKey(item))}">
         ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
         <div class="archive-info">
           <p class="name">${kindLabel ? `<span class="archive-kind">${kindLabel}</span> ` : ""}${escapeHtml(item.name)}</p>
@@ -267,14 +304,17 @@ function renderPurchasedList(items) {
         <div class="archive-actions">
           <a class="${marketplaceInfo(item.mercari_url).cls}" href="${escapeAttr(item.mercari_url)}">${marketplaceInfo(item.mercari_url).label}で見る</a>
           <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>
+          ${m ? "" : exempt != null
+            ? `<button data-action="unexempt">対象外を取り消す</button>`
+            : `<button data-action="exempt">シート対象外にする</button>`}
         </div>
       </li>`;
   });
-  const missing = items.filter(i => !purchasedSalesMatch(i)).length;
+  const missing = items.filter(i => !purchasedSalesMatch(i) && salesExemptReason(i) == null).length;
   const summary = `
     <li class="archive-summary">
       <div class="archive-summary-main">購入済み <strong>${items.length}件</strong>（直近90日・購入日の新しい順）</div>
-      <div class="archive-summary-sub">売上管理シートに見当たらない ${missing}件${missing ? "（シートへの記入漏れか、ASIN違いの可能性）" : ""}</div>
+      <div class="archive-summary-sub">売上管理シートに見当たらない ${missing}件${missing ? "（シートへの記入漏れか、ASIN違いの可能性。載せない商品は「シート対象外にする」）" : ""}</div>
     </li>`;
   els.archiveList.innerHTML = summary + rows.join("");
 }
