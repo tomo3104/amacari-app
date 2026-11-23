@@ -193,6 +193,9 @@ async function loadArchive() {
   if (els.archiveModeSelect.value === "rejected") {
     return loadRejected();
   }
+  if (els.archiveModeSelect.value === "purchased") {
+    return loadPurchasedList();
+  }
   els.autoRejectedList.classList.add("hidden");
   els.archiveList.classList.remove("hidden");
   els.archiveEmpty.textContent = "読み込み中…";
@@ -206,6 +209,74 @@ async function loadArchive() {
   } catch (e) {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
   }
+}
+
+// 2026-11-23追加：仕入候補タブの「購入済み」面（後から売上管理シートと突き合わせて見返す用）
+async function loadPurchasedList() {
+  els.autoRejectedList.classList.add("hidden");
+  els.archiveList.classList.remove("hidden");
+  els.archiveEmpty.textContent = "読み込み中…";
+  els.archiveEmpty.style.display = "block";
+  els.archiveList.innerHTML = "";
+  try {
+    const data = await gasFetch("purchasedList");
+    renderPurchasedList(data.items || []);
+  } catch (e) {
+    els.archiveEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+// 売上管理シートの記入状況：同じASINの仕入れ日のうち、検知日以降で購入日に一番近いもの
+function purchasedSalesMatch(item) {
+  const dates = item.sales_dates || [];
+  if (!dates.length) return null;
+  const detected = String(item.date || "").slice(0, 10).replace(/T.*/, "");
+  const target = (item.purchased_at || "").slice(0, 10) || detected;
+  const after = dates.filter(d => d.date >= detected);
+  const pool = after.length ? after : dates;
+  const dist = d => Math.abs(new Date(d.date) - new Date(target));
+  return pool.reduce((best, d) => (!best || dist(d) < dist(best) ? d : best), null);
+}
+
+function renderPurchasedList(items) {
+  if (!items.length) {
+    els.archiveEmpty.textContent = "直近90日の購入済みはありません。";
+    els.archiveEmpty.style.display = "block";
+    return;
+  }
+  els.archiveEmpty.style.display = "none";
+  const rows = items.map(item => {
+    const m = purchasedSalesMatch(item);
+    const kindLabel = item.kind === "furima" ? "フリマ" : item.kind === "desc" ? "発掘" : "";
+    const sales = m
+      ? `<span class="sales-ok">✓ 売上管理シート ${shortDateTime(m.date)}${m.qty > 1 ? ` ×${m.qty}` : ""}</span>`
+      : `<span class="sales-ng">売上管理シートに見当たらない</span>`;
+    const bought = item.purchased_at ? `購入 ${shortDateTime(item.purchased_at)}` : `購入日不明（検知 ${shortDateTime(item.date)}）`;
+    return `
+      <li class="archive-item is-purchased-list">
+        ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
+        <div class="archive-info">
+          <p class="name">${kindLabel ? `<span class="archive-kind">${kindLabel}</span> ` : ""}${escapeHtml(item.name)}</p>
+          <p class="archive-money">
+            <span class="archive-price">${formatYen(item.mercari_price)}</span>
+            <span class="archive-diff">差益 ${formatYen(item.diff)}</span>
+            <span class="archive-age">${bought}</span>
+          </p>
+          <p class="meta">${escapeHtml(item.asin)} ／ ${sales}${item.reason === "売上管理シートで確認" ? "（自動で購入済み）" : ""}</p>
+        </div>
+        <div class="archive-actions">
+          <a class="${marketplaceInfo(item.mercari_url).cls}" href="${escapeAttr(item.mercari_url)}">${marketplaceInfo(item.mercari_url).label}で見る</a>
+          <a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>
+        </div>
+      </li>`;
+  });
+  const missing = items.filter(i => !purchasedSalesMatch(i)).length;
+  const summary = `
+    <li class="archive-summary">
+      <div class="archive-summary-main">購入済み <strong>${items.length}件</strong>（直近90日・購入日の新しい順）</div>
+      <div class="archive-summary-sub">売上管理シートに見当たらない ${missing}件${missing ? "（シートへの記入漏れか、ASIN違いの可能性）" : ""}</div>
+    </li>`;
+  els.archiveList.innerHTML = summary + rows.join("");
 }
 
 async function loadRejected() {
@@ -1682,8 +1753,9 @@ function renderArchive(items, autoMatched = []) {
   const body = list.map((g, i) =>
     (i === oldStart ? `<li class="archive-divider">8日以上前（売り切れている可能性が高い）</li>` : "") + groupHtml(g)
   ).join("");
+  // 2026-11-23：購入済みは「表示：購入済み」の面に分けた（ここでは件数だけ案内する）
   const purchasedHtml = purchased.length
-    ? `<li class="archive-divider">購入済み（30日以内）</li>` + purchased.map(archiveItemHtml).join("")
+    ? `<li class="archive-divider">購入済みは上の「表示」で「購入済み」を選ぶと見られます</li>`
     : "";
   els.archiveList.innerHTML = notice + summary + body + purchasedHtml;
 }
@@ -1793,7 +1865,7 @@ els.autoRejectedList.addEventListener("click", async e => {
 });
 
 els.archiveModeSelect.addEventListener("change", () => {
-  document.getElementById("archive-sort-wrap").classList.toggle("hidden", els.archiveModeSelect.value === "rejected");
+  document.getElementById("archive-sort-wrap").classList.toggle("hidden", els.archiveModeSelect.value !== "normal");
   loadArchive();
 });
 
