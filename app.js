@@ -1451,7 +1451,7 @@ function showToast(text, isError) {
 
 async function recordPurchase(card, source, input) {
   const body = {
-    key: `${source}:${card.row}:${card.asin}`,
+    key: `${source}:${card.kind ? card.kind + ":" : ""}${card.row}:${card.asin}`,
     asin: card.asin,
     url: cardListingUrl(card),
     name: card.name,
@@ -1486,9 +1486,9 @@ document.getElementById("purchase-confirm-btn").addEventListener("click", async 
   closePurchaseModal();
   if (!card) return;
   if (mode === "archive") {
-    const li = els.archiveList.querySelector(`.archive-item[data-row="${card.row}"]`);
+    const li = els.archiveList.querySelector(`.archive-item[data-key="${archiveKey(card)}"]`);
     try {
-      await gasPost("purchased", { row: card.row });
+      await gasPost("purchased", { row: card.row, kind: card.kind || "hits" });
       refreshPendingPurchaseBadge();
       if (li) {
         const group = li.closest(".archive-group");
@@ -1546,15 +1546,24 @@ function archiveAgeLabel(days) {
   return days === 0 ? "今日" : `${days}日前`;
 }
 
+// 仕入候補はhits・furima_hits・desc_hitsの3シートから来るため、行番号だけでは区別できない
+// （2026-11-23）。GASが返すkey（"furima:5268"等）を使い、無い古い応答ではhitsとみなす。
+function archiveKey(item) { return item.key || `hits:${item.row}`; }
+function archiveJudgeAction(item) {
+  return item.kind === "furima" ? "furimaJudge" : item.kind === "desc" ? "descJudge" : "judge";
+}
+
 function archiveItemHtml(item) {
   const age = archiveAgeDays(item.date);
   const diff = Number(item.diff) || 0;
   const purchased = item.judgment === "購入済み";
+  // 2026-11-23：フリマ・発掘の仕入候補も出すようになったので、どのタブの候補か分かるようにする
+  const kindLabel = item.kind === "furima" ? "フリマ" : item.kind === "desc" ? "発掘" : "";
   return `
-    <li class="archive-item${purchased ? " is-purchased" : ""}" data-row="${item.row}">
+    <li class="archive-item${purchased ? " is-purchased" : ""}" data-key="${escapeAttr(archiveKey(item))}">
       ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
       <div class="archive-info">
-        <p class="name">${escapeHtml(item.name)}</p>
+        <p class="name">${kindLabel ? `<span class="archive-kind">${kindLabel}</span> ` : ""}${escapeHtml(item.name)}</p>
         <p class="archive-money">
           <span class="archive-price">${formatYen(item.mercari_price)}</span>
           <span class="archive-diff${diff >= 2000 ? " is-big" : ""}">差益 ${formatYen(item.diff)}</span>
@@ -1583,14 +1592,14 @@ function renderArchive(items, autoMatched = []) {
     return;
   }
   els.archiveEmpty.style.display = "none";
-  state.archiveItems = new Map(items.map(i => [i.row, i]));
+  state.archiveItems = new Map(items.map(i => [archiveKey(i), i]));
 
   // 仕入れ対象を同じASINでまとめる（ASINが無いものは1件ずつ）
   const pending = items.filter(i => i.judgment !== "購入済み");
   const purchased = items.filter(i => i.judgment === "購入済み");
   const groups = new Map();
   pending.forEach(i => {
-    const key = i.asin || `row${i.row}`;
+    const key = i.asin || archiveKey(i);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(i);
   });
@@ -1667,23 +1676,24 @@ els.archiveList.addEventListener("click", async e => {
   const btn = e.target.closest("button[data-action]");
   if (!btn) return;
   const li = btn.closest(".archive-item");
-  const row = Number(li.dataset.row);
+  const item = (state.archiveItems || new Map()).get(li.dataset.key);
+  if (!item) return;
+  const row = item.row;
   const action = btn.dataset.action;
   if (action === "purchased") {
     // 2026-11-22：支払額などを入れてもらい、購入済み＋売上管理シートへの記録をまとめて行う
-    const item = (state.archiveItems || new Map()).get(row);
-    if (item) { openPurchaseModal(item, "archive", "archive"); return; }
+    openPurchaseModal(item, "archive", "archive");
+    return;
   }
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = "更新中…";
   try {
-    if (action === "purchased") {
-      await gasPost("purchased", { row });
-    } else if (action === "not-purchased") {
-      await gasPost("judge", { row, judgment: "却下", reason: "未購入", noLog: true });
+    // 2026-11-23：フリマ・発掘の候補はそれぞれのシートへ書く（archiveJudgeAction）
+    if (action === "not-purchased") {
+      await gasPost(archiveJudgeAction(item), { row, judgment: "却下", reason: "未購入", noLog: true });
     } else if (action === "reject-archive") {
-      await gasPost("judge", { row, judgment: "却下", reason: "キャンセル", noLog: true });
+      await gasPost(archiveJudgeAction(item), { row, judgment: "却下", reason: "キャンセル", noLog: true });
     }
     refreshPendingPurchaseBadge();
     // 2026-09-02修正：判定ごとに一覧全体をloadArchive()で読み直していたため、
