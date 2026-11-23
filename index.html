@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=29">
+<link rel="stylesheet" href="style.css?v=30">
 </head>
 <body>
 <header class="topbar">
@@ -189,6 +189,7 @@
     <div class="purchase-fields">
       <label>支払額（円）<input type="number" id="purchase-price" inputmode="numeric" min="0"></label>
       <label>数量<input type="number" id="purchase-qty" inputmode="numeric" min="1" value="1"></label>
+      <label class="purchase-date">仕入れ日（後から記録するときは買った日に変える）<input type="date" id="purchase-date"></label>
       <label id="purchase-seller-wrap" class="purchase-seller">出品者名（任意・メルカリは自動で取れません）<input type="text" id="purchase-seller" autocomplete="off"></label>
     </div>
     <p class="purchase-note">仕入確定にすると売上管理シートに1行記録します</p>
@@ -354,6 +355,6 @@
 
 </style>
 
-<script src="app.js?v=61"></script>
+<script src="app.js?v=62"></script>
 </body>
 </html>

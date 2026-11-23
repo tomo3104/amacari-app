@@ -1417,6 +1417,11 @@ els.otherSubmit.addEventListener("click", () => {
 function cardListingUrl(card) { return card.mercari_url || card.url || ""; }
 function cardPaidPrice(card) { return Number(card.mercari_price ?? card.price) || ""; }
 
+function todayYmd() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function openPurchaseModal(card, source, mode) {
   state.pendingPurchase = card;
   state.pendingPurchaseSource = source || "amacari";
@@ -1425,6 +1430,10 @@ function openPurchaseModal(card, source, mode) {
   const isMercari = !/paypayfleamarket|fril\.jp/.test(url);
   document.getElementById("purchase-price").value = cardPaidPrice(card);
   document.getElementById("purchase-qty").value = 1;
+  // 2026-11-23追加：仕入れ日（初期値は今日）。後からまとめて記録するときに実際に買った日へ変える
+  const dateEl = document.getElementById("purchase-date");
+  dateEl.value = todayYmd();
+  dateEl.max = todayYmd();
   document.getElementById("purchase-seller").value = "";
   document.getElementById("purchase-seller-wrap").classList.toggle("hidden", !isMercari);
   const archive = state.pendingPurchaseMode === "archive";
@@ -1459,13 +1468,14 @@ async function recordPurchase(card, source, input) {
     price: input.price,
     qty: input.qty,
     seller: input.seller,
+    date: input.date,
   };
   try {
     const res = await gasPost("recordPurchase", body);
     const r = await res.json();
     if (!r.ok) throw new Error(r.error || "記録に失敗しました");
     showToast(r.duplicate ? "売上管理シートには記録済みです" :
-      `売上管理シート ${r.sheet}${r.created ? "（新しく作成）" : ""} の${r.row}行目に記録・想定利益 ¥${Math.round(r.profit).toLocaleString()}`);
+      `売上管理シート ${r.sheet}${r.created ? "（新しく作成）" : ""}${r.day ? `・${r.day}日` : ""} の${r.row}行目に記録・想定利益 ¥${Math.round(r.profit).toLocaleString()}`);
   } catch (e) {
     showToast(`売上管理シートへの記録に失敗：${e.message}。シートに手で記入してください`, true);
   }
@@ -1475,7 +1485,8 @@ function readPurchaseInputs(card) {
   const price = Number(document.getElementById("purchase-price").value) || cardPaidPrice(card);
   const qty = Math.max(1, Number(document.getElementById("purchase-qty").value) || 1);
   const seller = document.getElementById("purchase-seller").value.trim();
-  return { price, qty, seller };
+  const date = document.getElementById("purchase-date").value || todayYmd();
+  return { price, qty, seller, date };
 }
 
 document.getElementById("purchase-confirm-btn").addEventListener("click", async () => {
@@ -1488,7 +1499,7 @@ document.getElementById("purchase-confirm-btn").addEventListener("click", async 
   if (mode === "archive") {
     const li = els.archiveList.querySelector(`.archive-item[data-key="${archiveKey(card)}"]`);
     try {
-      await gasPost("purchased", { row: card.row, kind: card.kind || "hits" });
+      await gasPost("purchased", { row: card.row, kind: card.kind || "hits", date: input.date });
       refreshPendingPurchaseBadge();
       if (li) {
         const group = li.closest(".archive-group");
