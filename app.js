@@ -174,18 +174,88 @@ function restorePosition() {
 
 // ---------- データ取得 ----------
 
+// 2026-11-24追加：起動直後の読込（GASで数十秒〜1分）を待たずに済むよう、前回読み込んだ
+// ARカードを端末に保存しておき、起動時はまずそれを表示→裏で最新を取り直して差し替える。
+// 保存カードには判定済みのものが混ざるので、この端末で判定したカード（直近12時間）は除く。
+const CARDS_CACHE_KEY = "amacari_cards_cache";
+const JUDGED_KEY = "amacari_judged_recent";
+const CARDS_CACHE_MAX_MS = 12 * 60 * 60 * 1000;
+
+function cardKey(c) { return `${c.row}|${c.mercari_url || ""}`; }
+
+function readJudgedRecent() {
+  try {
+    const m = JSON.parse(localStorage.getItem(JUDGED_KEY) || "{}");
+    const cutoff = Date.now() - CARDS_CACHE_MAX_MS;
+    Object.keys(m).forEach(k => { if (m[k] < cutoff) delete m[k]; });
+    return m;
+  } catch (e) { return {}; }
+}
+function markJudgedRecent(card) {
+  try {
+    const m = readJudgedRecent();
+    m[cardKey(card)] = Date.now();
+    localStorage.setItem(JUDGED_KEY, JSON.stringify(m));
+  } catch (e) {}
+}
+function withoutJudged(cards) {
+  const m = readJudgedRecent();
+  return cards.filter(c => !m[cardKey(c)]);
+}
+function saveCardsCache(cards) {
+  try {
+    localStorage.setItem(CARDS_CACHE_KEY, JSON.stringify({ at: Date.now(), sort: state.sort, cards }));
+  } catch (e) {}
+}
+function readCardsCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CARDS_CACHE_KEY) || "null");
+    if (!c || c.sort !== state.sort || Date.now() - c.at > CARDS_CACHE_MAX_MS) return null;
+    return c;
+  } catch (e) { return null; }
+}
+
+function setCardsRefreshing(on) {
+  const base = els.progressLabel.textContent.replace(/ ⟳更新中$/, "");
+  els.progressLabel.textContent = on ? base + " ⟳更新中" : base;
+}
+
 async function loadCards() {
-  els.empty.textContent = "読み込み中…";
-  els.empty.style.display = "block";
+  const cached = readCardsCache();
+  let showingCache = false;
+  if (cached && cached.cards && cached.cards.length) {
+    state.cards = withoutJudged(cached.cards);
+    state.skipStack = [];
+    state.totalCount = state.cards.length;
+    restorePosition();
+    renderStack();
+    setCardsRefreshing(true);
+    showingCache = true;
+  } else {
+    els.empty.textContent = "読み込み中…";
+    els.empty.style.display = "block";
+  }
   try {
     const data = await gasFetch("cards", { sort: state.sort });
-    state.cards = data.cards || [];
+    const fresh = data.cards || [];
+    saveCardsCache(fresh);
+    // スワイプ中・理由選択中に差し替えると操作中のカードが消えるので、終わるまで待つ
+    while (document.querySelector(".card.dragging") || !els.modal.classList.contains("hidden")) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+    // 表示中の先頭カードは savePosition() に保存されているので、restorePosition() で同じ位置に戻る
+    state.cards = withoutJudged(fresh);
     state.skipStack = [];
     state.totalCount = state.cards.length;
     restorePosition();
     renderStack();
   } catch (e) {
-    els.empty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
+    if (showingCache) {
+      setCardsRefreshing(false);
+      showToast("最新の読み込みに失敗しました（前回のカードを表示中）", true);
+    } else {
+      els.empty.textContent = "読み込みに失敗しました。GAS_URLの設定を確認してください。";
+    }
   }
 }
 
@@ -1402,6 +1472,7 @@ async function judge(card, judgment, reason, source) {
   const isRt     = source === "rt";
   const isRs     = source === "rs";
   const action = isFurima ? "furimaJudge" : isDesc ? "descJudge" : "judge";
+  if (source === "amacari") markJudgedRecent(card);
   try {
     await gasPost(action, { row: card.row, judgment, reason });
     if (judgment === "却下") {
@@ -1518,6 +1589,11 @@ async function undoLastReject(source) {
       renderRsStack();
     } else {
       state.lastRejected = null;
+      try {
+        const m = readJudgedRecent();
+        delete m[cardKey(card)];
+        localStorage.setItem(JUDGED_KEY, JSON.stringify(m));
+      } catch (e) {}
       state.cards.unshift(card);
       renderStack();
     }
