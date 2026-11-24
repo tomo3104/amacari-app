@@ -319,6 +319,36 @@ function salesExemptReason(item) {
   return m ? (m[1] || "") : null;
 }
 
+// 2026-11-25追加：購入済みの訂正（間違えて購入済みにした商品）。
+// 「仕入候補に戻す」＝まだ買っていない／「却下にする」＝買わなかった。
+// 売上管理シートに自動記録した行は消さないので、記入があれば手で消すよう案内する。
+els.archiveList.addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-action='unpurchase-candidate'], button[data-action='unpurchase-reject']");
+  if (!btn) return;
+  e.stopImmediatePropagation();
+  const li = btn.closest(".archive-item");
+  const item = (state.purchasedListItems || new Map()).get(li.dataset.key);
+  if (!item) return;
+  const to = btn.dataset.action === "unpurchase-reject" ? "reject" : "candidate";
+  const m = purchasedSalesMatch(item);
+  const label = to === "reject" ? "却下（買わなかった）" : "仕入候補";
+  const sheetNote = m ? `\n\n売上管理シートの ${m.date} の行は自動では消しません。不要なら手で消してください。` : "";
+  if (!confirm(`「${String(item.name || "").slice(0, 40)}」を購入済みから${label}に戻しますか？${sheetNote}`)) return;
+  li.querySelectorAll("button").forEach(b => { b.disabled = true; });
+  try {
+    const res = await gasPost("unpurchase", { kind: item.kind || "hits", row: item.row, to });
+    const r = await res.json();
+    if (r.error) throw new Error(r.error);
+    state.purchasedListItems.delete(li.dataset.key);
+    renderPurchasedList(Array.from(state.purchasedListItems.values()));
+    refreshPendingPurchaseBadge();
+    showToast(`${label}に戻しました${m ? "。売上管理シートの行は手で消してください" : ""}`);
+  } catch (err) {
+    li.querySelectorAll("button").forEach(b => { b.disabled = false; });
+    alert(`更新に失敗しました：${err.message}`);
+  }
+}, true);
+
 // 2026-11-23追加：購入済み面の「シート対象外にする／取り消す」
 els.archiveList.addEventListener("click", async e => {
   const btn = e.target.closest("button[data-action='exempt'], button[data-action='unexempt']");
@@ -382,6 +412,8 @@ function renderPurchasedList(items) {
           ${m ? "" : exempt != null
             ? `<button data-action="unexempt">対象外を取り消す</button>`
             : `<button data-action="exempt">シート対象外にする</button>`}
+          <button data-action="unpurchase-candidate">仕入候補に戻す</button>
+          <button data-action="unpurchase-reject">却下にする</button>
         </div>
       </li>`;
   });
