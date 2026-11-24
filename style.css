@@ -982,6 +982,9 @@ body {
 .dash-plan-figs b { color: var(--navy); }
 .dash-plan-spare-head { font-size: 11.5px; font-weight: 700; color: #6b6a66; margin: 10px 0 6px; }
 .dash-plan.is-spare .dash-plan-item { opacity: 0.85; }
+.dash-plan-prog { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: #f2f6fd; font-size: 12px; color: var(--navy); }
+.dash-plan-prog .is-buy { color: #006300; font-weight: 700; }
+.dash-plan-start { display: block; width: 100%; margin-top: 10px; padding: 11px 12px; border: 0; border-radius: 10px; background: #2a78d6; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; }
 
 /* Amazon価格インライン編集 */
 .card-grid .price-val { color: var(--navy); }

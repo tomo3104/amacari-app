@@ -1473,6 +1473,7 @@ async function judge(card, judgment, reason, source) {
   const isRs     = source === "rs";
   const action = isFurima ? "furimaJudge" : isDesc ? "descJudge" : "judge";
   if (source === "amacari") markJudgedRecent(card);
+  planNoteJudgment(card, judgment);
   try {
     await gasPost(action, { row: card.row, judgment, reason });
     if (judgment === "却下") {
@@ -1728,6 +1729,7 @@ async function recordPurchase(card, source, input) {
     const res = await gasPost("recordPurchase", body);
     const r = await res.json();
     if (!r.ok) throw new Error(r.error || "記録に失敗しました");
+    if (!r.duplicate) planNoteBought(cardKey(card), r.profit, input.date);
     showToast(r.duplicate ? "売上管理シートには記録済みです" :
       `売上管理シート ${r.sheet}${r.created ? "（新しく作成）" : ""}${r.day ? `・${r.day}日` : ""} の${r.row}行目に記録・想定利益 ¥${Math.round(r.profit).toLocaleString()}`);
   } catch (e) {
@@ -2386,6 +2388,38 @@ const PLAN_MIN_PROFIT = 500;
 const PLAN_MAX_PICKS = 12;
 const PLAN_SPARE = 5;
 
+// 2026-11-24追加：プランの進み具合をこの端末に記録する（日付が変わるとリセット）。
+//   shown：今日プランに出したカード／judged：その判定／bought：今日この端末で仕入確定した想定利益
+// 却下したカードは山から消えるので、プランを開き直すと自動で次の候補が入る（差し替え）。
+// 仕入確定の利益はダッシュボード集計（10分キャッシュ）より後の分だけ足して、すぐ「あと○円」に効かせる。
+const PLAN_LOG_KEY = "amacari_plan_log";
+function nowYmdHm() {
+  const d = new Date();
+  return `${todayYmd()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function readPlanLog() {
+  let log = null;
+  try { log = JSON.parse(localStorage.getItem(PLAN_LOG_KEY) || "null"); } catch (e) {}
+  if (!log || log.date !== todayYmd()) log = { date: todayYmd(), shown: {}, judged: {}, bought: [] };
+  return log;
+}
+function writePlanLog(log) {
+  try { localStorage.setItem(PLAN_LOG_KEY, JSON.stringify(log)); } catch (e) {}
+}
+function planNoteJudgment(card, judgment) {
+  const log = readPlanLog();
+  const key = cardKey(card);
+  if (!log.shown[key]) return;
+  log.judged[key] = judgment;
+  writePlanLog(log);
+}
+function planNoteBought(key, profit, date) {
+  if (date !== todayYmd() || !Number.isFinite(Number(profit))) return;
+  const log = readPlanLog();
+  log.bought.push({ key, profit: Number(profit), at: nowYmdHm() });
+  writePlanLog(log);
+}
+
 function planCardFigures(card) {
   const price = Number(card.mercari_price);
   const profit = Number(card.pmax) - price; // カードの「利益額」と同じ（損益分岐点−価格）
@@ -2423,9 +2457,13 @@ function buildTodayPlan(remaining) {
 }
 
 function dashPlanHtml(m) {
-  const todayProfit = (m.salesByDate[m.today] || {}).profit || 0;
+  const log = readPlanLog();
+  const sheetProfit = (m.salesByDate[m.today] || {}).profit || 0;
+  // 集計より後にこの端末で仕入確定した分（集計にはまだ入っていない）
+  const lateProfit = log.bought.filter(b => b.at >= (m.d.generatedAt || "")).reduce((s, b) => s + b.profit, 0);
+  const todayProfit = sheetProfit + lateProfit;
   const remaining = Math.max(0, DAILY_PROFIT_GOAL - todayProfit);
-  const head = `今日の仕入れ ${dashYen(todayProfit)}（売上管理シートに記録済みの想定利益）`;
+  const head = `今日の仕入れ ${dashYen(todayProfit)}（売上管理シートの想定利益${lateProfit ? `・うち直近の仕入確定 ${dashYen(lateProfit)}` : ""}）`;
   if (remaining <= 0) {
     return `<section class="dash-card">      <p class="dash-plan-done">✓ 今日の目標 ${dashYen(DAILY_PROFIT_GOAL)} に届きました</p><p class="dash-sub">${head}</p></section>`;
   }
@@ -2433,6 +2471,34 @@ function dashPlanHtml(m) {
     return `<section class="dash-card">      <p class="dash-sub">精査待ちのカードを読み込み中です。少し待って「↻ 組み直す」を押してください。</p></section>`;
   }
   const plan = buildTodayPlan(remaining);
+  lastPlan = plan;
+  // 今日プランに出したカードを記録し、進み具合を数える（山に残っている＝未精査。取り消しで戻した分も未精査に戻る）
+  const inPool = new Set(state.cards.concat(state.rtCards || []).map(cardKey));
+  [...plan.picks, ...plan.spare].forEach(c => {
+    const k = cardKey(c.card);
+    if (!log.shown[k]) log.shown[k] = { name: c.card.name, profit: c.profit };
+  });
+  writePlanLog(log);
+  const prog = { buy: 0, cand: 0, rej: 0, other: 0, left: 0 };
+  Object.keys(log.shown).forEach(k => {
+    if (inPool.has(k)) { prog.left++; return; }
+    const j = log.judged[k];
+    if (j === "購入済み") prog.buy++;
+    else if (j === "仕入れ対象") prog.cand++;
+    else if (j === "却下") prog.rej++;
+    else prog.other++;
+  });
+  const shownCount = Object.keys(log.shown).length;
+  const progHtml = shownCount ? `
+    <div class="dash-plan-prog">
+      今日プランに出した <b>${shownCount}</b>枚：
+      <span class="is-buy">仕入 ${prog.buy}</span>
+      ${prog.cand ? `<span>仕入候補 ${prog.cand}</span>` : ""}
+      <span>却下 ${prog.rej}</span>
+      ${prog.other ? `<span>ほかで精査済み ${prog.other}</span>` : ""}
+      <span>未精査 ${prog.left}</span>
+    </div>
+    ${prog.rej + prog.other ? `<p class="dash-sub">却下した分は次の候補に差し替えています。</p>` : ""}` : "";
   const capital = plan.picks.reduce((s, c) => s + c.price, 0);
   const known = plan.picks.filter(c => c.days != null);
   const avgDays = known.length ? Math.round(known.reduce((s, c) => s + c.days * c.price, 0) / known.reduce((s, c) => s + c.price, 0)) : null;
@@ -2457,7 +2523,9 @@ function dashPlanHtml(m) {
     <section class="dash-card">
             <div class="dash-plan-goal">今日あと <strong>${dashYen(remaining)}</strong></div>
       <p class="dash-sub">${head}</p>
+      ${progHtml}
       ${plan.picks.length ? `
+        <button id="plan-start-btn" class="dash-plan-start">▶ プランの順に精査する（${plan.picks.length + plan.spare.length}枚を山の先頭へ）</button>
         <p class="dash-plan-sum">この${plan.picks.length}枚を全部買えたら <b>+${dashYen(plan.sum)}</b>${reach ? "（目標に届く）" : `（あと${dashYen(remaining - plan.sum)}足りない）`}<br>
           仕入れ資金 ${dashYen(capital)}${avgDays != null ? `・平均 約${avgDays}日で回収` : ""}</p>
         <ol class="dash-plan">${plan.picks.map(row).join("")}</ol>
@@ -2502,8 +2570,37 @@ function renderPlan() {
 
 document.getElementById("plan-refresh").addEventListener("click", () => loadPlan(true));
 
+// 画面を切り替える（タブのload＝再読み込みはしない。並べ替えた山を崩さないため）
+function showViewNoLoad(view) {
+  els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
+  Object.entries(VIEWS).forEach(([key, v]) => v.el.classList.toggle("hidden", key !== view));
+  window.scrollTo(0, 0);
+}
+
+// 「プランの順に精査する」：プランのカード（本命→予備の順）を各山の先頭へ並べ、ARから始める。
+// 判定して戻ってくると、却下した分が差し替わったプランが出る。
+let lastPlan = null;
+function startPlanReview() {
+  if (!lastPlan) return;
+  const order = [...lastPlan.picks, ...lastPlan.spare];
+  [["amacari", "cards", "skipStack"], ["rt", "rtCards", "rtSkipStack"]].forEach(([src, cardsKey, skipKey]) => {
+    const keys = order.filter(c => c.src === src).map(c => cardKey(c.card));
+    if (!keys.length) return;
+    const set = new Set(keys);
+    const front = keys.map(k => state[cardsKey].find(c => cardKey(c) === k)).filter(Boolean);
+    state[cardsKey] = front.concat(state[cardsKey].filter(c => !set.has(cardKey(c))));
+    state[skipKey] = (state[skipKey] || []).filter(c => !set.has(cardKey(c)));
+  });
+  const arFirst = order.some(c => c.src === "amacari");
+  renderStack();
+  if (state.rtCards.length) renderRtStack();
+  showViewNoLoad(arFirst ? "review" : "rt");
+  if (arFirst && order.some(c => c.src === "rt")) showToast("ARのプランが終わったらRTタブにも続きがあります");
+}
+
 // プランの行をタップ → そのカードを山の先頭に出して、そのタブへ（再読み込みはしない）
 document.getElementById("plan-body").addEventListener("click", e => {
+  if (e.target.closest("#plan-start-btn")) { startPlanReview(); return; }
   const btn = e.target.closest(".dash-plan-open");
   if (!btn) return;
   const isRt = btn.dataset.src === "rt";
@@ -2514,11 +2611,8 @@ document.getElementById("plan-body").addEventListener("click", e => {
   const [card] = state[cardsKey].splice(idx, 1);
   state[cardsKey].unshift(card);
   state[skipKey] = (state[skipKey] || []).filter(c => cardKey(c) !== btn.dataset.key);
-  const view = isRt ? "rt" : "review";
-  els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
-  Object.entries(VIEWS).forEach(([key, v]) => v.el.classList.toggle("hidden", key !== view));
   if (isRt) renderRtStack(); else renderStack();
-  window.scrollTo(0, 0);
+  showViewNoLoad(isRt ? "rt" : "review");
 });
 
 // --- ② 今日やること ---
