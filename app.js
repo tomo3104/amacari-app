@@ -1689,6 +1689,7 @@ function openPurchaseModal(card, source, mode) {
   dateEl.max = todayYmd();
   document.getElementById("purchase-seller").value = "";
   document.getElementById("purchase-seller-wrap").classList.toggle("hidden", !isMercari);
+  fillSellerSuggestions();
   const archive = state.pendingPurchaseMode === "archive";
   document.getElementById("purchase-title").textContent = archive ? "購入済みにして記録" : "仕入れの状況は？";
   document.getElementById("purchase-candidate-btn").classList.toggle("hidden", archive);
@@ -1734,11 +1735,49 @@ async function recordPurchase(card, source, input) {
   }
 }
 
+// 2026-11-24追加：メルカリの出品者名はサーバー側で取れないので、入力を楽にする。
+// ①「貼り付け」ボタン（メルカリでコピーした名前をそのまま入れる。iOSは「ペースト」の確認が出る）
+// ②この端末で過去に入れた名前を候補に出す（同じ出品者からのリピート用・新しい順に最大50件）
+const SELLER_HISTORY_KEY = "amacari_seller_history";
+function loadSellerHistory() {
+  try { return JSON.parse(localStorage.getItem(SELLER_HISTORY_KEY) || "[]"); } catch (e) { return []; }
+}
+function rememberSeller(name) {
+  if (!name) return;
+  try {
+    const list = [name].concat(loadSellerHistory().filter(n => n !== name)).slice(0, 50);
+    localStorage.setItem(SELLER_HISTORY_KEY, JSON.stringify(list));
+  } catch (e) { /* 保存できなくても記録には影響しない */ }
+}
+function fillSellerSuggestions() {
+  const dl = document.getElementById("purchase-seller-list");
+  dl.innerHTML = "";
+  loadSellerHistory().forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = n;
+    dl.appendChild(opt);
+  });
+}
+document.getElementById("purchase-seller-paste").addEventListener("click", async () => {
+  const input = document.getElementById("purchase-seller");
+  try {
+    const text = await navigator.clipboard.readText();
+    // コピーした範囲に改行や余計な空白が混ざっても、1行目だけを名前として使う
+    const name = String(text || "").split(/\r?\n/).map(s => s.trim()).find(s => s) || "";
+    if (name) input.value = name.slice(0, 60);
+    else showToast("クリップボードが空です", true);
+  } catch (e) {
+    input.focus();
+    showToast("貼り付けできませんでした。欄を長押しして「ペースト」を選んでください", true);
+  }
+});
+
 function readPurchaseInputs(card) {
   const price = Number(document.getElementById("purchase-price").value) || cardPaidPrice(card);
   const qty = Math.max(1, Number(document.getElementById("purchase-qty").value) || 1);
   const seller = document.getElementById("purchase-seller").value.trim();
   const date = document.getElementById("purchase-date").value || todayYmd();
+  rememberSeller(seller);
   return { price, qty, seller, date };
 }
 

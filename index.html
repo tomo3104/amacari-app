@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=34">
+<link rel="stylesheet" href="style.css?v=35">
 </head>
 <body>
 <header class="topbar">
@@ -197,7 +197,15 @@
       <label>支払額（円）<input type="number" id="purchase-price" inputmode="numeric" min="0"></label>
       <label>数量<input type="number" id="purchase-qty" inputmode="numeric" min="1" value="1"></label>
       <label class="purchase-date">仕入れ日（後から記録するときは買った日に変える）<input type="date" id="purchase-date"></label>
-      <label id="purchase-seller-wrap" class="purchase-seller">出品者名（任意・メルカリは自動で取れません）<input type="text" id="purchase-seller" autocomplete="off"></label>
+      <!-- 2026-11-24：メルカリは出品者名を自動で取れないため、貼り付けボタンと過去の名前の候補で入力を楽にする -->
+      <div id="purchase-seller-wrap" class="purchase-seller">
+        <label for="purchase-seller">出品者名（任意・メルカリは自動で取れません）</label>
+        <div class="purchase-seller-row">
+          <input type="text" id="purchase-seller" autocomplete="off" list="purchase-seller-list">
+          <button type="button" id="purchase-seller-paste">貼り付け</button>
+        </div>
+        <datalist id="purchase-seller-list"></datalist>
+      </div>
     </div>
     <p class="purchase-note">仕入確定にすると売上管理シートに1行記録します</p>
     <div class="purchase-grid">
@@ -362,6 +370,6 @@
 
 </style>
 
-<script src="app.js?v=68"></script>
+<script src="app.js?v=69"></script>
 </body>
 </html>
