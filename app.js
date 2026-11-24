@@ -2108,6 +2108,7 @@ const VIEWS = {
   desc:    { el: els.descView,    load: loadDescCards },
   furima:  { el: els.furimaView,  load: loadFurimaCards },
   log:     { el: document.getElementById("log-view"), load: loadLog },
+  plan:    { el: document.getElementById("plan-view"), load: loadPlan },
 };
 
 els.tabs.forEach(tab => {
@@ -2334,7 +2335,6 @@ function renderDashboard(d) {
     `集計 ${d.generatedAt}（10分ごとに更新・↻で今すぐ）` + ((d.errors || []).length ? ` ／ 一部読めませんでした：${d.errors.join("、")}` : "");
   document.getElementById("dash-body").innerHTML = [
     dashHeroHtml(m),
-    dashPlanHtml(m),
     dashTodoHtml(m),
     dashLeverHtml(m),
     dashDailyHtml(m),
@@ -2427,12 +2427,10 @@ function dashPlanHtml(m) {
   const remaining = Math.max(0, DAILY_PROFIT_GOAL - todayProfit);
   const head = `今日の仕入れ ${dashYen(todayProfit)}（売上管理シートに記録済みの想定利益）`;
   if (remaining <= 0) {
-    return `<section class="dash-card"><h3 class="dash-title">今日の仕入れプラン</h3>
-      <p class="dash-plan-done">✓ 今日の目標 ${dashYen(DAILY_PROFIT_GOAL)} に届きました</p><p class="dash-sub">${head}</p></section>`;
+    return `<section class="dash-card">      <p class="dash-plan-done">✓ 今日の目標 ${dashYen(DAILY_PROFIT_GOAL)} に届きました</p><p class="dash-sub">${head}</p></section>`;
   }
   if (!state.cards.length && !(state.rtCards || []).length) {
-    return `<section class="dash-card"><h3 class="dash-title">今日の仕入れプラン</h3>
-      <p class="dash-sub">精査待ちのカードがまだ読み込まれていません（ARタブを開くと読み込みます）。</p></section>`;
+    return `<section class="dash-card">      <p class="dash-sub">精査待ちのカードを読み込み中です。少し待って「↻ 組み直す」を押してください。</p></section>`;
   }
   const plan = buildTodayPlan(remaining);
   const capital = plan.picks.reduce((s, c) => s + c.price, 0);
@@ -2457,8 +2455,7 @@ function dashPlanHtml(m) {
   const reach = plan.sum >= remaining;
   return `
     <section class="dash-card">
-      <h3 class="dash-title">今日の仕入れプラン</h3>
-      <div class="dash-plan-goal">今日あと <strong>${dashYen(remaining)}</strong></div>
+            <div class="dash-plan-goal">今日あと <strong>${dashYen(remaining)}</strong></div>
       <p class="dash-sub">${head}</p>
       ${plan.picks.length ? `
         <p class="dash-plan-sum">この${plan.picks.length}枚を全部買えたら <b>+${dashYen(plan.sum)}</b>${reach ? "（目標に届く）" : `（あと${dashYen(remaining - plan.sum)}足りない）`}<br>
@@ -2466,12 +2463,47 @@ function dashPlanHtml(m) {
         <ol class="dash-plan">${plan.picks.map(row).join("")}</ol>
         ${plan.spare.length ? `<div class="dash-plan-spare-head">精査で落ちたときの予備</div><ol class="dash-plan is-spare">${plan.spare.map(row).join("")}</ol>` : ""}`
       : `<p class="dash-callout">条件に合うカードがいまはありません（売れる目安${PLAN_MAX_DAYS}日以内・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%以上・差益${PLAN_MIN_PROFIT}円以上）。</p>`}
-      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順に、同じ枠では月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードはRTタブを開くと加わります。"}</p>
+      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順に、同じ枠では月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
     </section>`;
 }
 
+// 2026-11-24：ユーザー希望でログタブから独立した「プラン」タブにした。
+// 今日の仕入れ額（想定利益）はダッシュボードの集計を使う（10分キャッシュ）。
+// RTのカードは未読み込みなら裏で読み込み、届いたら組み直す。
+let planRtRequested = false;
+async function loadPlan(fresh) {
+  const body = document.getElementById("plan-body");
+  const updated = document.getElementById("plan-updated");
+  if (!state.rtCards.length && !planRtRequested) {
+    planRtRequested = true;
+    loadRtCards().then(renderPlan);
+  }
+  if (dashData && fresh !== true) renderPlan();
+  else body.innerHTML = '<p class="log-loading">読み込み中…</p>';
+  updated.textContent = "読み込み中…";
+  try {
+    const data = await gasFetch("dashboard", fresh === true ? { fresh: "1" } : undefined);
+    if (data.error) throw new Error(data.error);
+    dashData = data;
+    renderPlan();
+  } catch (e) {
+    updated.textContent = "";
+    if (!dashData) body.innerHTML = '<p class="log-loading">読み込みに失敗しました。</p>';
+  }
+}
+
+function renderPlan() {
+  if (!dashData) return;
+  const m = dashModel(dashData);
+  document.getElementById("plan-updated").textContent =
+    `精査待ち AR ${state.cards.length}枚${state.rtCards.length ? `・RT ${state.rtCards.length}枚` : ""}から組み立て／今日の仕入れは ${dashData.generatedAt} 時点`;
+  document.getElementById("plan-body").innerHTML = dashPlanHtml(m);
+}
+
+document.getElementById("plan-refresh").addEventListener("click", () => loadPlan(true));
+
 // プランの行をタップ → そのカードを山の先頭に出して、そのタブへ（再読み込みはしない）
-document.getElementById("dash-body").addEventListener("click", e => {
+document.getElementById("plan-body").addEventListener("click", e => {
   const btn = e.target.closest(".dash-plan-open");
   if (!btn) return;
   const isRt = btn.dataset.src === "rt";

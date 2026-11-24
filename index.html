@@ -21,6 +21,7 @@
     <button class="tab active" data-view="review">AR<span id="ar-priority-badge" class="badge hidden"></span></button>
     <button class="tab" data-view="rt">RT<span id="rt-priority-badge" class="badge hidden"></span></button>
     <button class="tab" data-view="furima">FR</button>
+    <button class="tab" data-view="plan">プラン</button>
     <button class="tab" data-view="archive">仕入候補<span id="pending-purchase-badge" class="badge hidden"></span></button>
     <button class="tab" data-view="log">ログ</button>
   </nav>
@@ -124,6 +125,18 @@
     <p class="empty-message" id="rt-empty-message">読み込み中…</p>
   </div>
   <p class="hint">右＝仕入れ対象 ／ 左＝却下 ／ 上＝あとで（後回し） ／ 下＝後回しを呼び戻す</p>
+</main>
+
+<main id="plan-view" class="view hidden">
+  <!-- 2026-11-24：今日の仕入れプラン（ログタブから独立。中身はapp.jsのrenderPlanが描く） -->
+  <div class="dash-head">
+    <h2 class="dash-page-title">今日の仕入れプラン</h2>
+    <button id="plan-refresh" class="ghost-btn" aria-label="組み直す">↻ 組み直す</button>
+  </div>
+  <p id="plan-updated" class="dash-sub dash-updated"></p>
+  <div id="plan-body" class="dash-body">
+    <p class="log-loading">読み込み中…</p>
+  </div>
 </main>
 
 <main id="log-view" class="view hidden">
@@ -370,6 +383,6 @@
 
 </style>
 
-<script src="app.js?v=70"></script>
+<script src="app.js?v=71"></script>
 </body>
 </html>
