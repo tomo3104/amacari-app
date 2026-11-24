@@ -45,10 +45,13 @@ body {
   letter-spacing: 0.5px;
 }
 
+/* 2026-11-24：プランタブ追加で幅が足りず、justify-content:center だと左右が切れて
+   スクロールでも戻せなかった。左寄せ＋両端の margin:auto で「収まるときは中央・
+   はみ出すときは左からスクロール」にし、余白も少し詰めた */
 .tabs {
   display: flex;
-  gap: 6px;
-  justify-content: center;
+  gap: 4px;
+  justify-content: flex-start;
   flex-wrap: nowrap;
   overflow-x: auto;
   width: 100%;
@@ -56,12 +59,14 @@ body {
   scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
+.tabs > .tab:first-child { margin-left: auto; }
+.tabs > .tab:last-child { margin-right: auto; }
 
 .tab {
   background: transparent;
   border: 1px solid rgba(255,255,255,0.4);
   color: white;
-  padding: 5px 11px;
+  padding: 5px 9px;
   border-radius: 999px;
   font-size: 13px;
   white-space: nowrap;
