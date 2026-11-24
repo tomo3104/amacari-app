@@ -2334,6 +2334,7 @@ function renderDashboard(d) {
     `集計 ${d.generatedAt}（10分ごとに更新・↻で今すぐ）` + ((d.errors || []).length ? ` ／ 一部読めませんでした：${d.errors.join("、")}` : "");
   document.getElementById("dash-body").innerHTML = [
     dashHeroHtml(m),
+    dashPlanHtml(m),
     dashTodoHtml(m),
     dashLeverHtml(m),
     dashDailyHtml(m),
@@ -2369,6 +2370,124 @@ function dashHeroHtml(m) {
       <p class="dash-sub">${range}</p>
     </section>`;
 }
+
+// --- 今日の仕入れプラン（2026-11-24） ---
+// 「今日あと何円」を、いま精査待ちのカード（AR＋読み込み済みならRT）から組み立てる。
+// 資金の上限は決めず、お金を寝かせない基準で選ぶ（ユーザー方針：効率の悪い資金運用はいや）。
+//   月利回り ＝ 差益 ÷ 仕入れ値 × 30 ÷ 売れる目安日数（1万円を1か月置いて何円増えるか）
+//   ・売れる目安が PLAN_MAX_DAYS 日を超えるものと、月利回りが PLAN_MIN_MONTHLY 未満のものは入れない
+//   ・売れる目安が分からない（QS表示なし・取得中）ものは優先カードだけ入れ、同じ枠の最後に回す
+//   ・選ぶ順：⭐優先（仕入れ率7.7%）→ 🔄高回転・薄利 → 通常。同じ枠の中は月利回りの高い順
+//   ・同じASINは1枚だけ（重ねて買うと自分同士でカートを取り合い、回転が落ちるため）
+// 精査で落ちるカードも多いので、目標に届いた後の数枚を「予備」として出す。
+const PLAN_MAX_DAYS = 60;
+const PLAN_MIN_MONTHLY = 0.10;
+const PLAN_MIN_PROFIT = 500;
+const PLAN_MAX_PICKS = 12;
+const PLAN_SPARE = 5;
+
+function planCardFigures(card) {
+  const price = Number(card.mercari_price);
+  const profit = Number(card.pmax) - price; // カードの「利益額」と同じ（損益分岐点−価格）
+  const days = card.qs && card.qs.status === "ok" && card.qs.days != null ? Number(card.qs.days) : null;
+  const monthly = days && price > 0 ? (profit / price) * (30 / Math.max(days, 1)) : null;
+  return { price, profit, days, monthly };
+}
+
+function buildTodayPlan(remaining) {
+  const pools = [{ src: "amacari", cards: state.cards }, { src: "rt", cards: state.rtCards || [] }];
+  const seen = new Set();
+  const cands = [];
+  pools.forEach(({ src, cards }) => cards.forEach(card => {
+    const f = planCardFigures(card);
+    if (!Number.isFinite(f.price) || !Number.isFinite(f.profit) || f.price <= 0 || f.profit < PLAN_MIN_PROFIT) return;
+    if (f.days == null) { if (!card.priority) return; }
+    else if (f.days > PLAN_MAX_DAYS || f.monthly < PLAN_MIN_MONTHLY) return;
+    const tier = card.priority ? 0 : card.thin_fast ? 1 : 2;
+    cands.push({ card, src, tier, ...f });
+  }));
+  cands.sort((a, b) => a.tier - b.tier
+    || (a.monthly == null) - (b.monthly == null)
+    || (b.monthly || 0) - (a.monthly || 0)
+    || b.profit - a.profit);
+  const picks = [], spare = [];
+  let sum = 0;
+  for (const c of cands) {
+    if (seen.has(c.card.asin)) continue;
+    seen.add(c.card.asin);
+    if (sum < remaining && picks.length < PLAN_MAX_PICKS) { picks.push(c); sum += c.profit; }
+    else if (spare.length < PLAN_SPARE) spare.push(c);
+    else break;
+  }
+  return { picks, spare, sum, poolSize: cands.length };
+}
+
+function dashPlanHtml(m) {
+  const todayProfit = (m.salesByDate[m.today] || {}).profit || 0;
+  const remaining = Math.max(0, DAILY_PROFIT_GOAL - todayProfit);
+  const head = `今日の仕入れ ${dashYen(todayProfit)}（売上管理シートに記録済みの想定利益）`;
+  if (remaining <= 0) {
+    return `<section class="dash-card"><h3 class="dash-title">今日の仕入れプラン</h3>
+      <p class="dash-plan-done">✓ 今日の目標 ${dashYen(DAILY_PROFIT_GOAL)} に届きました</p><p class="dash-sub">${head}</p></section>`;
+  }
+  if (!state.cards.length && !(state.rtCards || []).length) {
+    return `<section class="dash-card"><h3 class="dash-title">今日の仕入れプラン</h3>
+      <p class="dash-sub">精査待ちのカードがまだ読み込まれていません（ARタブを開くと読み込みます）。</p></section>`;
+  }
+  const plan = buildTodayPlan(remaining);
+  const capital = plan.picks.reduce((s, c) => s + c.price, 0);
+  const known = plan.picks.filter(c => c.days != null);
+  const avgDays = known.length ? Math.round(known.reduce((s, c) => s + c.days * c.price, 0) / known.reduce((s, c) => s + c.price, 0)) : null;
+  const tierIcon = ["⭐", "🔄", "・"];
+  const row = c => {
+    const name = String(c.card.name || "").replace(/\[[^\]]*\]/g, "").trim();
+    return `
+      <li class="dash-plan-item tier-${c.tier}">
+        <button class="dash-plan-open" data-src="${c.src}" data-key="${escapeAttr(cardKey(c.card))}">
+          <span class="dash-plan-name">${tierIcon[c.tier]} ${escapeHtml(name.length > 34 ? name.slice(0, 34) + "…" : name)}${c.src === "rt" ? '<span class="dash-plan-src">RT</span>' : ""}</span>
+          <span class="dash-plan-figs">
+            <span>差益 <b>${dashYen(c.profit)}</b></span>
+            <span>仕入 ${dashYen(c.price)}</span>
+            <span>${c.days != null ? `約${c.days}日` : "目安不明"}</span>
+            <span>${c.monthly != null ? `月利回り <b>${Math.round(c.monthly * 100)}%</b>` : ""}</span>
+          </span>
+        </button>
+      </li>`;
+  };
+  const reach = plan.sum >= remaining;
+  return `
+    <section class="dash-card">
+      <h3 class="dash-title">今日の仕入れプラン</h3>
+      <div class="dash-plan-goal">今日あと <strong>${dashYen(remaining)}</strong></div>
+      <p class="dash-sub">${head}</p>
+      ${plan.picks.length ? `
+        <p class="dash-plan-sum">この${plan.picks.length}枚を全部買えたら <b>+${dashYen(plan.sum)}</b>${reach ? "（目標に届く）" : `（あと${dashYen(remaining - plan.sum)}足りない）`}<br>
+          仕入れ資金 ${dashYen(capital)}${avgDays != null ? `・平均 約${avgDays}日で回収` : ""}</p>
+        <ol class="dash-plan">${plan.picks.map(row).join("")}</ol>
+        ${plan.spare.length ? `<div class="dash-plan-spare-head">精査で落ちたときの予備</div><ol class="dash-plan is-spare">${plan.spare.map(row).join("")}</ol>` : ""}`
+      : `<p class="dash-callout">条件に合うカードがいまはありません（売れる目安${PLAN_MAX_DAYS}日以内・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%以上・差益${PLAN_MIN_PROFIT}円以上）。</p>`}
+      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順に、同じ枠では月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードはRTタブを開くと加わります。"}</p>
+    </section>`;
+}
+
+// プランの行をタップ → そのカードを山の先頭に出して、そのタブへ（再読み込みはしない）
+document.getElementById("dash-body").addEventListener("click", e => {
+  const btn = e.target.closest(".dash-plan-open");
+  if (!btn) return;
+  const isRt = btn.dataset.src === "rt";
+  const cardsKey = isRt ? "rtCards" : "cards";
+  const skipKey = isRt ? "rtSkipStack" : "skipStack";
+  const idx = state[cardsKey].findIndex(c => cardKey(c) === btn.dataset.key);
+  if (idx < 0) { showToast("そのカードはもう判定済みです"); return; }
+  const [card] = state[cardsKey].splice(idx, 1);
+  state[cardsKey].unshift(card);
+  state[skipKey] = (state[skipKey] || []).filter(c => cardKey(c) !== btn.dataset.key);
+  const view = isRt ? "rt" : "review";
+  els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
+  Object.entries(VIEWS).forEach(([key, v]) => v.el.classList.toggle("hidden", key !== view));
+  if (isRt) renderRtStack(); else renderStack();
+  window.scrollTo(0, 0);
+});
 
 // --- ② 今日やること ---
 function dashTodoHtml(m) {
