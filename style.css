@@ -870,7 +870,7 @@ body {
 #asin-fix-submit { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #3949ab; color: white; font-size: 15px; font-weight: 700; cursor: pointer; }
 
 /* ログタブ */
-#log-view { overflow-y: auto; }
+#log-view, #plan-view { overflow-y: auto; }
 .log-section { margin-bottom: 18px; }
 .log-heading { font-size: 12px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px; }
 
