@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=40">
+<link rel="stylesheet" href="style.css?v=41">
 </head>
 <body>
 <header class="topbar">
@@ -178,23 +178,42 @@
       <input type="text" id="reason-other-text" placeholder="理由を入力" enterkeyhint="done">
       <button id="reason-other-submit">記録する</button>
     </div>
+    <!-- 2026-11-26作り直し：分析に使えるよう多い理由を分けて、見出しごとに並べた。
+         旧「開封・状態不良」→開封済み／傷・使用感／箱つぶれ・外装難、旧「不一致」→型番違い／部品・付属品だけ／互換品・他社品、
+         旧「リスク要因」→危険物／知財・出品不可メーカー／医療機器／真贋リスク。
+         理由の名前を変えたら Code.gs（PRICE_SENSITIVE_REASONS_ 等）・furima-tools/server.py（NO_RENOTIFY_REASONS）・
+         asin-tools/server.py（_JUDGED_PRICE_SENSITIVE）・app.js（MISMATCH_REASONS 等）も合わせること -->
     <div class="reason-grid">
-      <button class="reason-btn" data-reason="開封・状態不良">開封・状態不良</button>
-      <button class="reason-btn" data-reason="高値仕入">高値仕入</button>
-      <button class="reason-btn" data-reason="売れ筋不明（VR）">売れ筋不明（VR）</button>
-      <button class="reason-btn" data-reason="不一致">不一致</button>
+      <div class="reason-head">状態</div>
+      <button class="reason-btn" data-reason="開封済み">開封済み</button>
+      <button class="reason-btn" data-reason="傷・使用感">傷・使用感</button>
+      <button class="reason-btn" data-reason="箱つぶれ・外装難">箱つぶれ・外装難</button>
       <button class="reason-btn" data-reason="状態不明">状態不明</button>
-      <button class="reason-btn" data-reason="セット数違い">セット数違い</button>
-      <button class="reason-btn" data-reason="回転不良">回転不良</button>
-      <button class="reason-btn" data-reason="売切れ">売切れ</button>
-      <button class="reason-btn" data-reason="大型商品">大型商品</button>
-      <button class="reason-btn" data-reason="利益不足">利益不足</button>
       <button class="reason-btn" data-reason="付属品不足">付属品不足</button>
-      <button class="reason-btn" data-reason="オークション">オークション</button>
+      <button class="reason-btn" data-reason="売切れ">売切れ</button>
+      <div class="reason-head">商品違い</div>
+      <button class="reason-btn" data-reason="型番違い">型番違い</button>
+      <button class="reason-btn" data-reason="部品・付属品だけ">部品・付属品だけ</button>
+      <button class="reason-btn" data-reason="互換品・他社品">互換品・他社品</button>
+      <button class="reason-btn" data-reason="セット数違い">セット数違い</button>
+      <div class="reason-head">採算</div>
+      <button class="reason-btn" data-reason="利益不足">利益不足</button>
+      <button class="reason-btn" data-reason="高値仕入">高値仕入</button>
       <button class="reason-btn" data-reason="価格変動">価格変動</button>
-      <button class="reason-btn" data-reason="リスク要因">リスク要因</button>
+      <div class="reason-head">回転・競合</div>
+      <button class="reason-btn" data-reason="回転不良">回転不良</button>
       <button class="reason-btn" data-reason="Amazon本体あり">Amazon本体あり</button>
-      <button class="reason-btn" data-reason="その他" id="reason-other-btn">その他</button>
+      <button class="reason-btn" data-reason="ライバル多い">ライバル多い</button>
+      <button class="reason-btn" data-reason="売れ筋不明（VR）">売れ筋不明（VR）</button>
+      <div class="reason-head">リスク（商品そのもの）</div>
+      <button class="reason-btn" data-reason="危険物">危険物</button>
+      <button class="reason-btn" data-reason="知財・出品不可メーカー">知財・出品不可メーカー</button>
+      <button class="reason-btn" data-reason="医療機器">医療機器</button>
+      <button class="reason-btn" data-reason="真贋リスク">真贋リスク</button>
+      <div class="reason-head">その他</div>
+      <button class="reason-btn" data-reason="大型商品">大型商品</button>
+      <button class="reason-btn" data-reason="オークション">オークション</button>
+      <button class="reason-btn" data-reason="その他" id="reason-other-btn">その他（入力）</button>
       <button class="reason-btn reason-btn--blacklist" data-reason="ブラックリスト" id="reason-blacklist-btn">🚫 ブラックリスト（永久除外）</button>
     </div>
     <button id="reason-cancel-btn" class="reason-cancel-btn">← 戻る（却下しない）</button>
@@ -385,6 +404,6 @@
 
 </style>
 
-<script src="app.js?v=78"></script>
+<script src="app.js?v=79"></script>
 </body>
 </html>

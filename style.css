@@ -760,6 +760,9 @@ body {
   max-width: 480px;
   border-radius: 18px 18px 0 0;
   padding: 18px 16px calc(env(safe-area-inset-bottom, 16px) + 16px);
+  /* 2026-11-26：理由ボタンが増えたので、画面より高くなったら中でスクロール */
+  max-height: 92dvh;
+  overflow-y: auto;
 }
 
 .modal-card h2 {
@@ -773,6 +776,16 @@ body {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 6px;
 }
+
+/* 2026-11-26：理由ボタンの見出し（状態・商品違い・採算…） */
+.reason-head {
+  grid-column: 1 / -1;
+  margin: 6px 0 -2px;
+  font-size: 11px;
+  font-weight: bold;
+  color: #888;
+}
+.reason-head:first-child { margin-top: 0; }
 
 .reason-btn {
   padding: 8px 4px;

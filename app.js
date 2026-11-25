@@ -1637,6 +1637,8 @@ async function undoLastReject(source) {
 }
 
 // ---------- 却下理由モーダル ----------
+// 2026-11-26：旧「不一致」を分けたもの（旧名も含める）
+const MISMATCH_REASONS = ["不一致", "型番違い", "部品・付属品だけ", "互換品・他社品"];
 
 function openReasonModal(card, source) {
   state.pendingReject = card;
@@ -1676,9 +1678,10 @@ els.reasonGrid.addEventListener("click", e => {
     gasPost("recheckPrice", { asin: card.asin, model: card.model }).catch(err => {
       console.error("価格再調査キューの登録に失敗:", err);
     });
-  } else if (reason === "不一致") {
+  } else if (MISMATCH_REASONS.includes(reason)) {
+    // 2026-11-26：旧「不一致」を3つに分けた。どれも今までどおり不一致再検証に回す
     gasPost("flagMismatchReview", {
-      asin: card.asin, model: card.model, name: card.name, mercari_url: card.mercari_url,
+      asin: card.asin, model: card.model, name: card.name, mercari_url: card.mercari_url, reason,
     }).catch(err => {
       console.error("不一致再検証キューの登録に失敗:", err);
     });
@@ -2259,8 +2262,15 @@ const DASH_REASON_HINT = {
   "利益不足": "回転が良ければ薄利でも拾う方針です。利益より「売れる目安日数」で判断できているか確認を",
   "回転不良": "ランク帯ごとの必要利益率（profit_rules.py）を見直す候補です",
   "不一致": "型番の誤マッチが増えています。不一致再検証の結果を確認しましょう",
+  "型番違い": "型番の誤マッチが増えています。不一致再検証の結果を確認しましょう",
+  "部品・付属品だけ": "部品・付属品の出品が多いです。メルカリタイトルの除外語（替刃・ケース等）に足せる言葉がないか",
+  "互換品・他社品": "互換品が多いです。「対応」「互換」「適合」のような除外語に足せる言葉がないか",
   "高値仕入": "pmax近くの出品が多いです。値下げ交渉で拾えるものがないか",
   "開封・状態不良": "収集の除外ワードに足せる言葉がないか確認を",
+  "開封済み": "「開封」系の言葉が除外ワードで防げていないか確認を",
+  "傷・使用感": "中古の混入が多いです。「使用」「傷」「中古」等の除外ワードを確認",
+  "Amazon本体あり": "Amazon本体の有無を照合時に自動で弾けるか検討を",
+  "ライバル多い": "FBA出品者が多い商品が多いです。売れる目安日数の基準を見直す候補",
   "状態不明": "写真が少ない出品が多いです。画像インデックスで判断できるか確認を",
   "売切れ": "精査までの時間が長いと売り切れます。リアルタイム系を先に見ましょう",
 };
