@@ -2473,6 +2473,8 @@ function buildTodayPlan(remaining) {
     if (f.days == null) { if (!card.priority) return; }
     else if (f.days > PLAN_MAX_DAYS || f.monthly < PLAN_MIN_MONTHLY) return;
     if (!card.priority && card.thin_fast && (f.days == null || f.days > PLAN_THIN_MAX_DAYS)) return;
+    // 2026-11-26：Amazon本体がいる商品はユーザーが相乗りを避けているので、プランには入れない（ARには出る）
+    if (card.qs && card.qs.amazon_seller) return;
     const tier = card.priority ? 0 : card.thin_fast ? 1 : 2;
     cands.push({ card, src, tier, ...f });
   }));
@@ -2570,7 +2572,7 @@ function dashPlanHtml(m) {
         <ol class="dash-plan">${plan.picks.map(row).join("")}</ol>
         ${plan.spare.length ? `<div class="dash-plan-spare-head">精査で落ちたときの予備</div><ol class="dash-plan is-spare">${plan.spare.map(row).join("")}</ol>` : ""}`
       : `<p class="dash-callout">条件に合うカードがいまはありません（売れる目安${PLAN_MAX_DAYS}日以内・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%以上・差益${PLAN_MIN_PROFIT}円以上）。</p>`}
-      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順。🔄高回転・薄利は売れる目安${PLAN_THIN_MAX_DAYS}日以内だけを短い順に、ほかの枠は月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
+      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順。🔄高回転・薄利は売れる目安${PLAN_THIN_MAX_DAYS}日以内だけを短い順に、ほかの枠は月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。Amazon本体がいる商品も外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
     </section>`;
 }
 
