@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=39">
+<link rel="stylesheet" href="style.css?v=40">
 </head>
 <body>
 <header class="topbar">
@@ -173,6 +173,11 @@
 <div id="reason-modal" class="modal hidden">
   <div class="modal-card">
     <h2>却下の理由は？</h2>
+    <!-- 2026-11-26：入力欄は見出しのすぐ下（キーボードに隠れないように）。「その他」を押すと理由ボタンは隠れる -->
+    <div id="reason-other-input" class="hidden">
+      <input type="text" id="reason-other-text" placeholder="理由を入力" enterkeyhint="done">
+      <button id="reason-other-submit">記録する</button>
+    </div>
     <div class="reason-grid">
       <button class="reason-btn" data-reason="開封・状態不良">開封・状態不良</button>
       <button class="reason-btn" data-reason="高値仕入">高値仕入</button>
@@ -193,10 +198,6 @@
       <button class="reason-btn reason-btn--blacklist" data-reason="ブラックリスト" id="reason-blacklist-btn">🚫 ブラックリスト（永久除外）</button>
     </div>
     <button id="reason-cancel-btn" class="reason-cancel-btn">← 戻る（却下しない）</button>
-    <div id="reason-other-input" class="hidden">
-      <input type="text" id="reason-other-text" placeholder="理由を入力">
-      <button id="reason-other-submit">記録する</button>
-    </div>
   </div>
 </div>
 
@@ -384,6 +385,6 @@
 
 </style>
 
-<script src="app.js?v=77"></script>
+<script src="app.js?v=78"></script>
 </body>
 </html>

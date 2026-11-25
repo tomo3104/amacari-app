@@ -837,21 +837,27 @@ body {
 }
 
 #reason-other-input {
-  margin-top: 10px;
+  margin: 4px 0 12px;
   display: flex;
   gap: 8px;
 }
 
 #reason-other-input.hidden { display: none; }
+/* 2026-11-26：「その他」入力中は理由ボタンを隠す（キーボードに入力欄が隠れていたため） */
+#reason-modal.is-other .reason-grid { display: none; }
 
 #reason-other-text {
   flex: 1;
+  min-width: 0;
+  font-size: 16px; /* 16px未満だとiPhoneが入力時に画面を拡大する */
   padding: 10px;
   border-radius: 8px;
   border: 1px solid #ccc;
 }
 
 #reason-other-submit {
+  font-size: 16px;
+  white-space: nowrap;
   padding: 10px 16px;
   border-radius: 8px;
   border: none;

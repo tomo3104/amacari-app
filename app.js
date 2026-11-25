@@ -1642,6 +1642,7 @@ function openReasonModal(card, source) {
   state.pendingReject = card;
   state.pendingRejectSource = source || "amacari";
   els.otherInput.classList.add("hidden");
+  els.modal.classList.remove("is-other");
   els.otherText.value = "";
   els.modal.classList.remove("hidden");
 }
@@ -1656,6 +1657,8 @@ els.reasonGrid.addEventListener("click", e => {
   const btn = e.target.closest(".reason-btn");
   if (!btn) return;
   if (btn.id === "reason-other-btn") {
+    // 2026-11-26：理由ボタンを隠して入力欄だけにする（iPhoneでキーボードに隠れてスクロールが必要だったため）
+    els.modal.classList.add("is-other");
     els.otherInput.classList.remove("hidden");
     els.otherText.focus();
     return;
@@ -1688,6 +1691,13 @@ els.otherSubmit.addEventListener("click", () => {
   const text = els.otherText.value.trim() || "その他";
   closeReasonModal();
   if (card) judge(card, "却下", text, source);
+});
+// キーボードの確定（改行）キーでも記録する。日本語の変換確定中（isComposing）は無視
+els.otherText.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+    e.preventDefault();
+    els.otherSubmit.click();
+  }
 });
 
 // ---------- 仕入れ状況モーダル（2026-09-02追加） ----------
