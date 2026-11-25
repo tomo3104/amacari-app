@@ -2472,7 +2472,10 @@ function buildTodayPlan(remaining) {
     const tier = card.priority ? 0 : card.thin_fast ? 1 : 2;
     cands.push({ card, src, tier, ...f });
   }));
+  // 2026-11-26：🔄高回転・薄利の枠は「1か月以内に確実に売れる」ものから並べる（ユーザー希望：薄利は回転が担保されていないと不安）。
+  //   売れる目安の短い順。同じ日数なら月利回りの高い順。
   cands.sort((a, b) => a.tier - b.tier
+    || (a.tier === 1 ? (a.days ?? 999) - (b.days ?? 999) : 0)
     || (a.monthly == null) - (b.monthly == null)
     || (b.monthly || 0) - (a.monthly || 0)
     || b.profit - a.profit);
@@ -2544,7 +2547,7 @@ function dashPlanHtml(m) {
           <span class="dash-plan-figs">
             <span>差益 <b>${dashYen(c.profit)}</b></span>
             <span>仕入 ${dashYen(c.price)}</span>
-            <span>${c.days != null ? `約${c.days}日` : "目安不明"}</span>
+            <span>${c.days != null ? (c.tier === 1 ? `<b>約${c.days}日</b>で売れる見込み` : `約${c.days}日`) : "目安不明"}</span>
             <span>${c.monthly != null ? `月利回り <b>${Math.round(c.monthly * 100)}%</b>` : ""}</span>
           </span>
         </button>
@@ -2563,7 +2566,7 @@ function dashPlanHtml(m) {
         <ol class="dash-plan">${plan.picks.map(row).join("")}</ol>
         ${plan.spare.length ? `<div class="dash-plan-spare-head">精査で落ちたときの予備</div><ol class="dash-plan is-spare">${plan.spare.map(row).join("")}</ol>` : ""}`
       : `<p class="dash-callout">条件に合うカードがいまはありません（売れる目安${PLAN_MAX_DAYS}日以内・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%以上・差益${PLAN_MIN_PROFIT}円以上）。</p>`}
-      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順に、同じ枠では月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
+      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順。🔄高回転・薄利は売れる目安の短い順、ほかの枠は月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
     </section>`;
 }
 
