@@ -2417,6 +2417,9 @@ function dashHeroHtml(m) {
 const PLAN_MAX_DAYS = 60;
 const PLAN_MIN_MONTHLY = 0.10;
 const PLAN_MIN_PROFIT = 500;
+// 2026-11-26：🔄高回転・薄利はプランでは売れる目安15日以内だけ（ユーザーの見立て：仕入れ→Amazon在庫まで約10日＋
+// 入金2週間ごと。15日で売れれば約1か月で資金が戻る）。16〜30日はARに緑で出るが、プランには入れない。
+const PLAN_THIN_MAX_DAYS = 15;
 const PLAN_MAX_PICKS = 12;
 const PLAN_SPARE = 5;
 
@@ -2469,6 +2472,7 @@ function buildTodayPlan(remaining) {
     if (!Number.isFinite(f.price) || !Number.isFinite(f.profit) || f.price <= 0 || f.profit < PLAN_MIN_PROFIT) return;
     if (f.days == null) { if (!card.priority) return; }
     else if (f.days > PLAN_MAX_DAYS || f.monthly < PLAN_MIN_MONTHLY) return;
+    if (!card.priority && card.thin_fast && (f.days == null || f.days > PLAN_THIN_MAX_DAYS)) return;
     const tier = card.priority ? 0 : card.thin_fast ? 1 : 2;
     cands.push({ card, src, tier, ...f });
   }));
@@ -2566,7 +2570,7 @@ function dashPlanHtml(m) {
         <ol class="dash-plan">${plan.picks.map(row).join("")}</ol>
         ${plan.spare.length ? `<div class="dash-plan-spare-head">精査で落ちたときの予備</div><ol class="dash-plan is-spare">${plan.spare.map(row).join("")}</ol>` : ""}`
       : `<p class="dash-callout">条件に合うカードがいまはありません（売れる目安${PLAN_MAX_DAYS}日以内・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%以上・差益${PLAN_MIN_PROFIT}円以上）。</p>`}
-      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順。🔄高回転・薄利は売れる目安の短い順、ほかの枠は月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
+      <p class="dash-sub">タップでそのカードを開きます。⭐優先→🔄高回転・薄利→通常の順。🔄高回転・薄利は売れる目安${PLAN_THIN_MAX_DAYS}日以内だけを短い順に、ほかの枠は月利回り（差益÷仕入れ値×30÷売れる目安日数）の高い順。売れる目安${PLAN_MAX_DAYS}日超・月利回り${Math.round(PLAN_MIN_MONTHLY * 100)}%未満は資金が寝るので外しています。${(state.rtCards || []).length ? "" : "RTのカードは読み込みが終わると加わります。"}</p>
     </section>`;
 }
 
