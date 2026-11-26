@@ -266,6 +266,9 @@ async function loadArchive() {
   if (els.archiveModeSelect.value === "purchased") {
     return loadPurchasedList();
   }
+  if (els.archiveModeSelect.value === "watch") {
+    return loadWatchList();
+  }
   els.autoRejectedList.classList.add("hidden");
   els.archiveList.classList.remove("hidden");
   els.archiveEmpty.textContent = "読み込み中…";
@@ -280,6 +283,78 @@ async function loadArchive() {
     els.archiveEmpty.textContent = "読み込みに失敗しました。";
   }
 }
+
+// 2026-11-26追加：仕入候補タブの「様子見中」面。様子見（売れ行き待ち）の出品の一覧と、期限前の解除
+async function loadWatchList() {
+  els.autoRejectedList.classList.add("hidden");
+  els.archiveList.classList.remove("hidden");
+  els.archiveEmpty.textContent = "読み込み中…";
+  els.archiveEmpty.style.display = "block";
+  els.archiveList.innerHTML = "";
+  try {
+    const data = await gasFetch("watchList");
+    renderWatchList(data.items || []);
+  } catch (e) {
+    els.archiveEmpty.textContent = "読み込みに失敗しました。";
+  }
+}
+
+function renderWatchList(items) {
+  if (!items.length) {
+    els.archiveList.innerHTML = "";
+    els.archiveEmpty.textContent = "様子見中の商品はありません。";
+    els.archiveEmpty.style.display = "block";
+    return;
+  }
+  els.archiveEmpty.style.display = "none";
+  const asins = new Set(items.map(i => i.asin).filter(Boolean));
+  const rows = items.map(item => {
+    const url = item.url || "";
+    return `
+      <li class="archive-item" data-item-id="${escapeAttr(item.item_id || "")}" data-asin="${escapeAttr(item.asin || "")}">
+        ${item.image_url ? `<img class="archive-thumb" src="${escapeAttr(item.image_url)}" alt="">` : `<div class="archive-thumb"></div>`}
+        <div class="archive-info">
+          <p class="name">${escapeHtml(item.name || "（商品名の記録なし）")}</p>
+          <p class="archive-money">
+            ${item.price ? `<span class="archive-price">${formatYen(item.price)}</span>` : ""}
+            ${item.diff ? `<span class="archive-diff">差益 ${formatYen(item.diff)}</span>` : ""}
+            <span class="archive-age">⏸ ${formatWatchUntil(item.until)}まで${item.at ? `（${formatWatchUntil(item.at)}に様子見）` : ""}</span>
+          </p>
+          <p class="meta">${escapeHtml(item.asin || "")}${item.item_id ? "" : " ／ ASINの優先外しだけ"}</p>
+        </div>
+        <div class="archive-actions">
+          ${url ? `<a class="${marketplaceInfo(url).cls}" href="${escapeAttr(url)}">${marketplaceInfo(url).label}で見る</a>` : ""}
+          ${item.asin ? `<a class="link-keepa" href="https://keepa.com/#!product/5-${encodeURIComponent(item.asin)}">Keepa</a>` : ""}
+          <button data-action="unwatch">様子見を解除</button>
+        </div>
+      </li>`;
+  });
+  els.archiveList.innerHTML = `
+    <li class="archive-summary">
+      <div class="archive-summary-main">様子見中 <strong>${items.length}件</strong>（${asins.size}商品）</div>
+      <div class="archive-summary-sub">解除すると、同じ商品の別出品は次の読み込みから⭐優先に戻ります。解除した出品がまだ出品中で検知から72時間以内なら、ARにも戻ります。</div>
+    </li>` + rows.join("");
+}
+
+els.archiveList.addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-action='unwatch']");
+  if (!btn) return;
+  e.stopImmediatePropagation();
+  const li = btn.closest(".archive-item");
+  btn.disabled = true;
+  btn.textContent = "解除中…";
+  try {
+    const res = await gasPost("unwatch", { item_id: li.dataset.itemId, asin: li.dataset.asin });
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || "");
+    li.remove();
+    showToast("様子見を解除しました。次にARを読み込むと反映されます");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "様子見を解除";
+    showToast("解除に失敗しました", true);
+  }
+});
 
 // 2026-11-23追加：仕入候補タブの「購入済み」面（後から売上管理シートと突き合わせて見返す用）
 const PURCHASED_LIST_SINCE = "2026-11-01";
@@ -1601,6 +1676,7 @@ async function undoLastReject(source) {
   const isRs     = source === "rs";
   const card   = isFurima ? state.furimaLastRejected : isDesc ? state.descLastRejected : isRt ? state.rtLastRejected : isRs ? state.rsLastRejected : state.lastRejected;
   if (!card) return;
+  if (card._watched) return undoWatch(card, source); // 2026-11-26：直前が様子見なら様子見を解除
   const btn    = isFurima ? els.furimaUndoBtn : isDesc ? els.descUndoBtn : isRt ? els.rtUndoBtn : isRs ? els.rsUndoBtn : els.undoBtn;
   const action = isFurima ? "furimaUndo" : isDesc ? "descUndo" : "undo";
   btn.disabled = true;
@@ -1655,22 +1731,74 @@ async function watchCard(card, source) {
   planNoteJudgment(card, "様子見");
   const d = new Date(Date.now() + 14 * 864e5);
   const untilLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  // 画面にいる同じASINのカードも、その場で優先から外す（次の読み込みからはGAS側で外れる）
+  // 画面にいる同じASINのカードも、その場で優先から外す（次の読み込みからはGAS側で外れる）。
+  // 巻き戻しで元に戻せるよう、外す前の状態を覚えておく
   [state.cards, state.rtCards || []].forEach(list => list.forEach(c => {
-    if (c.asin !== card.asin) return;
+    if (c.asin !== card.asin || c.watch_until) return;
+    c._preWatch = { priority: c.priority, priority_reason: c.priority_reason };
     c.priority = false;
     c.priority_reason = "";
-    c.watch_until = c.watch_until || untilLocal;
+    c.watch_until = untilLocal;
   }));
-  if (source === "rt") renderRtStack(); else renderStack();
+  // 巻き戻しボタンで取り消せるようにする（undoLastReject が card._watched を見て unwatch を送る）
+  card._watched = true;
+  if (source === "rt") { state.rtLastRejected = card; els.rtUndoBtn.disabled = false; renderRtStack(); }
+  else { state.lastRejected = card; els.undoBtn.disabled = false; renderStack(); }
+  const price = Number(card.mercari_price);
   try {
-    const res = await gasPost("watch", { row: card.row, asin: card.asin, url: card.mercari_url });
+    const res = await gasPost("watch", {
+      row: card.row, asin: card.asin, url: card.mercari_url,
+      name: card.name, price, diff: Number(card.pmax) - price, image_url: card.image_url || "",
+    });
     const r = await res.json();
     if (!r.ok) throw new Error(r.error || "保存に失敗しました");
-    showToast(`⏸ ${formatWatchUntil(r.until)}まで様子見にしました。同じ商品の別出品は優先から外れます`);
+    showToast(`⏸ ${formatWatchUntil(r.until)}まで様子見にしました。同じ商品の別出品は優先から外れます（巻き戻しで取り消せます）`);
   } catch (e) {
     showToast(`様子見の保存に失敗：${e.message}。次に読み込むとこの出品がまた出ます`, true);
   }
+}
+
+// 巻き戻し：様子見を解除して、カードと同じASINの優先を元に戻す
+async function undoWatch(card, source) {
+  const isRt = source === "rt";
+  const btn = isRt ? els.rtUndoBtn : els.undoBtn;
+  btn.disabled = true;
+  try {
+    const res = await gasPost("unwatch", { row: card.row, asin: card.asin, url: card.mercari_url, undo: true });
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || "");
+  } catch (e) {
+    showToast("様子見の取り消しに失敗しました", true);
+    btn.disabled = false;
+    return;
+  }
+  delete card._watched;
+  [state.cards, state.rtCards || []].forEach(list => list.forEach(c => {
+    if (c.asin !== card.asin || !c._preWatch) return;
+    c.priority = c._preWatch.priority;
+    c.priority_reason = c._preWatch.priority_reason;
+    delete c.watch_until;
+    delete c._preWatch;
+  }));
+  try {
+    const log = readPlanLog();
+    if (log.ev) { delete log.ev[cardKey(card)]; writePlanLog(log); }
+  } catch (e) {}
+  if (isRt) {
+    state.rtLastRejected = null;
+    state.rtCards.unshift(card);
+    renderRtStack();
+  } else {
+    state.lastRejected = null;
+    try {
+      const m = readJudgedRecent();
+      delete m[cardKey(card)];
+      localStorage.setItem(JUDGED_KEY, JSON.stringify(m));
+    } catch (e) {}
+    state.cards.unshift(card);
+    renderStack();
+  }
+  showToast("様子見を取り消しました");
 }
 
 function formatWatchUntil(s) {
