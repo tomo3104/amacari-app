@@ -12,7 +12,7 @@
 <title>Amacari</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=42">
+<link rel="stylesheet" href="style.css?v=43">
 </head>
 <body>
 <header class="topbar">
@@ -183,6 +183,8 @@
          旧「リスク要因」→危険物／知財・出品不可メーカー／医療機器／真贋リスク。
          理由の名前を変えたら Code.gs（PRICE_SENSITIVE_REASONS_ 等）・furima-tools/server.py（NO_RENOTIFY_REASONS）・
          asin-tools/server.py（_JUDGED_PRICE_SENSITIVE）・app.js（MISMATCH_REASONS 等）も合わせること -->
+    <!-- 2026-11-26：様子見（売れ行き待ち）。仕入れ実績のあるASINのカードだけに出す（app.js openReasonModal） -->
+    <button id="reason-watch-btn" class="reason-watch-btn hidden">⏸ 様子見（売れ行き待ち・14日）<small>却下に数えません。この出品は14日間出さず、同じ商品の別出品は⭐優先から外します</small></button>
     <div class="reason-grid">
       <div class="reason-head">状態</div>
       <button class="reason-btn" data-reason="開封済み">開封済み</button>
@@ -388,8 +390,22 @@
 .card--priority .treasure-badge,
 .card--priority .hot-badge,
 .card--thinfast .treasure-badge,
-.card--thinfast .hot-badge {
+.card--thinfast .hot-badge,
+.card--watch .treasure-badge,
+.card--watch .hot-badge {
   top: 44px;
+}
+/* 2026-11-26：様子見中（仕入れたばかりで売れ行き待ち）のASIN。優先から外した印なので控えめなグレー */
+.watch-band {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: #5f6b7a;
+  color: #fff;
+  font-size: .95rem;
+  font-weight: 800;
 }
 
 /* 下スワイプ：後回しスタックが空のときのバウンス */
@@ -404,6 +420,6 @@
 
 </style>
 
-<script src="app.js?v=80"></script>
+<script src="app.js?v=81"></script>
 </body>
 </html>

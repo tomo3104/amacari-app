@@ -858,6 +858,10 @@ body {
 #reason-other-input.hidden { display: none; }
 /* 2026-11-26：「その他」入力中は理由ボタンを隠す（キーボードに入力欄が隠れていたため） */
 #reason-modal.is-other .reason-grid { display: none; }
+/* 2026-11-26：様子見（売れ行き待ち）ボタン。却下ではないので理由ボタンと色を分ける */
+.reason-watch-btn { display: block; width: 100%; margin: 0 0 10px; padding: 10px 12px; border: 1px solid #b8c2cf; border-radius: 10px; background: #eef1f5; color: #2f3b4a; font-size: 14px; font-weight: 800; text-align: left; cursor: pointer; }
+.reason-watch-btn small { display: block; margin-top: 3px; font-size: 11px; font-weight: 500; color: #5f6b7a; line-height: 1.45; }
+.reason-watch-btn.hidden, #reason-modal.is-other .reason-watch-btn { display: none; }
 
 #reason-other-text {
   flex: 1;

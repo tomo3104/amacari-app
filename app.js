@@ -799,7 +799,8 @@ function buildCardEl(card) {
     // というユーザー指摘で、カード最上部の帯＋枠色＋背景色で一目で分かるようにした。
     card.priority ? "card--priority" : "",
     // 2026-11-22：高回転・薄利（Code.gs applyTurnoverRules_）は緑で区別（優先カードの次に並ぶ）
-    (!card.priority && card.thin_fast) ? "card--thinfast" : "",
+    (!card.priority && card.thin_fast && !card.watch_until) ? "card--thinfast" : "",
+    (!card.priority && card.watch_until) ? "card--watch" : "",
   ].filter(Boolean).join(" ");
 
   const thumb = buildThumbHtml(card.image_url, card.mercari_url);
@@ -846,6 +847,7 @@ function buildCardEl(card) {
     <div class="swipe-flag flag-skip">あとで</div>
     <div class="swipe-flag flag-back">戻る</div>
     ${card.priority ? `<div class="priority-band">⭐ 優先精査<span class="priority-band-reason">${escapeHtml(card.priority_reason || "")}</span></div>`
+      : card.watch_until ? `<div class="watch-band">⏸ 様子見中<span class="priority-band-reason">仕入れた商品の売れ行き待ち・${escapeHtml(formatWatchUntil(card.watch_until))}まで優先から外しています</span></div>`
       : card.thin_fast ? `<div class="thinfast-band">🔄 高回転・薄利<span class="priority-band-reason">約${escapeHtml(String(card.thin_fast_days))}日で売れる見込み</span></div>` : ""}
     ${thumb}
     <div class="card-body">
@@ -1640,9 +1642,53 @@ async function undoLastReject(source) {
 // 2026-11-26：旧「不一致」を分けたもの（旧名も含める）
 const MISMATCH_REASONS = ["不一致", "型番違い", "部品・付属品だけ", "互換品・他社品"];
 
+// 2026-11-26：様子見（売れ行き待ち）。仕入れたばかりで売れ行きが分からない商品を、却下にも仕入候補にもせず流す。
+//   この出品は14日間出さない／同じASINの別出品は⭐優先から外して「様子見中」の印（Code.gs readWatchList_）。
+//   使いすぎて仕入れ対象が目減りしないよう、ボタンは仕入れ実績のあるASIN（AR・RT）のカードだけに出す。
+function canWatch(card, source) {
+  if (source !== "amacari" && source !== "rt") return false;
+  return card.past_judgment === "仕入れ対象" || card.past_judgment === "購入済み" || !!card.watch_until;
+}
+
+async function watchCard(card, source) {
+  if (source === "amacari") markJudgedRecent(card);
+  planNoteJudgment(card, "様子見");
+  const d = new Date(Date.now() + 14 * 864e5);
+  const untilLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  // 画面にいる同じASINのカードも、その場で優先から外す（次の読み込みからはGAS側で外れる）
+  [state.cards, state.rtCards || []].forEach(list => list.forEach(c => {
+    if (c.asin !== card.asin) return;
+    c.priority = false;
+    c.priority_reason = "";
+    c.watch_until = c.watch_until || untilLocal;
+  }));
+  if (source === "rt") renderRtStack(); else renderStack();
+  try {
+    const res = await gasPost("watch", { row: card.row, asin: card.asin, url: card.mercari_url });
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || "保存に失敗しました");
+    showToast(`⏸ ${formatWatchUntil(r.until)}まで様子見にしました。同じ商品の別出品は優先から外れます`);
+  } catch (e) {
+    showToast(`様子見の保存に失敗：${e.message}。次に読み込むとこの出品がまた出ます`, true);
+  }
+}
+
+function formatWatchUntil(s) {
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(String(s || ""));
+  return m ? `${Number(m[1])}/${Number(m[2])}` : "";
+}
+
+document.getElementById("reason-watch-btn").addEventListener("click", () => {
+  const card = state.pendingReject;
+  const source = state.pendingRejectSource;
+  closeReasonModal();
+  if (card) watchCard(card, source);
+});
+
 function openReasonModal(card, source) {
   state.pendingReject = card;
   state.pendingRejectSource = source || "amacari";
+  document.getElementById("reason-watch-btn").classList.toggle("hidden", !canWatch(card, state.pendingRejectSource));
   els.otherInput.classList.add("hidden");
   els.modal.classList.remove("is-other");
   els.otherText.value = "";
@@ -2606,6 +2652,8 @@ function buildTodayPlan(remaining) {
     if (!card.priority && card.thin_fast && (f.days == null || f.days > PLAN_THIN_MAX_DAYS)) return;
     // 2026-11-26：Amazon本体がいる商品はユーザーが相乗りを避けているので、プランには入れない（ARには出る）
     if (card.qs && card.qs.amazon_seller) return;
+    // 2026-11-26：様子見中（仕入れたばかりで売れ行き待ち）のASINもプランに入れない
+    if (card.watch_until) return;
     const tier = card.priority ? 0 : card.thin_fast ? 1 : 2;
     cands.push({ card, src, tier, ...f });
   }));
