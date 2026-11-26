@@ -1723,8 +1723,8 @@ const MISMATCH_REASONS = ["不一致", "型番違い", "部品・付属品だけ
 //   この出品は14日間出さない／同じASINの別出品は⭐優先から外して「様子見中」の印（Code.gs readWatchList_）。
 //   使いすぎて仕入れ対象が目減りしないよう、ボタンは仕入れ実績のあるASIN（AR・RT）のカードだけに出す。
 function canWatch(card, source) {
-  if (source !== "amacari" && source !== "rt") return false;
-  return card.past_judgment === "仕入れ対象" || card.past_judgment === "購入済み" || !!card.watch_until;
+  // 11/27 ユーザー要望で常に表示（AR・RT）。以前は過去に仕入れ対象/購入済みのASINだけだった
+  return source === "amacari" || source === "rt";
 }
 
 async function watchCard(card, source) {
