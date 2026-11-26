@@ -1716,7 +1716,8 @@ async function undoLastReject(source) {
 
 // ---------- 却下理由モーダル ----------
 // 2026-11-26：旧「不一致」を分けたもの（旧名も含める）
-const MISMATCH_REASONS = ["不一致", "型番違い", "部品・付属品だけ", "互換品・他社品"];
+// 2026-11-26：「型番の偶然一致」も追加（「色・サイズ・容量違い」は紐付けの誤りではないので入れない）
+const MISMATCH_REASONS = ["不一致", "型番違い", "部品・付属品だけ", "互換品・他社品", "型番の偶然一致"];
 
 // 2026-11-26：様子見（売れ行き待ち）。仕入れたばかりで売れ行きが分からない商品を、却下にも仕入候補にもせず流す。
 //   この出品は14日間出さない／同じASINの別出品は⭐優先から外して「様子見中」の印（Code.gs readWatchList_）。
@@ -1859,6 +1860,12 @@ els.reasonGrid.addEventListener("click", e => {
     }).catch(err => {
       console.error("不一致再検証キューの登録に失敗:", err);
     });
+    // 2026-11-26：型番の偶然一致（車の型式・ガンダム機体名等）は型番そのものがノイズなので、型番通報も送る
+    if (reason === "型番の偶然一致" && card.model) {
+      gasPost("reportModel", { model: card.model, asin: card.asin, name: card.name, mercari_url: card.mercari_url }).catch(err => {
+        console.error("型番通報に失敗:", err);
+      });
+    }
   }
 });
 

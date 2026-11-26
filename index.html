@@ -195,9 +195,12 @@
       <button class="reason-btn" data-reason="付属品不足">付属品不足</button>
       <button class="reason-btn" data-reason="売切れ">売切れ</button>
       <div class="reason-head">商品違い</div>
-      <button class="reason-btn" data-reason="型番違い">型番違い</button>
+      <!-- 2026-11-26追加：型番の偶然一致（別ジャンル。型番通報も自動で送る）・色・サイズ・容量違い -->
+      <button class="reason-btn" data-reason="型番違い">型番違い（世代・シリーズ）</button>
+      <button class="reason-btn" data-reason="型番の偶然一致">型番の偶然一致（別ジャンル）</button>
       <button class="reason-btn" data-reason="部品・付属品だけ">部品・付属品だけ</button>
       <button class="reason-btn" data-reason="互換品・他社品">互換品・他社品</button>
+      <button class="reason-btn" data-reason="色・サイズ・容量違い">色・サイズ・容量違い</button>
       <button class="reason-btn" data-reason="セット数違い">セット数違い</button>
       <div class="reason-head">採算</div>
       <button class="reason-btn" data-reason="利益不足">利益不足</button>
@@ -422,6 +425,6 @@
 
 </style>
 
-<script src="app.js?v=83"></script>
+<script src="app.js?v=84"></script>
 </body>
 </html>
