@@ -1008,6 +1008,41 @@ body {
 .dash-plan.is-spare .dash-plan-item { opacity: 0.85; }
 .dash-plan-prog { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: #f2f6fd; font-size: 12px; color: var(--navy); }
 .dash-plan-prog .is-buy { color: #006300; font-weight: 700; }
+/* 2026-11-26 ①リングゲージ ②仕入確定の演出 ③精査の見込み */
+.plan-goal { display: flex; align-items: center; gap: 14px; }
+.plan-goal-text { flex: 1; min-width: 0; }
+.plan-goal-next { font-size: 12px; font-weight: 700; color: #8a5a00; margin-top: 2px; }
+.plan-ring { position: relative; flex: none; }
+.plan-ring svg { display: block; }
+.plan-ring-track { fill: none; stroke: #ecebe7; }
+.plan-ring-bar { fill: none; stroke-linecap: round; transition: stroke-dashoffset 0.9s cubic-bezier(.2,.8,.2,1), stroke 0.4s; }
+.plan-ring.stage-s0 .plan-ring-bar { stroke: #2a78d6; }
+.plan-ring.stage-s1 .plan-ring-bar { stroke: #1a9fb0; }
+.plan-ring.stage-s2 .plan-ring-bar { stroke: #f5a623; }
+.plan-ring.stage-s3 .plan-ring-bar { stroke: #0ca30c; }
+.plan-ring.stage-done .plan-ring-bar { stroke: #d4a017; }
+.plan-ring.stage-done .plan-ring-track { stroke: #f6e7b4; }
+.plan-ring-tick { stroke: #fff; stroke-width: 2.5; }
+.plan-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.plan-ring-value { font-size: 18px; font-weight: 800; color: var(--navy); line-height: 1.1; }
+.plan-ring-goal { font-size: 10.5px; color: #6b6a66; margin-top: 2px; }
+.plan-ev { margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: #f3f0fb; color: var(--navy); }
+.plan-ev-main { font-size: 13px; }
+.plan-ev-main b { font-weight: 800; }
+.plan-ev-sub { font-size: 11px; color: #5f5b6e; margin-top: 3px; line-height: 1.5; }
+.plan-celebrate { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; background: rgba(27, 39, 51, 0.35); padding: 16px; }
+.plan-celebrate.hidden { display: none; }
+.plan-celebrate-box { background: #fff; border-radius: 18px; padding: 18px 26px 16px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.25); display: flex; flex-direction: column; align-items: center; gap: 8px; animation: plan-pop 0.35s cubic-bezier(.2,1.4,.4,1); max-width: 100%; }
+.plan-celebrate-box.is-done { background: linear-gradient(180deg, #fff8e1, #fff); }
+.plan-celebrate-plus { font-size: 30px; font-weight: 900; color: #0a8a0a; animation: plan-rise 0.6s ease-out; }
+.plan-celebrate-msg { font-size: 15px; font-weight: 800; color: var(--navy); }
+.plan-celebrate-box.is-crossed .plan-celebrate-msg { color: #b07800; font-size: 17px; }
+.plan-celebrate-sub { font-size: 12px; color: #6b6a66; }
+@keyframes plan-pop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes plan-rise { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .plan-ring-bar, .plan-celebrate-box, .plan-celebrate-plus { transition: none; animation: none; }
+}
 .dash-plan-start { display: block; width: 100%; margin-top: 10px; padding: 11px 12px; border: 0; border-radius: 10px; background: #2a78d6; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; }
 
 /* Amazon価格インライン編集 */

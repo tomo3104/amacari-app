@@ -1774,7 +1774,12 @@ async function recordPurchase(card, source, input) {
     const res = await gasPost("recordPurchase", body);
     const r = await res.json();
     if (!r.ok) throw new Error(r.error || "記録に失敗しました");
-    if (!r.duplicate) planNoteBought(cardKey(card), r.profit, input.date);
+    if (!r.duplicate) {
+      const isToday = input.date === todayYmd() && Number.isFinite(Number(r.profit));
+      const before = isToday ? planTodayProfit().total : 0;
+      planNoteBought(cardKey(card), r.profit, input.date);
+      if (isToday) planCelebrate(Number(r.profit), before, planTodayProfit().total);
+    }
     showToast(r.duplicate ? "売上管理シートには記録済みです" :
       `売上管理シート ${r.sheet}${r.created ? "（新しく作成）" : ""}${r.day ? `・${r.day}日` : ""} の${r.row}行目に記録・想定利益 ¥${Math.round(r.profit).toLocaleString()}`);
   } catch (e) {
@@ -2464,9 +2469,115 @@ function writePlanLog(log) {
 function planNoteJudgment(card, judgment) {
   const log = readPlanLog();
   const key = cardKey(card);
-  if (!log.shown[key]) return;
-  log.judged[key] = judgment;
+  // 2026-11-26：精査の「見込み」（③）はプラン外のカードも含めて、判定したカード全部を数える
+  if (!log.ev) log.ev = {};
+  log.ev[key] = planCardEv(card);
+  if (log.shown[key]) log.judged[key] = judgment;
   writePlanLog(log);
+}
+
+// 2026-11-26 ③：1枚精査するごとの見込み利益＝そのカードの差益×過去の仕入れ率。
+//   却下でも「当たりを引くための作業」が積み上がっていることを見せる（本物の利益とは混ぜない）。
+//   仕入れ率は 10/1〜11/20 の実績（優先7.7%・通常0.6%）。🔄高回転・薄利はまだ実績が少ないので通常と同じ扱い。
+const PLAN_EV_RATE_PRIORITY = 0.077;
+const PLAN_EV_RATE_NORMAL = 0.006;
+function planCardEv(card) {
+  const profit = Number(card.pmax) - Number(card.mercari_price);
+  if (!Number.isFinite(profit) || profit <= 0) return 0;
+  return profit * (card.priority ? PLAN_EV_RATE_PRIORITY : PLAN_EV_RATE_NORMAL);
+}
+
+// 今日の仕入れ（想定利益）：売上管理シートの集計＋集計より後にこの端末で仕入確定した分
+function planTodayProfit(log) {
+  log = log || readPlanLog();
+  if (!dashData) return { known: false, total: log.bought.reduce((s, b) => s + b.profit, 0), late: 0 };
+  const m = dashModel(dashData);
+  const sheet = (m.salesByDate[m.today] || {}).profit || 0;
+  const late = log.bought.filter(b => b.at >= (dashData.generatedAt || "")).reduce((s, b) => s + b.profit, 0);
+  return { known: true, total: sheet + late, late, sheet };
+}
+
+// 2026-11-26 ①：1万円のリングゲージ。3千・5千・7千円の区切りで色が変わり、届いたら金色。
+const PLAN_MILESTONES = [3000, 5000, 7000];
+let planRingLastP = 0; // 前回表示した割合（ここから伸ばすアニメーションにする）
+function planRingStage(profit) {
+  if (profit >= DAILY_PROFIT_GOAL) return "done";
+  if (profit >= 7000) return "s3";
+  if (profit >= 5000) return "s2";
+  if (profit >= 3000) return "s1";
+  return "s0";
+}
+function planRingHtml(profit, size) {
+  size = size || 132;
+  const stroke = Math.round(size * 0.09);
+  const r = (size - stroke) / 2 - 2;
+  const c = 2 * Math.PI * r;
+  const p = Math.max(0, Math.min(1, profit / DAILY_PROFIT_GOAL));
+  const ticks = PLAN_MILESTONES.map(v => {
+    const a = (v / DAILY_PROFIT_GOAL) * 2 * Math.PI - Math.PI / 2;
+    const r1 = r - stroke / 2 - 1, r2 = r + stroke / 2 + 1;
+    const cx = size / 2, cy = size / 2;
+    return `<line class="plan-ring-tick${profit >= v ? " is-passed" : ""}" x1="${cx + r1 * Math.cos(a)}" y1="${cy + r1 * Math.sin(a)}" x2="${cx + r2 * Math.cos(a)}" y2="${cy + r2 * Math.sin(a)}"/>`;
+  }).join("");
+  return `
+    <div class="plan-ring stage-${planRingStage(profit)}" style="width:${size}px;height:${size}px">
+      <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">
+        <circle class="plan-ring-track" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"/>
+        <circle class="plan-ring-bar" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"
+          stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - planRingLastP)}" data-c="${c}" data-p="${p}"
+          transform="rotate(-90 ${size / 2} ${size / 2})"/>
+        ${ticks}
+      </svg>
+      <div class="plan-ring-center">
+        <div class="plan-ring-value">${profit >= DAILY_PROFIT_GOAL ? "🎉" : ""}${dashYen(profit)}</div>
+        <div class="plan-ring-goal">/ ${dashYen(DAILY_PROFIT_GOAL)}</div>
+      </div>
+    </div>`;
+}
+// innerHTMLで入れた直後に呼ぶ：前回の位置から今の位置までリングを伸ばす
+function planRingAnimate(root) {
+  root.querySelectorAll(".plan-ring-bar").forEach(el => {
+    const c = Number(el.dataset.c), p = Number(el.dataset.p);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.strokeDashoffset = String(c * (1 - p));
+    }));
+    planRingLastP = p;
+  });
+}
+function planNextMilestone(profit) {
+  const v = [...PLAN_MILESTONES, DAILY_PROFIT_GOAL].find(x => profit < x);
+  return v ? { value: v, left: v - profit } : null;
+}
+
+// 2026-11-26 ②：仕入確定の直後に「+¥○」とリングが伸びる演出を出す（タップか2.6秒で消える）
+function planCelebrate(added, before, after) {
+  let el = document.getElementById("plan-celebrate");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "plan-celebrate";
+    el.className = "plan-celebrate hidden";
+    el.addEventListener("click", () => el.classList.add("hidden"));
+    document.body.appendChild(el);
+  }
+  const crossed = [...PLAN_MILESTONES, DAILY_PROFIT_GOAL].filter(v => before < v && after >= v).pop();
+  const done = after >= DAILY_PROFIT_GOAL;
+  const next = planNextMilestone(after);
+  const msg = done
+    ? (crossed === DAILY_PROFIT_GOAL ? "今日の目標 1万円 達成！" : `今日は目標から +${dashYen(after - DAILY_PROFIT_GOAL)}`)
+    : crossed ? `${dashYen(crossed)} ライン突破！` : `今日あと ${dashYen(DAILY_PROFIT_GOAL - after)}`;
+  const sub = !done && next ? `次の区切り ${dashYen(next.value)} まで あと ${dashYen(next.left)}` : "";
+  planRingLastP = Math.max(0, Math.min(1, before / DAILY_PROFIT_GOAL));
+  el.innerHTML = `
+    <div class="plan-celebrate-box${crossed ? " is-crossed" : ""}${done ? " is-done" : ""}">
+      <div class="plan-celebrate-plus">+${dashYen(added)}</div>
+      ${planRingHtml(after, 120)}
+      <div class="plan-celebrate-msg">${escapeHtml(msg)}</div>
+      ${sub ? `<div class="plan-celebrate-sub">${escapeHtml(sub)}</div>` : ""}
+    </div>`;
+  el.classList.remove("hidden");
+  planRingAnimate(el);
+  clearTimeout(planCelebrate.timer);
+  planCelebrate.timer = setTimeout(() => el.classList.add("hidden"), crossed ? 3600 : 2600);
 }
 function planNoteBought(key, profit, date) {
   if (date !== todayYmd() || !Number.isFinite(Number(profit))) return;
@@ -2519,17 +2630,37 @@ function buildTodayPlan(remaining) {
 
 function dashPlanHtml(m) {
   const log = readPlanLog();
-  const sheetProfit = (m.salesByDate[m.today] || {}).profit || 0;
-  // 集計より後にこの端末で仕入確定した分（集計にはまだ入っていない）
-  const lateProfit = log.bought.filter(b => b.at >= (m.d.generatedAt || "")).reduce((s, b) => s + b.profit, 0);
-  const todayProfit = sheetProfit + lateProfit;
+  // 集計より後にこの端末で仕入確定した分（集計にはまだ入っていない）も足す
+  const tp = planTodayProfit(log);
+  const todayProfit = tp.total, lateProfit = tp.late;
   const remaining = Math.max(0, DAILY_PROFIT_GOAL - todayProfit);
   const head = `今日の仕入れ ${dashYen(todayProfit)}（売上管理シートの想定利益${lateProfit ? `・うち直近の仕入確定 ${dashYen(lateProfit)}` : ""}）`;
+  // ③ 今日この端末で精査したカードの見込み（山に戻した＝取り消した分は数えない）
+  const poolKeys = new Set(state.cards.concat(state.rtCards || []).map(cardKey));
+  const evKeys = Object.keys(log.ev || {}).filter(k => !poolKeys.has(k));
+  const evSum = evKeys.reduce((s, k) => s + (log.ev[k] || 0), 0);
+  const evHtml = evKeys.length ? `
+    <div class="plan-ev">
+      <div class="plan-ev-main">🧮 今日の精査 <b>${evKeys.length}枚</b> ＝ 見込み <b>${dashYen(evSum)}</b> ぶんの仕事</div>
+      <div class="plan-ev-sub">仕入れなかったカードも、見たぶんだけ当たりに近づいています（1枚の見込み＝差益×過去の仕入れ率：⭐優先${(PLAN_EV_RATE_PRIORITY * 100).toFixed(1)}%・通常${(PLAN_EV_RATE_NORMAL * 100).toFixed(1)}%）</div>
+    </div>` : "";
+  const next = planNextMilestone(todayProfit);
+  const goalHtml = `
+    <div class="plan-goal">
+      ${planRingHtml(todayProfit)}
+      <div class="plan-goal-text">
+        ${remaining <= 0
+          ? `<div class="dash-plan-done">✓ 今日の目標 ${dashYen(DAILY_PROFIT_GOAL)} に届きました</div>`
+          : `<div class="dash-plan-goal">今日あと <strong>${dashYen(remaining)}</strong></div>
+             ${next && next.value < DAILY_PROFIT_GOAL ? `<div class="plan-goal-next">次の区切り ${dashYen(next.value)} まで あと ${dashYen(next.left)}</div>` : ""}`}
+        <p class="dash-sub">${head}</p>
+      </div>
+    </div>`;
   if (remaining <= 0) {
-    return `<section class="dash-card">      <p class="dash-plan-done">✓ 今日の目標 ${dashYen(DAILY_PROFIT_GOAL)} に届きました</p><p class="dash-sub">${head}</p></section>`;
+    return `<section class="dash-card">${goalHtml}${evHtml}</section>`;
   }
   if (!state.cards.length && !(state.rtCards || []).length) {
-    return `<section class="dash-card">      <p class="dash-sub">精査待ちのカードを読み込み中です。少し待って「↻ 組み直す」を押してください。</p></section>`;
+    return `<section class="dash-card">${goalHtml}${evHtml}<p class="dash-sub">精査待ちのカードを読み込み中です。少し待って「↻ 組み直す」を押してください。</p></section>`;
   }
   const plan = buildTodayPlan(remaining);
   lastPlan = plan;
@@ -2582,8 +2713,8 @@ function dashPlanHtml(m) {
   const reach = plan.sum >= remaining;
   return `
     <section class="dash-card">
-            <div class="dash-plan-goal">今日あと <strong>${dashYen(remaining)}</strong></div>
-      <p class="dash-sub">${head}</p>
+      ${goalHtml}
+      ${evHtml}
       ${progHtml}
       ${plan.picks.length ? `
         <button id="plan-start-btn" class="dash-plan-start">▶ プランの順に精査する（${plan.picks.length + plan.spare.length}枚を山の先頭へ）</button>
@@ -2626,7 +2757,9 @@ function renderPlan() {
   const m = dashModel(dashData);
   document.getElementById("plan-updated").textContent =
     `精査待ち AR ${state.cards.length}枚${state.rtCards.length ? `・RT ${state.rtCards.length}枚` : ""}から組み立て／今日の仕入れは ${dashData.generatedAt} 時点`;
-  document.getElementById("plan-body").innerHTML = dashPlanHtml(m);
+  const body = document.getElementById("plan-body");
+  body.innerHTML = dashPlanHtml(m);
+  planRingAnimate(body);
 }
 
 document.getElementById("plan-refresh").addEventListener("click", () => loadPlan(true));
