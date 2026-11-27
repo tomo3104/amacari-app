@@ -27,6 +27,19 @@ body {
   flex-direction: column;
 }
 
+/* 2026-11-28：ミニPCのRT・RRが止まっているときの赤い帯（rt_watchdog.py → GAS rtStatus） */
+.rt-alert {
+  flex: 0 0 auto;
+  background: #c62828;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 8px 14px;
+  text-align: center;
+}
+.rt-alert small { display: block; font-weight: 400; opacity: .9; }
+
 .topbar {
   flex: 0 0 auto;
   display: flex;

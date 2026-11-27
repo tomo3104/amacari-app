@@ -3403,6 +3403,29 @@ async function refreshPendingPurchaseBadge() {
   }
 }
 
+// 2026-11-28：ミニPCのRT・RRが3時間動いていなければ上部に赤い帯（メインPCの rt_watchdog.py が30分おきに判定）
+function fmtMdHm(s) {
+  const m = String(s || "").match(/^\d{4}-(\d\d)-(\d\d) (\d\d:\d\d)/);
+  return m ? `${Number(m[1])}/${Number(m[2])} ${m[3]}` : "";
+}
+async function refreshRtAlert() {
+  const el = document.getElementById("rt-alert");
+  try {
+    const s = await gasFetch("rtStatus");
+    if (s && s.stalled) {
+      el.innerHTML = `⚠ ミニPCのRT・RRが止まっています（最後に動いたのは ${escapeHtml(fmtMdHm(s.last_move))}）`
+        + `<small>ミニPCのChromeでメルカリのタブを開き、RTのボタンで再開してください（確認 ${escapeHtml(fmtMdHm(s.checked_at))}）</small>`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  } catch (e) {
+    // 見張りの表示は補助なので、失敗しても何もしない
+  }
+}
+setInterval(refreshRtAlert, 15 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshRtAlert(); });
+
 // ---------- 起動 ----------
 
 if ("serviceWorker" in navigator) {
@@ -3411,3 +3434,4 @@ if ("serviceWorker" in navigator) {
 
 loadCards();
 refreshPendingPurchaseBadge();
+refreshRtAlert();
